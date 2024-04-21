@@ -1,0 +1,4 @@
+export RUSTFLAGS="-C link-arg=-Wl,-rpath,venv/lib/python3.12/site-packages/torch/lib"
+export LIBTORCH_BYPASS_VERSION_CHECK=1
+export LIBTORCH_USE_PYTORCH=1
+export PYTORCH_ENABLE_MPS_FALLBACK=1
