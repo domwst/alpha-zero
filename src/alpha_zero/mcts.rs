@@ -4,16 +4,16 @@ use tch::{Device, Kind};
 
 use crate::alpha_zero::TerminationState;
 
-use super::{AlphaZeroAdapter, AlphaZeroNet, Game, NetworkBatchedExecutorHandle};
+use super::{AlphaZeroAdapter, AlphaZeroNet, Game, MoveParameters, NetworkBatchedExecutorHandle};
 
 #[derive(Clone, Copy, Debug)]
-struct MoveStatistics {
+struct MoveDynamicInfo {
     total_score: f32,
     descends: usize,
 }
 
 #[derive(Clone, Copy, Debug)]
-struct MoveParameters {
+struct MoveStaticInfo {
     priority: f32,
     player_switch: bool,
 }
@@ -21,7 +21,7 @@ struct MoveParameters {
 struct NodeState {
     value: f32,
     is_terminal: bool,
-    children: Vec<(usize, MoveParameters, MoveStatistics)>,
+    children: Vec<(usize, MoveStaticInfo, MoveDynamicInfo)>,
 }
 
 struct MonteCarloNode<T> {
@@ -33,24 +33,25 @@ impl<T> MonteCarloNode<T> {
     async fn get_state<'a, F, TAdditional>(
         &'a mut self,
         calc_state: impl FnOnce(&'a T) -> F,
-    ) -> (&mut NodeState, Option<TAdditional>)
+    ) -> Option<TAdditional>
     where
         F: Future<Output = (NodeState, TAdditional)> + 'a,
     {
-        if let Some(ref mut v) = self.node_state {
-            return (v, None);
+        if self.node_state.is_some() {
+            return None;
         }
         let (state, additional) = calc_state(&self.game_state).await;
-        (self.node_state.insert(state), Some(additional))
+        self.node_state = Some(state);
+        Some(additional)
     }
 }
 
 impl NodeState {
-    async fn pick_next_move(&self, c: f32) -> usize {
+    fn pick_next_move(&self, c: f32) -> usize {
         let total_visits: usize = self
             .children
             .iter()
-            .map(|(_, _, MoveStatistics { descends, .. })| descends)
+            .map(|(_, _, MoveDynamicInfo { descends, .. })| descends)
             .sum();
         let sqrt_total_visits = f32::sqrt(total_visits as f32);
 
@@ -59,8 +60,8 @@ impl NodeState {
             .map(
                 |(
                     _,
-                    MoveParameters { priority, .. },
-                    MoveStatistics {
+                    MoveStaticInfo { priority, .. },
+                    MoveDynamicInfo {
                         total_score,
                         descends,
                     },
@@ -104,42 +105,110 @@ impl<TGame: Game, TNet: AlphaZeroNet, TAdapter: AlphaZeroAdapter<TGame, TNet>>
         }
     }
 
-    pub async fn do_simulations(&mut self, n: usize, cpuct: f32)
-    where
-        TGame::Move: Clone,
-    {
-        // let mut state_stack = vec![];
-        let mut cur = 0;
-        let mut value = 0f32;
-        loop {
-            let (node_state, moves): (_, Option<Vec<()>>) = self.nodes[cur]
-                .get_state(|state: &TGame| async {
-                    let moves = match state.get_state() {
-                        TerminationState::Terminal(val) => {
-                            return (
-                                NodeState {
-                                    value: val,
-                                    is_terminal: true,
-                                    children: vec![],
-                                },
-                                vec![],
-                            );
-                        }
-                        TerminationState::Moves(moves) => moves,
-                    };
-                    let (value, policy) = self
-                        .executor
-                        .execute(TAdapter::convert_game_to_nn_input(state, self.options))
-                        .await;
-                    let value = f32::try_from(value).unwrap();
-                    let policy = TAdapter::get_estimated_policy(policy, &moves);
-                    todo!()
-                })
-                .await;
-            if node_state.is_terminal {
-                value = node_state.value;
-                break;
+    pub async fn do_simulations(&mut self, n: usize, cpuct: f32, state: usize) {
+        let mut state_stack = vec![];
+        for _ in 0..n {
+            let mut cur = state;
+            let mut value;
+            loop {
+                let nodes_cnt = self.nodes.len();
+                let moves = self.nodes[cur]
+                    .get_state(|state: &TGame| async {
+                        let moves = match state.get_state() {
+                            TerminationState::Terminal(val) => {
+                                return (
+                                    NodeState {
+                                        value: val,
+                                        is_terminal: true,
+                                        children: vec![],
+                                    },
+                                    vec![],
+                                );
+                            }
+                            TerminationState::Moves(moves) => moves,
+                        };
+                        let (value, policy) = self
+                            .executor
+                            .execute(TAdapter::convert_game_to_nn_input(state, self.options))
+                            .await;
+                        let value = f32::try_from(value).unwrap();
+                        let policy = TAdapter::get_estimated_policy(policy, &moves);
+
+                        let node_state = NodeState {
+                            value,
+                            is_terminal: false,
+                            children: moves
+                                .iter()
+                                .zip(policy)
+                                .enumerate()
+                                .map(|(i, (r#move, policy))| {
+                                    (
+                                        nodes_cnt + i,
+                                        MoveStaticInfo {
+                                            priority: policy,
+                                            player_switch: r#move.is_player_switch(),
+                                        },
+                                        MoveDynamicInfo {
+                                            total_score: 0.0,
+                                            descends: 0,
+                                        },
+                                    )
+                                })
+                                .collect(),
+                        };
+                        (node_state, moves)
+                    })
+                    .await;
+
+                let mut finish = self.nodes[cur].node_state.as_ref().unwrap().is_terminal;
+                if let Some(moves) = moves {
+                    self.nodes.reserve(moves.len());
+                    for r#move in &moves {
+                        self.nodes.push(MonteCarloNode {
+                            game_state: self.nodes[cur].game_state.make_move(r#move),
+                            node_state: None,
+                        });
+                    }
+                    finish = true;
+                }
+                let node_state = self.nodes[cur].node_state.as_ref().unwrap();
+                if finish {
+                    value = node_state.value;
+                    break;
+                }
+
+                let m = node_state.pick_next_move(cpuct);
+                state_stack.push((cur, m));
+                cur = node_state.children[m].0;
+            }
+
+            while let Some((state, r#move)) = state_stack.pop() {
+                let node_state = self.nodes[state].node_state.as_mut().unwrap();
+
+                if node_state.children[r#move].1.player_switch {
+                    value = 1.0 - value;
+                }
+
+                let dyn_params = &mut node_state.children[r#move].2;
+                dyn_params.total_score += value;
+                dyn_params.descends += 1;
             }
         }
+    }
+
+    pub fn get_policy(&self, state: usize) -> Vec<f32> {
+        let node = &self.nodes[state];
+        let state = node.node_state.as_ref().unwrap();
+        let iter = state
+            .children
+            .iter()
+            .map(|(_, _, MoveDynamicInfo { descends, .. })| *descends);
+        let sm: usize = iter.clone().sum();
+
+        iter.map(move |v| v as f32 / sm as f32).collect::<Vec<_>>()
+    }
+
+    pub fn get_next_state(&self, state: usize, move_id: usize) -> usize {
+        self.nodes[state].node_state.as_ref().unwrap().children[move_id].0
     }
 }

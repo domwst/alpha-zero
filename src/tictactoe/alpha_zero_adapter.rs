@@ -1,8 +1,8 @@
-use tch::{Device, IndexOp, Kind};
+use tch::{Device, IndexOp, Kind, Tensor};
 
-use crate::alpha_zero::{AlphaZeroAdapter, Game, MoveDescription};
+use crate::alpha_zero::{AlphaZeroAdapter, Game};
 
-use super::{BoardState, CellState, TicTacToeNet};
+use super::{BoardState, CellState, TicTacToeMove, TicTacToeNet};
 
 pub struct TicTacToeAlphaZeroAdapter;
 
@@ -25,28 +25,17 @@ impl AlphaZeroAdapter<BoardState, TicTacToeNet> for TicTacToeAlphaZeroAdapter {
             .to_device(dev)
     }
 
-    fn get_estimated_policy(
-        policy: Tensor,
-        moves: &[MoveDescription<<BoardState as Game>::Move>],
-    ) -> Vec<f32> {
+    fn get_estimated_policy(policy: Tensor, moves: &[<BoardState as Game>::Move]) -> Vec<f32> {
         let policy = policy.exp();
         let mut res = Vec::with_capacity(moves.len());
-        for &MoveDescription {
-            r#move: (i, j),
-            player_switch: _,
-        } in moves
-        {
+        for &TicTacToeMove(i, j) in moves {
             res.push(f32::try_from(policy.i((i as i64, j as i64))).unwrap());
         }
 
-        let mx = res
-            .iter()
-            .copied()
-            .max_by(|a, b| a.partial_cmp(b).unwrap())
-            .unwrap();
-        if mx > 0. {
+        let sum = res.iter().sum::<f32>();
+        if sum > 0. {
             for x in &mut res {
-                *x /= mx;
+                *x /= sum;
             }
         }
 
@@ -55,20 +44,11 @@ impl AlphaZeroAdapter<BoardState, TicTacToeNet> for TicTacToeAlphaZeroAdapter {
 
     fn convert_policy_to_nn(
         policy: &[f32],
-        moves: &[MoveDescription<<BoardState as Game>::Move>],
+        moves: &[<BoardState as Game>::Move],
         (kind, dev): (Kind, Device),
     ) -> tch::Tensor {
         let mut res = [[0f32; 19]; 19];
-        for (&(i, j), &pol) in moves
-            .iter()
-            .map(
-                |MoveDescription {
-                     r#move,
-                     player_switch: _,
-                 }| r#move,
-            )
-            .zip(policy)
-        {
+        for (&TicTacToeMove(i, j), &pol) in moves.iter().zip(policy) {
             res[i][j] = pol;
         }
         Tensor::from_slice(res.flatten())
@@ -80,7 +60,7 @@ impl AlphaZeroAdapter<BoardState, TicTacToeNet> for TicTacToeAlphaZeroAdapter {
 
 #[cfg(test)]
 mod tests {
-    use tch::{Device, IndexOp, Kind, Tensor};
+    use tch::{Device, IndexOp, Kind};
 
     use crate::{
         alpha_zero::AlphaZeroAdapter,

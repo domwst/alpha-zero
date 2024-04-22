@@ -1,9 +1,6 @@
-use std::{collections::HashMap, future::Future, hash::Hash, time::Duration};
+use std::time::Duration;
 
-use pytorch::{
-    alpha_zero::{AlphaZeroNet, NetworkBatchedExecutor},
-    tictactoe::TicTacToeNet,
-};
+use pytorch::{alpha_zero::NetworkBatchedExecutor, tictactoe::TicTacToeNet};
 use tch::{nn, Device, Kind, Tensor};
 
 #[tokio::main]

@@ -1,6 +1,6 @@
 use std::ops::{Index, Range};
 
-use crate::alpha_zero::{Game, MoveDescription, TerminationState};
+use crate::alpha_zero::{Game, MoveParameters, TerminationState};
 
 const N: usize = 19;
 
@@ -98,8 +98,17 @@ impl BoardState {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TicTacToeMove(pub usize, pub usize);
+
+impl MoveParameters for TicTacToeMove {
+    fn is_player_switch(&self) -> bool {
+        true
+    }
+}
+
 impl Game for BoardState {
-    type Move = (usize, usize);
+    type Move = TicTacToeMove;
 
     fn get_state(&self) -> TerminationState<Self::Move> {
         match self.is_win() {
@@ -112,10 +121,7 @@ impl Game for BoardState {
             .map(|i| (0..N).map(move |j| (i, j)))
             .flatten()
             .filter(|&crd| self[crd] == CellState::Empty)
-            .map(|m| MoveDescription {
-                r#move: m,
-                player_switch: true,
-            })
+            .map(|(i, j)| TicTacToeMove(i, j))
             .collect::<Vec<_>>();
 
         if moves.is_empty() {
@@ -125,9 +131,10 @@ impl Game for BoardState {
         }
     }
 
-    fn make_move(&self, m: Self::Move) -> Self {
+    fn make_move(&self, m: &Self::Move) -> Self {
         let mut new_state = self.clone();
-        new_state.set_inplace(m, CellState::X);
+        let &TicTacToeMove(i, j) = m;
+        new_state.set_inplace((i, j), CellState::X);
         new_state.flip_players()
     }
 }
