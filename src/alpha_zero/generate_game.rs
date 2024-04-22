@@ -2,7 +2,6 @@ use rand::{
     distributions::{Distribution, WeightedIndex},
     thread_rng,
 };
-use tch::{Device, Kind};
 
 use crate::alpha_zero::{AlphaZeroAdapter, AlphaZeroNet, Game, MonteCarloTree, MoveParameters};
 
@@ -19,9 +18,8 @@ pub async fn generate_self_played_game<
     c_puct: f32,
     mut temp: F,
     executor: NetworkBatchedExecutorHandle<TNet>,
-    options: (Kind, Device),
 ) -> Vec<(TGame, Vec<f32>, f32)> {
-    let mut tree = MonteCarloTree::<TGame, TNet, TAdapter>::new(start.clone(), executor, options);
+    let mut tree = MonteCarloTree::<TGame, TNet, TAdapter>::new(start.clone(), executor);
     let mut turn = 0;
 
     let mut state_id = 0;

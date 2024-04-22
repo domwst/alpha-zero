@@ -1,5 +1,7 @@
 use std::ops::{Index, Range};
 
+use serde::Serialize;
+
 use crate::alpha_zero::{Game, MoveParameters, TerminationState};
 
 const N: usize = 19;
@@ -9,6 +11,15 @@ const BYTES: usize = (N * N - 1) / (std::mem::size_of::<u8>() * 4) + 1;
 #[derive(Clone, Hash, PartialEq, Eq)]
 pub struct BoardState {
     state: [u8; BYTES],
+}
+
+impl Serialize for BoardState {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.collect_seq(&self.state)
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

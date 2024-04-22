@@ -1,9 +1,13 @@
-use std::time::Duration;
+use std::{fs, sync::Arc, time::Duration};
 
-use pytorch::{alpha_zero::NetworkBatchedExecutor, tictactoe::TicTacToeNet};
-use tch::{nn, Device, Kind, Tensor};
+use futures::{stream::FuturesUnordered, StreamExt};
+use pytorch::{
+    alpha_zero::{generate_self_played_game, NetworkBatchedExecutor},
+    tictactoe::{BoardState, TicTacToeAlphaZeroAdapter, TicTacToeNet},
+};
+use tch::{nn, Device, Kind};
 
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread", worker_threads = 12)]
 async fn main() -> anyhow::Result<()> {
     let vs = nn::VarStore::new(Device::Mps);
 
@@ -12,49 +16,55 @@ async fn main() -> anyhow::Result<()> {
 
     let executor = NetworkBatchedExecutor::new(net);
 
-    let mut handles = vec![];
-    for _ in 0..32 {
+    let mut worker_handles = FuturesUnordered::new();
+
+    let parallel_games = Arc::new(tokio::sync::Semaphore::new(1536));
+    let mut total_games = 5000;
+    for _ in 0..total_games {
         let h = tokio::spawn({
             // let net = net_cp.clone();
-            let mut handle = executor.mint_handle();
-            let device = vs.device();
+            let handle = executor.mint_handle();
+            let parallel_games = parallel_games.clone();
 
             async move {
-                // let vs = vs2;
-                for _ in 0..16 {
-                    let input = Tensor::rand([2, 19, 19], (Kind::Float, device));
-                    let (exec_val, exec_pol) = handle.execute(input).await;
-                    // println!("Worker {i} received response on iter {j}");
-                    assert_eq!(exec_val.size(), [0i64; 0]);
-                    assert_eq!(exec_pol.size(), [19, 19]);
-                    // if !exec_pol.exp().sum(None).allclose(
-                    //     &Tensor::ones([], (Kind::Float, device)),
-                    //     1e-2,
-                    //     1e-2,
-                    //     false,
-                    // ) {
-                    //     println!("Received: {}", exec_pol.exp().to(Device::Cpu));
-                    // }
-                    // if !exec_val.allclose(&my_val.view([]), 1e-4, 1e-4, false) {
-                    //     println!("exec_val = {exec_val}, my_val={my_val}");
-                    //     break;
-                    // }
-                    // if !exec_pol.allclose(&my_pol.view([19, 19]), 1e-4, 1e-4, false) {
-                    //     println!("exec_pol = {exec_pol}, my_pol={my_pol}");
-                    //     break;
-                    // }
-                }
-                // drop(handle);
+                let _permit = parallel_games.acquire().await.unwrap();
+                generate_self_played_game::<BoardState, TicTacToeNet, TicTacToeAlphaZeroAdapter, _>(
+                    BoardState::new(),
+                    2048,
+                    0.1,
+                    |_| 1.0,
+                    handle,
+                )
+                .await
             }
         });
-        handles.push(h);
+        worker_handles.push(h);
     }
 
-    executor.serve(1024, Duration::from_millis(10)).await;
+    let executor = tokio::spawn({
+        let device = vs.device();
+        async move {
+            executor
+                .serve(1024, Duration::from_millis(100), (Kind::Float, device))
+                .await;
+        }
+    });
 
-    for h in handles {
-        h.await?;
+    let mut history = vec![];
+
+    while let Some(res) = worker_handles.next().await {
+        let mut res = res.unwrap();
+        total_games -= 1;
+        history.append(&mut res);
+        println!(
+            "Game finished, {total_games} more to go, {} pending",
+            worker_handles.len()
+        );
     }
+
+    executor.await.unwrap();
+
+    fs::write("./history.hist", serde_json::to_vec(&history).unwrap())?;
 
     Ok(())
 }

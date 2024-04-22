@@ -1,7 +1,5 @@
 use std::{future::Future, marker::PhantomData};
 
-use tch::{Device, Kind};
-
 use crate::alpha_zero::TerminationState;
 
 use super::{AlphaZeroAdapter, AlphaZeroNet, Game, MoveParameters, NetworkBatchedExecutorHandle};
@@ -66,13 +64,19 @@ impl NodeState {
                         descends,
                     },
                 )| {
-                    total_score / *descends as f32
-                        + c * priority * sqrt_total_visits / (1 + total_visits) as f32
+                    (if descends != &0 {
+                        total_score / *descends as f32
+                    } else {
+                        0.0
+                    }) + c * priority * sqrt_total_visits / (1 + total_visits) as f32
                 },
             )
             .enumerate()
             .map(|(i, v)| (v, i))
-            .max_by(|(a, _), (b, _)| a.partial_cmp(b).unwrap())
+            .max_by(|(a, _), (b, _)| match a.partial_cmp(b) {
+                None => panic!("Failed to compare {a} with {b}"),
+                Some(res) => res,
+            })
             .unwrap()
             .1
     }
@@ -82,25 +86,23 @@ pub struct MonteCarloTree<TGame: Game, TNet: AlphaZeroNet, TAdapter: AlphaZeroAd
 {
     nodes: Vec<MonteCarloNode<TGame>>,
     executor: NetworkBatchedExecutorHandle<TNet>,
-    options: (Kind, Device),
+    // inner_bytes_size: usize,
     _p: PhantomData<TAdapter>,
 }
 
 impl<TGame: Game, TNet: AlphaZeroNet, TAdapter: AlphaZeroAdapter<TGame, TNet>>
     MonteCarloTree<TGame, TNet, TAdapter>
 {
-    pub fn new(
-        state: TGame,
-        executor: NetworkBatchedExecutorHandle<TNet>,
-        options: (Kind, Device),
-    ) -> Self {
+    pub fn new(state: TGame, executor: NetworkBatchedExecutorHandle<TNet>) -> Self {
+        let mut nodes = Vec::with_capacity(1024);
+        nodes.push(MonteCarloNode {
+            game_state: state,
+            node_state: None,
+        });
         Self {
-            nodes: vec![MonteCarloNode {
-                game_state: state,
-                node_state: None,
-            }],
+            nodes,
             executor,
-            options,
+            // inner_bytes_size: 0,
             _p: PhantomData,
         }
     }
@@ -110,6 +112,7 @@ impl<TGame: Game, TNet: AlphaZeroNet, TAdapter: AlphaZeroAdapter<TGame, TNet>>
         for _ in 0..n {
             let mut cur = state;
             let mut value;
+            // let start = Instant::now();
             loop {
                 let nodes_cnt = self.nodes.len();
                 let moves = self.nodes[cur]
@@ -127,9 +130,10 @@ impl<TGame: Game, TNet: AlphaZeroNet, TAdapter: AlphaZeroAdapter<TGame, TNet>>
                             }
                             TerminationState::Moves(moves) => moves,
                         };
+                        // println!("Found target state in {:?}", Instant::now() - start);
                         let (value, policy) = self
                             .executor
-                            .execute(TAdapter::convert_game_to_nn_input(state, self.options))
+                            .execute(TAdapter::convert_game_to_nn_input(state))
                             .await;
                         let value = f32::try_from(value).unwrap();
                         let policy = TAdapter::get_estimated_policy(policy, &moves);
@@ -162,6 +166,7 @@ impl<TGame: Game, TNet: AlphaZeroNet, TAdapter: AlphaZeroAdapter<TGame, TNet>>
 
                 let mut finish = self.nodes[cur].node_state.as_ref().unwrap().is_terminal;
                 if let Some(moves) = moves {
+                    // self.inner_bytes_size += bytes;
                     self.nodes.reserve(moves.len());
                     for r#move in &moves {
                         self.nodes.push(MonteCarloNode {
