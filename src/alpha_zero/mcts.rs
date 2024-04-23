@@ -1,4 +1,6 @@
-use std::{future::Future, marker::PhantomData};
+use std::{marker::PhantomData, sync::OnceLock};
+
+use atomic_refcell::AtomicRefCell;
 
 use crate::alpha_zero::TerminationState;
 
@@ -16,61 +18,52 @@ struct MoveStaticInfo {
     player_switch: bool,
 }
 
-struct NodeState {
+struct NodeState<T> {
     value: f32,
     is_terminal: bool,
-    children: Vec<(usize, MoveStaticInfo, MoveDynamicInfo)>,
+    children: Vec<(
+        MonteCarloNode<T>,
+        MoveStaticInfo,
+        AtomicRefCell<MoveDynamicInfo>,
+    )>,
 }
 
 struct MonteCarloNode<T> {
     game_state: T,
-    node_state: Option<NodeState>,
+    node_state: OnceLock<NodeState<T>>,
 }
 
 impl<T> MonteCarloNode<T> {
-    async fn get_state<'a, F, TAdditional>(
-        &'a mut self,
-        calc_state: impl FnOnce(&'a T) -> F,
-    ) -> Option<TAdditional>
-    where
-        F: Future<Output = (NodeState, TAdditional)> + 'a,
-    {
-        if self.node_state.is_some() {
-            return None;
+    fn new(state: T) -> Self {
+        Self {
+            game_state: state,
+            node_state: OnceLock::new(),
         }
-        let (state, additional) = calc_state(&self.game_state).await;
-        self.node_state = Some(state);
-        Some(additional)
     }
 }
 
-impl NodeState {
-    fn pick_next_move(&self, c: f32) -> usize {
+impl<T> NodeState<T> {
+    fn pick_next_move(&self, c_puct: f32) -> usize {
         let total_visits: usize = self
             .children
             .iter()
-            .map(|(_, _, MoveDynamicInfo { descends, .. })| descends)
+            .map(|(_, _, d)| d.borrow().descends)
             .sum();
         let sqrt_total_visits = f32::sqrt(total_visits as f32);
 
         self.children
             .iter()
-            .map(
-                |(
-                    _,
-                    MoveStaticInfo { priority, .. },
-                    MoveDynamicInfo {
-                        total_score,
-                        descends,
-                    },
-                )| {
-                    (if descends != &0 {
-                        total_score / *descends as f32
-                    } else {
-                        0.0
-                    }) + c * priority * sqrt_total_visits / (1 + total_visits) as f32
-                },
-            )
+            .map(|(_, MoveStaticInfo { priority, .. }, d)| {
+                let MoveDynamicInfo {
+                    total_score,
+                    descends,
+                } = *d.borrow();
+                (if descends != 0 {
+                    total_score / descends as f32
+                } else {
+                    0.5
+                }) + c_puct * priority * (sqrt_total_visits / (1 + descends) as f32 + 1e-9)
+            })
             .enumerate()
             .map(|(i, v)| (v, i))
             .max_by(|(a, _), (b, _)| match a.partial_cmp(b) {
@@ -80,13 +73,20 @@ impl NodeState {
             .unwrap()
             .1
     }
+
+    fn get_policy(&self) -> Vec<f32> {
+        // println!("{:?}", self.children);
+        let iter = self.children.iter().map(|(_, _, d)| d.borrow().descends);
+        let sm: usize = iter.clone().sum();
+
+        iter.map(move |v| v as f32 / sm as f32).collect::<Vec<_>>()
+    }
 }
 
 pub struct MonteCarloTree<TGame: Game, TNet: AlphaZeroNet, TAdapter: AlphaZeroAdapter<TGame, TNet>>
 {
-    nodes: Vec<MonteCarloNode<TGame>>,
+    root: MonteCarloNode<TGame>,
     executor: NetworkBatchedExecutorHandle<TNet>,
-    // inner_bytes_size: usize,
     _p: PhantomData<TAdapter>,
 }
 
@@ -94,126 +94,111 @@ impl<TGame: Game, TNet: AlphaZeroNet, TAdapter: AlphaZeroAdapter<TGame, TNet>>
     MonteCarloTree<TGame, TNet, TAdapter>
 {
     pub fn new(state: TGame, executor: NetworkBatchedExecutorHandle<TNet>) -> Self {
-        let mut nodes = Vec::with_capacity(1024);
-        nodes.push(MonteCarloNode {
-            game_state: state,
-            node_state: None,
-        });
+        let root = MonteCarloNode::new(state);
         Self {
-            nodes,
+            root,
             executor,
-            // inner_bytes_size: 0,
             _p: PhantomData,
         }
     }
 
-    pub async fn do_simulations(&mut self, n: usize, cpuct: f32, state: usize) {
+    async fn create_node_state(
+        executor: &mut NetworkBatchedExecutorHandle<TNet>,
+        state: &TGame,
+    ) -> NodeState<TGame> {
+        let moves = match state.get_state() {
+            TerminationState::Terminal(val) => {
+                return NodeState {
+                    value: val,
+                    is_terminal: true,
+                    children: vec![],
+                };
+            }
+            TerminationState::Moves(moves) => moves,
+        };
+        // println!("Found target state in {:?}", Instant::now() - start);
+        let (value, policy) = executor
+            .execute(TAdapter::convert_game_to_nn_input(state))
+            .await;
+        let value = f32::try_from(value).unwrap();
+        let policy = TAdapter::get_estimated_policy(&policy, &moves);
+
+        let node_state = NodeState {
+            value,
+            is_terminal: false,
+            children: moves
+                .iter()
+                .zip(policy)
+                .map(|(r#move, policy)| {
+                    assert!(policy >= 0. && policy <= 1.);
+                    (
+                        MonteCarloNode::new(state.make_move(r#move)),
+                        MoveStaticInfo {
+                            priority: policy,
+                            player_switch: r#move.is_player_switch(),
+                        },
+                        AtomicRefCell::new(MoveDynamicInfo {
+                            total_score: 0.0,
+                            descends: 0,
+                        }),
+                    )
+                })
+                .collect(),
+        };
+        node_state
+    }
+
+    pub async fn do_simulations(&mut self, samples: usize, cpuct: f32) {
         let mut state_stack = vec![];
-        for _ in 0..n {
-            let mut cur = state;
-            let mut value;
+        for _ in 0..samples {
+            let mut cur = &self.root;
             // let start = Instant::now();
-            loop {
-                let nodes_cnt = self.nodes.len();
-                let moves = self.nodes[cur]
-                    .get_state(|state: &TGame| async {
-                        let moves = match state.get_state() {
-                            TerminationState::Terminal(val) => {
-                                return (
-                                    NodeState {
-                                        value: val,
-                                        is_terminal: true,
-                                        children: vec![],
-                                    },
-                                    vec![],
-                                );
-                            }
-                            TerminationState::Moves(moves) => moves,
-                        };
-                        // println!("Found target state in {:?}", Instant::now() - start);
-                        let (value, policy) = self
-                            .executor
-                            .execute(TAdapter::convert_game_to_nn_input(state))
-                            .await;
-                        let value = f32::try_from(value).unwrap();
-                        let policy = TAdapter::get_estimated_policy(policy, &moves);
-
-                        let node_state = NodeState {
-                            value,
-                            is_terminal: false,
-                            children: moves
-                                .iter()
-                                .zip(policy)
-                                .enumerate()
-                                .map(|(i, (r#move, policy))| {
-                                    (
-                                        nodes_cnt + i,
-                                        MoveStaticInfo {
-                                            priority: policy,
-                                            player_switch: r#move.is_player_switch(),
-                                        },
-                                        MoveDynamicInfo {
-                                            total_score: 0.0,
-                                            descends: 0,
-                                        },
-                                    )
-                                })
-                                .collect(),
-                        };
-                        (node_state, moves)
-                    })
-                    .await;
-
-                let mut finish = self.nodes[cur].node_state.as_ref().unwrap().is_terminal;
-                if let Some(moves) = moves {
-                    // self.inner_bytes_size += bytes;
-                    self.nodes.reserve(moves.len());
-                    for r#move in &moves {
-                        self.nodes.push(MonteCarloNode {
-                            game_state: self.nodes[cur].game_state.make_move(r#move),
-                            node_state: None,
-                        });
+            let mut value = loop {
+                let (node_state, created) = 'cl: {
+                    if let Some(r) = cur.node_state.get() {
+                        break 'cl (r, false);
                     }
-                    finish = true;
-                }
-                let node_state = self.nodes[cur].node_state.as_ref().unwrap();
-                if finish {
-                    value = node_state.value;
-                    break;
+                    let state = Self::create_node_state(&mut self.executor, &cur.game_state).await;
+                    cur.node_state.set(state).map_err(|_| ()).unwrap();
+                    (cur.node_state.get().unwrap(), true)
+                };
+
+                if created || node_state.is_terminal {
+                    break node_state.value;
                 }
 
                 let m = node_state.pick_next_move(cpuct);
-                state_stack.push((cur, m));
-                cur = node_state.children[m].0;
-            }
+                cur = &node_state.children[m].0;
+                state_stack.push((node_state, m));
+            };
 
             while let Some((state, r#move)) = state_stack.pop() {
-                let node_state = self.nodes[state].node_state.as_mut().unwrap();
+                let child = &state.children[r#move];
 
-                if node_state.children[r#move].1.player_switch {
+                if child.1.player_switch {
                     value = 1.0 - value;
                 }
 
-                let dyn_params = &mut node_state.children[r#move].2;
-                dyn_params.total_score += value;
-                dyn_params.descends += 1;
+                let mut dyn_info = child.2.borrow_mut();
+                dyn_info.total_score += value;
+                dyn_info.descends += 1;
             }
         }
     }
 
-    pub fn get_policy(&self, state: usize) -> Vec<f32> {
-        let node = &self.nodes[state];
-        let state = node.node_state.as_ref().unwrap();
-        let iter = state
-            .children
-            .iter()
-            .map(|(_, _, MoveDynamicInfo { descends, .. })| *descends);
-        let sm: usize = iter.clone().sum();
-
-        iter.map(move |v| v as f32 / sm as f32).collect::<Vec<_>>()
+    pub fn get_policy(&self) -> Vec<f32> {
+        self.root.node_state.get().unwrap().get_policy()
     }
 
-    pub fn get_next_state(&self, state: usize, move_id: usize) -> usize {
-        self.nodes[state].node_state.as_ref().unwrap().children[move_id].0
+    pub fn do_move(&mut self, move_id: usize) {
+        let root = self
+            .root
+            .node_state
+            .get_mut()
+            .unwrap()
+            .children
+            .swap_remove(move_id)
+            .0;
+        self.root = root;
     }
 }

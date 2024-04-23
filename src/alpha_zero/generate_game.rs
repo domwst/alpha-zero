@@ -1,11 +1,8 @@
-use rand::{
-    distributions::{Distribution, WeightedIndex},
-    thread_rng,
-};
+use rand::thread_rng;
 
 use crate::alpha_zero::{AlphaZeroAdapter, AlphaZeroNet, Game, MonteCarloTree, MoveParameters};
 
-use super::{NetworkBatchedExecutorHandle, TerminationState};
+use super::{sample_policy, NetworkBatchedExecutorHandle, TerminationState};
 
 pub async fn generate_self_played_game<
     TGame: Game + Clone,
@@ -20,9 +17,9 @@ pub async fn generate_self_played_game<
     executor: NetworkBatchedExecutorHandle<TNet>,
 ) -> Vec<(TGame, Vec<f32>, f32)> {
     let mut tree = MonteCarloTree::<TGame, TNet, TAdapter>::new(start.clone(), executor);
+    // let mut tree = tree.try_lock().unwrap();
     let mut turn = 0;
 
-    let mut state_id = 0;
     let mut state = start;
 
     let mut history = vec![];
@@ -32,28 +29,17 @@ pub async fn generate_self_played_game<
             TerminationState::Moves(moves) => moves,
             TerminationState::Terminal(value) => break value,
         };
-        tree.do_simulations(samples, c_puct, state_id).await;
-        let mut policy = tree.get_policy(state_id);
-        let original_policy = policy.clone();
+        tree.do_simulations(samples, c_puct).await;
+        let policy = tree.get_policy();
 
-        let mx = policy
-            .iter()
-            .copied()
-            .max_by(|a, b| a.partial_cmp(b).unwrap())
-            .unwrap();
-        let temp = temp(turn);
-        for v in &mut policy {
-            *v /= mx;
-            *v = v.powf(1.0 / (temp + 0.01));
-        }
+        let r#move = sample_policy(&policy, temp(turn), &mut thread_rng());
 
-        let r#move = WeightedIndex::new(policy)
-            .unwrap()
-            .sample(&mut thread_rng());
+        // println!("policy: {policy:?}, move: {move}");
+
         let new_state = state.make_move(&moves[r#move]);
-        state_id = tree.get_next_state(state_id, r#move);
+        tree.do_move(r#move);
 
-        history.push((state, original_policy, moves[r#move].is_player_switch()));
+        history.push((state, policy, moves[r#move].is_player_switch()));
         state = new_state;
         turn += 1;
     };
@@ -65,5 +51,6 @@ pub async fn generate_self_played_game<
         }
         result.push((state, policy, value));
     }
+    result.reverse();
     result
 }

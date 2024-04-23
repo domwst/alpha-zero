@@ -25,7 +25,7 @@ impl AlphaZeroAdapter<BoardState, TicTacToeNet> for TicTacToeAlphaZeroAdapter {
         res
     }
 
-    fn get_estimated_policy(policy: Tensor, moves: &[<BoardState as Game>::Move]) -> Vec<f32> {
+    fn get_estimated_policy(policy: &Tensor, moves: &[<BoardState as Game>::Move]) -> Vec<f32> {
         // let start = Instant::now();
         let policy = policy.exp();
         let mut res = Vec::with_capacity(moves.len());
@@ -52,6 +52,19 @@ impl AlphaZeroAdapter<BoardState, TicTacToeNet> for TicTacToeAlphaZeroAdapter {
             res[i][j] = pol;
         }
         Tensor::from_slice(res.flatten()).view([19, 19])
+    }
+
+    fn reflect_and_augment(state: &Tensor, policy: &Tensor) -> Vec<(Tensor, Tensor)> {
+        let mut rotations = Vec::with_capacity(8);
+        for reflect in [false, true] {
+            for rots in 0..4 {
+                let transform = move |inp: &Tensor| -> Tensor {
+                    if reflect { inp.flip([0]) } else { inp.copy() }.rot90(rots, [0, 1])
+                };
+                rotations.push((transform(state), transform(policy)));
+            }
+        }
+        rotations
     }
 }
 

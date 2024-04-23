@@ -7,6 +7,8 @@ use tokio::sync::mpsc::{
     channel, unbounded_channel, Receiver, Sender, UnboundedReceiver, UnboundedSender,
 };
 
+use crate::alpha_zero::Timer;
+
 use super::AlphaZeroNet;
 
 pub struct NetworkBatchedExecutor<Net: AlphaZeroNet> {
@@ -22,6 +24,18 @@ pub struct NetworkBatchedExecutorHandle<Net: AlphaZeroNet> {
     _p: PhantomData<Net>,
 }
 
+impl<Net: AlphaZeroNet> Clone for NetworkBatchedExecutorHandle<Net> {
+    fn clone(&self) -> Self {
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        Self {
+            task_sender: self.task_sender.clone(),
+            result_sender: tx,
+            result_receiver: rx,
+            _p: PhantomData,
+        }
+    }
+}
+
 impl<Net: AlphaZeroNet> NetworkBatchedExecutorHandle<Net> {
     pub async fn execute(&mut self, task: Tensor) -> (Tensor, Tensor) {
         self.task_sender
@@ -29,6 +43,10 @@ impl<Net: AlphaZeroNet> NetworkBatchedExecutorHandle<Net> {
             .unwrap();
         self.result_receiver.recv().await.unwrap()
     }
+}
+
+pub enum BatcherCommand {
+    SetBatchSize(usize),
 }
 
 impl<Net: AlphaZeroNet> NetworkBatchedExecutor<Net> {
@@ -53,8 +71,9 @@ impl<Net: AlphaZeroNet> NetworkBatchedExecutor<Net> {
 
     pub async fn serve(
         self,
-        max_batch: usize,
+        mut max_batch: usize,
         batch_acc_time: Duration,
+        mut command_receiver: Receiver<BatcherCommand>,
         (kind, device): (Kind, Device),
     ) -> Net {
         const MAX_PAR_RESPS: usize = 1;
@@ -75,6 +94,9 @@ impl<Net: AlphaZeroNet> NetworkBatchedExecutor<Net> {
 
         let mut acc_time = batch_acc_time;
 
+        let mut invocations = 0;
+        let mut total_tensors = 0;
+
         'main: loop {
             let deadline = tokio::time::sleep(acc_time);
             tokio::pin!(deadline);
@@ -93,22 +115,35 @@ impl<Net: AlphaZeroNet> NetworkBatchedExecutor<Net> {
                             break 'main;
                         }
                     },
+                    cmd = command_receiver.recv() => {
+                        let cmd = match cmd {
+                            Some(v) => v,
+                            None => continue,
+                        };
+                        match cmd {
+                            BatcherCommand::SetBatchSize(s) => {
+                                println!("Changing batch size to {s}");
+                                max_batch = s;
+                            },
+                        }
+                    }
                 }
                 if buf.len() >= max_batch {
                     // println!("Executor finished accumulating batch due to size");
-                    assert_eq!(buf.len(), max_batch);
                     break;
                 }
             }
 
+            if buf.len() != max_batch {
+                println!(
+                    "Batch of size {} (max_batch = {max_batch} expected",
+                    buf.len()
+                );
+            }
             if buf.is_empty() {
-                println!("Empty buf");
                 acc_time *= 2;
                 continue;
             } else {
-                if buf.len() != max_batch {
-                    println!("Batch of size {}", buf.len());
-                }
                 // println!("Batch of size {}", buf.len());
                 acc_time = batch_acc_time;
             }
@@ -118,22 +153,30 @@ impl<Net: AlphaZeroNet> NetworkBatchedExecutor<Net> {
                 responses.push(send);
             }
 
-            // let start = Instant::now();
+            let timer = Timer::new();
             let input = Tensor::stack(&inputs, 0).totype(kind).to(device);
-            // println!("Constructed input in {:?}", Instant::now() - start);
+            timer.print_if_greater(Duration::from_secs(1), "Input construction took {t}");
             let (values, policies) = nn.forward_t(&input, false);
-            // println!("Evaluated input in {:?}", Instant::now() - start);
+            timer.print_if_greater(Duration::from_secs(1), "Input evaluation took {t}");
             let values = values.to(Device::Cpu);
             let policies = policies.to(Device::Cpu);
-            // println!("Moved everything to GPU in {:?}", Instant::now() - start);
+            timer.print_if_greater(Duration::from_secs(1), "CPU conversion took {t}");
             response_tasks.push(tokio::spawn(async move {
                 for (i, resp) in responses.iter().enumerate() {
                     let value = values.get(i as i64);
                     let policy = policies.get(i as i64);
                     resp.send((value, policy)).await.unwrap();
                 }
-                // println!("Sent responses back in {:?}", Instant::now() - start);
+                timer.print_if_greater(Duration::from_secs(1), "Reply took {t}");
             }));
+
+            invocations += 1;
+            total_tensors += inputs.len();
+
+            if invocations % 1000 == 0 {
+                println!("Invocations: {invocations}, total tensors: {total_tensors}");
+            }
+
             inputs.clear();
             responses = Vec::with_capacity(max_batch);
             while response_tasks.len() > MAX_PAR_RESPS {
