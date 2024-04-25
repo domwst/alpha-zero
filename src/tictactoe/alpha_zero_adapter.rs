@@ -58,10 +58,10 @@ impl AlphaZeroAdapter<BoardState, TicTacToeNet> for TicTacToeAlphaZeroAdapter {
         let mut rotations = Vec::with_capacity(8);
         for reflect in [false, true] {
             for rots in 0..4 {
-                let transform = move |inp: &Tensor| -> Tensor {
-                    if reflect { inp.flip([0]) } else { inp.copy() }.rot90(rots, [0, 1])
+                let transform = move |inp: &Tensor, dim: i64| -> Tensor {
+                    if reflect { inp.flip([dim]) } else { inp.copy() }.rot90(rots, [dim, dim + 1])
                 };
-                rotations.push((transform(state), transform(policy)));
+                rotations.push((transform(state, 1), transform(policy, 0)));
             }
         }
         rotations

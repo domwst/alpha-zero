@@ -135,10 +135,7 @@ impl<Net: AlphaZeroNet> NetworkBatchedExecutor<Net> {
             }
 
             if buf.len() != max_batch {
-                println!(
-                    "Batch of size {} (max_batch = {max_batch} expected",
-                    buf.len()
-                );
+                println!("Batch of size {} (max_batch = {max_batch})", buf.len());
             }
             if buf.is_empty() {
                 acc_time *= 2;
