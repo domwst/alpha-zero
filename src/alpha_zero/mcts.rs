@@ -61,7 +61,7 @@ impl<T> NodeState<T> {
                 (if descends != 0 {
                     total_score / descends as f32
                 } else {
-                    0.5
+                    0.0
                 }) + c_puct * priority * (sqrt_total_visits / (1 + descends) as f32 + 1e-9)
             })
             .enumerate()
@@ -176,7 +176,7 @@ impl<TGame: Game, TNet: AlphaZeroNet, TAdapter: AlphaZeroAdapter<TGame, TNet>>
                 let child = &state.children[r#move];
 
                 if child.1.player_switch {
-                    value = 1.0 - value;
+                    value *= -1.0;
                 }
 
                 let mut dyn_info = child.2.borrow_mut();

@@ -170,7 +170,7 @@ impl AlphaZeroNet for TicTacToeNet {
         // let val = self.bn_fc_value_3.forward_t(&val, is_training);
         let val = self.fc_value_3.forward_t(&val, is_training);
         let val = val.view([val.size()[0]]);
-        let val = val.sigmoid();
+        let val = val.tanh();
 
         // Policy
         let policy = self.fc_mid_2.forward_t(&mid, is_training);
