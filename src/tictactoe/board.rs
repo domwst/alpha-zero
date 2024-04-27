@@ -124,7 +124,7 @@ impl Game for BoardState {
     fn get_state(&self) -> TerminationState<Self::Move> {
         match self.is_win() {
             CellState::X => return TerminationState::Terminal(1.),
-            CellState::O => return TerminationState::Terminal(0.),
+            CellState::O => return TerminationState::Terminal(-1.),
             CellState::Empty => {}
         }
 
@@ -136,7 +136,7 @@ impl Game for BoardState {
             .collect::<Vec<_>>();
 
         if moves.is_empty() {
-            TerminationState::Terminal(0.5)
+            TerminationState::Terminal(0.0)
         } else {
             TerminationState::Moves(moves)
         }
