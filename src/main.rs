@@ -1,4 +1,4 @@
-use std::{path::PathBuf, time::Duration};
+use std::{fs, path::PathBuf, time::Duration};
 
 use pytorch::{
     alpha_zero::{generate_self_played_game, AlphaZeroAdapter, AlphaZeroNet, ExecutorScope, Game},
@@ -8,6 +8,7 @@ use rand::{
     seq::{IteratorRandom, SliceRandom},
     thread_rng,
 };
+use rand_distr::{Dirichlet, Distribution};
 use tap::{tap, Tap};
 use tch::{
     nn::{self, OptimizerConfig},
@@ -17,6 +18,14 @@ use unzip3::Unzip3;
 
 fn get_checkpoint_file(epoch: usize) -> PathBuf {
     PathBuf::from(format!("checkpoints/{epoch:02}.safetensors"))
+}
+
+fn get_game_pic_file(epoch: usize, id: usize) -> PathBuf {
+    PathBuf::from(format!("games/{epoch:02}.{id:02}.png"))
+}
+
+fn get_stats_file(epoch: usize) -> PathBuf {
+    PathBuf::from(format!("stats/{epoch:02}.stats"))
 }
 
 #[tokio::main]
@@ -31,7 +40,7 @@ async fn main() -> anyhow::Result<()> {
     if get_checkpoint_file(0)
         .parent()
         .map(|p| p.exists())
-        .unwrap_or(false)
+        .unwrap_or(true)
     {
         println!("Checkpoint folder found");
         let mut cp = 0;
@@ -44,11 +53,18 @@ async fn main() -> anyhow::Result<()> {
             vs.load(get_checkpoint_file(cp))?;
             start_epoch = cp + 1;
         }
+    } else {
+        if let Some(p) = get_checkpoint_file(0).parent() {
+            println!("Creating checkpoints folder");
+            fs::create_dir_all(p)?;
+        }
     }
 
-    // let executor = NetworkBatchedExecutor::new(net);
-    //
-    // let mut worker_handles = FuturesUnordered::new();
+    if let Some(p) = get_game_pic_file(0, 0).parent() {
+        if !p.exists() {
+            fs::create_dir_all(p)?;
+        }
+    }
 
     for epoch in start_epoch.. {
         let mut executor = ExecutorScope::new(
@@ -69,7 +85,7 @@ async fn main() -> anyhow::Result<()> {
                     // 512,
                     // 2048,
                     32,
-                    1.0 / 32.0,
+                    1.0,
                     |_| 1.0,
                     handle,
                 )
@@ -183,12 +199,9 @@ async fn main() -> anyhow::Result<()> {
 
         println!("Total value and policy loss: ({total_values_loss}, {total_policies_loss})");
 
-        vs.save(format!("checkpoints/{epoch:02}.safetensors"))
-            .unwrap();
+        vs.save(get_checkpoint_file(epoch))?;
         for (i, sample_game) in sample_games.into_iter().enumerate() {
-            generate_game_image(&sample_game)
-                .save(format!("games/{epoch:02}.{i:02}.png"))
-                .unwrap();
+            generate_game_image(&sample_game).save(get_game_pic_file(epoch, i))?;
         }
     }
 
