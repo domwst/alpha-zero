@@ -1,14 +1,15 @@
-use std::{fs, path::PathBuf, time::Duration};
+use std::{fs, io::Write, path::PathBuf, time::Duration};
 
 use pytorch::{
-    alpha_zero::{generate_self_played_game, AlphaZeroAdapter, AlphaZeroNet, ExecutorScope, Game},
+    alpha_zero::{
+        generate_self_played_game, AlphaZeroAdapter, AlphaZeroNet, ExecutorScope, Game, Timer,
+    },
     tictactoe::{generate_game_image, BoardState, TicTacToeAlphaZeroAdapter, TicTacToeNet},
 };
 use rand::{
     seq::{IteratorRandom, SliceRandom},
     thread_rng,
 };
-use rand_distr::{Dirichlet, Distribution};
 use tap::{tap, Tap};
 use tch::{
     nn::{self, OptimizerConfig},
@@ -62,11 +63,20 @@ async fn main() -> anyhow::Result<()> {
 
     if let Some(p) = get_game_pic_file(0, 0).parent() {
         if !p.exists() {
+            println!("Creating games directory");
+            fs::create_dir_all(p)?;
+        }
+    }
+
+    if let Some(p) = get_stats_file(0).parent() {
+        if !p.exists() {
+            println!("Creating stats directory");
             fs::create_dir_all(p)?;
         }
     }
 
     for epoch in start_epoch.. {
+        let timer = Timer::new();
         let mut executor = ExecutorScope::new(
             net,
             192,
@@ -84,7 +94,8 @@ async fn main() -> anyhow::Result<()> {
                     // 128,
                     // 512,
                     // 2048,
-                    32,
+                    256,
+                    // 32,
                     1.0,
                     |_| 1.0,
                     handle,
@@ -98,8 +109,8 @@ async fn main() -> anyhow::Result<()> {
         let (lim_tx, mut lim_rx) = tokio::sync::mpsc::channel(1);
         tokio::spawn({
             async move {
-                for _ in 0..24 {
-                    tokio::time::sleep(Duration::from_secs(6)).await;
+                for _ in 0..8 {
+                    tokio::time::sleep(Duration::from_secs(120)).await;
                     if lim_tx.send(()).await.is_err() {
                         break;
                     }
@@ -114,9 +125,10 @@ async fn main() -> anyhow::Result<()> {
         loop {
             tokio::select! {
                 Some(()) = lim_rx.recv() => {
-                    println!("Increasing parallelism by 16");
-                    executor.increase_parallelism(16).await;
-                    batch_size += 16;
+                    let delta = 16;
+                    println!("Increasing parallelism by {delta}");
+                    executor.increase_parallelism(delta).await;
+                    batch_size += delta;
                     executor.set_batch_size(batch_size).await;
                 }
                 task_result = executor.next() => {
@@ -132,11 +144,10 @@ async fn main() -> anyhow::Result<()> {
             }
         }
 
-        println!("Average score is {}", total_score / total_games as f32);
-        println!(
-            "Average length is {}",
-            total_length as f32 / total_games as f32
-        );
+        let avg_score = total_score / total_games as f32;
+        let avg_length = total_length as f32 / total_games as f32;
+        println!("Average score is {}", avg_score);
+        println!("Average length is {}", avg_length);
 
         net = executor.join().await;
 
@@ -203,6 +214,16 @@ async fn main() -> anyhow::Result<()> {
         for (i, sample_game) in sample_games.into_iter().enumerate() {
             generate_game_image(&sample_game).save(get_game_pic_file(epoch, i))?;
         }
+
+        let mut f = fs::File::create(get_stats_file(epoch))?;
+        writeln!(f, "Total games: {total_games}")?;
+        writeln!(f, "Average game length: {avg_length}")?;
+        writeln!(f, "Average game score: {avg_score}")?;
+        writeln!(f, "Total game length: {total_length}")?;
+        writeln!(f, "Total game score: {total_score}")?;
+        writeln!(f, "Value loss: {total_values_loss}")?;
+        writeln!(f, "Policy loss: {total_policies_loss}")?;
+        writeln!(f, "Epoch duration: {:?}", timer.passed())?;
     }
 
     Ok(())

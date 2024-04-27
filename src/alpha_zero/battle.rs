@@ -1,4 +1,4 @@
-use rand::{thread_rng, Rng};
+use rand::{rngs::SmallRng, thread_rng, Rng, SeedableRng};
 
 use super::{
     sample_policy, AlphaZeroAdapter, AlphaZeroNet, Game, MonteCarloTree, MoveParameters,
@@ -11,7 +11,7 @@ async fn make_move<
     TGame: Game + Clone,
     TAdapter1: AlphaZeroAdapter<TGame, TNet1>,
     TAdapter2: AlphaZeroAdapter<TGame, TNet2>,
-    R: Rng,
+    R: Rng + Send + ?Sized,
 >(
     samples: usize,
     c_puct: f32,
@@ -20,8 +20,8 @@ async fn make_move<
     tree2: &mut MonteCarloTree<TGame, TNet2, TAdapter2>,
     rng: &mut R,
 ) -> (usize, Vec<f32>) {
-    tree1.do_simulations(samples, c_puct).await;
-    tree2.do_simulations(2, c_puct).await;
+    tree1.do_simulations(samples, c_puct, rng).await;
+    tree2.do_simulations(2, c_puct, rng).await;
     let policy = tree1.get_policy();
     let r#move = sample_policy(&policy, temp, rng);
 
@@ -55,6 +55,8 @@ pub async fn do_battle<
 
     let mut history = vec![];
 
+    let mut rng = SmallRng::from_rng(thread_rng()).unwrap();
+
     let score = loop {
         let moves = match state.get_state() {
             TerminationState::Terminal(v) => break v,
@@ -62,25 +64,9 @@ pub async fn do_battle<
         };
         let temp = temp(turn);
         let (r#move, policy) = if first {
-            make_move(
-                samples,
-                c_puct,
-                temp,
-                &mut tree1,
-                &mut tree2,
-                &mut thread_rng(),
-            )
-            .await
+            make_move(samples, c_puct, temp, &mut tree1, &mut tree2, &mut rng).await
         } else {
-            make_move(
-                samples,
-                c_puct,
-                temp,
-                &mut tree2,
-                &mut tree1,
-                &mut thread_rng(),
-            )
-            .await
+            make_move(samples, c_puct, temp, &mut tree2, &mut tree1, &mut rng).await
         };
 
         let new_state = state.make_move(&moves[r#move]);

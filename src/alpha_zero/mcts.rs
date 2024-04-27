@@ -1,6 +1,8 @@
-use std::{marker::PhantomData, sync::OnceLock};
+use std::{marker::PhantomData, ptr, sync::OnceLock};
 
 use atomic_refcell::AtomicRefCell;
+use rand::Rng;
+use rand_distr::{Dirichlet, Distribution};
 
 use crate::alpha_zero::TerminationState;
 
@@ -43,7 +45,11 @@ impl<T> MonteCarloNode<T> {
 }
 
 impl<T> NodeState<T> {
-    fn pick_next_move(&self, c_puct: f32) -> usize {
+    fn pick_next_move_internal(
+        &self,
+        c_puct: f32,
+        priority_adj: impl Fn(f32, usize) -> f32,
+    ) -> usize {
         let total_visits: usize = self
             .children
             .iter()
@@ -53,19 +59,23 @@ impl<T> NodeState<T> {
 
         self.children
             .iter()
-            .map(|(_, MoveStaticInfo { priority, .. }, d)| {
+            .enumerate()
+            .map(|(i, (_, MoveStaticInfo { priority, .. }, d))| {
                 let MoveDynamicInfo {
                     total_score,
                     descends,
                 } = *d.borrow();
-                (if descends != 0 {
-                    total_score / descends as f32
-                } else {
-                    0.0
-                }) + c_puct * priority * (sqrt_total_visits / (1 + descends) as f32 + 1e-9)
+                (
+                    (if descends != 0 {
+                        total_score / descends as f32
+                    } else {
+                        0.0
+                    }) + c_puct
+                        * priority_adj(*priority, i)
+                        * (sqrt_total_visits / (1 + descends) as f32 + 1e-9),
+                    i,
+                )
             })
-            .enumerate()
-            .map(|(i, v)| (v, i))
             .max_by(|(a, _), (b, _)| match a.partial_cmp(b) {
                 None => panic!("Failed to compare {a} with {b}"),
                 Some(res) => res,
@@ -74,8 +84,15 @@ impl<T> NodeState<T> {
             .1
     }
 
+    fn pick_next_move(&self, c_puct: f32) -> usize {
+        self.pick_next_move_internal(c_puct, |p, _| p)
+    }
+
+    fn pick_next_move_root(&self, c_puct: f32, eps: f32, adj: &[f32]) -> usize {
+        self.pick_next_move_internal(c_puct, move |p, i| p * (1.0 - eps) + adj[i] * eps)
+    }
+
     fn get_policy(&self) -> Vec<f32> {
-        // println!("{:?}", self.children);
         let iter = self.children.iter().map(|(_, _, d)| d.borrow().descends);
         let sm: usize = iter.clone().sum();
 
@@ -148,8 +165,15 @@ impl<TGame: Game, TNet: AlphaZeroNet, TAdapter: AlphaZeroAdapter<TGame, TNet>>
         node_state
     }
 
-    pub async fn do_simulations(&mut self, samples: usize, cpuct: f32) {
+    pub async fn do_simulations<R: Rng + Send + ?Sized>(
+        &mut self,
+        samples: usize,
+        cpuct: f32,
+        rng: &mut R,
+    ) {
         let mut state_stack = vec![];
+        let mut distr = None;
+        let is_root = |node: &MonteCarloNode<TGame>| ptr::eq(node, &self.root);
         for _ in 0..samples {
             let mut cur = &self.root;
             // let start = Instant::now();
@@ -162,12 +186,20 @@ impl<TGame: Game, TNet: AlphaZeroNet, TAdapter: AlphaZeroAdapter<TGame, TNet>>
                     cur.node_state.set(state).map_err(|_| ()).unwrap();
                     (cur.node_state.get().unwrap(), true)
                 };
+                if distr.is_none() && is_root(cur) && node_state.children.len() >= 2 {
+                    distr = Some(Dirichlet::new_with_size(0.1, node_state.children.len()).unwrap());
+                }
 
                 if created || node_state.is_terminal {
                     break node_state.value;
                 }
 
-                let m = node_state.pick_next_move(cpuct);
+                let m = if is_root(cur) && node_state.children.len() >= 2 {
+                    let adj = distr.as_ref().unwrap().sample(rng);
+                    node_state.pick_next_move_root(cpuct, 0.25, &adj)
+                } else {
+                    node_state.pick_next_move(cpuct)
+                };
                 cur = &node_state.children[m].0;
                 state_stack.push((node_state, m));
             };

@@ -1,4 +1,4 @@
-use rand::thread_rng;
+use rand::{rngs::SmallRng, thread_rng, SeedableRng};
 
 use crate::alpha_zero::{AlphaZeroAdapter, AlphaZeroNet, Game, MonteCarloTree, MoveParameters};
 
@@ -17,8 +17,8 @@ pub async fn generate_self_played_game<
     executor: NetworkBatchedExecutorHandle<TNet>,
 ) -> Vec<(TGame, Vec<f32>, f32)> {
     let mut tree = MonteCarloTree::<TGame, TNet, TAdapter>::new(start.clone(), executor);
-    // let mut tree = tree.try_lock().unwrap();
     let mut turn = 0;
+    let mut rng = SmallRng::from_rng(thread_rng()).unwrap();
 
     let mut state = start;
 
@@ -29,10 +29,10 @@ pub async fn generate_self_played_game<
             TerminationState::Moves(moves) => moves,
             TerminationState::Terminal(value) => break value,
         };
-        tree.do_simulations(samples, c_puct).await;
+        tree.do_simulations(samples, c_puct, &mut rng).await;
         let policy = tree.get_policy();
 
-        let r#move = sample_policy(&policy, temp(turn), &mut thread_rng());
+        let r#move = sample_policy(&policy, temp(turn), &mut rng);
 
         // println!("policy: {policy:?}, move: {move}");
 
