@@ -5,7 +5,7 @@ pub trait MoveParameters {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TerminationState<Move> {
     Terminal(f32),
-    Moves(Vec<Move>),
+    Moves(Box<[Move]>),
 }
 
 impl<Move> TerminationState<Move> {
@@ -16,10 +16,10 @@ impl<Move> TerminationState<Move> {
         }
     }
 
-    pub fn get_moves(self) -> Option<Vec<Move>> {
+    pub fn get_moves(self) -> Option<&[Move]> {
         match self {
             TerminationState::Terminal(_) => None,
-            TerminationState::Moves(moves) => Some(moves),
+            TerminationState::Moves(moves) => Some(&*moves),
         }
     }
 }

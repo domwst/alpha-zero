@@ -7,7 +7,7 @@ use tokio::sync::mpsc::{
     channel, unbounded_channel, Receiver, Sender, UnboundedReceiver, UnboundedSender,
 };
 
-use crate::alpha_zero::Timer;
+use crate::util::Timer;
 
 use super::AlphaZeroNet;
 

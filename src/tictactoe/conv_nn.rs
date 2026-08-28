@@ -7,7 +7,7 @@ use tch::{
 
 use crate::alpha_zero::AlphaZeroNet;
 
-pub struct TicTacToeNet {
+pub struct TicTacToeConvNet {
     conv1: Conv2D,
     bn_conv2: BatchNorm,
     conv2: Conv2D,
@@ -35,7 +35,7 @@ pub struct TicTacToeNet {
     fc_value_3: Linear,
 }
 
-impl TicTacToeNet {
+impl TicTacToeConvNet {
     pub fn new(path: &nn::Path) -> Self {
         Self {
             conv1: nn::conv2d(path / "conv1", 2, 10, 4, Default::default()), // 2x19x19 -> 10x16x16
@@ -123,7 +123,7 @@ impl TicTacToeNet {
     }
 }
 
-impl AlphaZeroNet for TicTacToeNet {
+impl AlphaZeroNet for TicTacToeConvNet {
     fn forward_t(&self, xs: &Tensor, is_training: bool) -> (Tensor, Tensor) {
         let layer1 = self.conv1.forward_t(xs, is_training);
         assert_eq!(layer1.size()[1..], [10, 16, 16]);

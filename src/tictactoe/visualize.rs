@@ -37,6 +37,10 @@ pub fn generate_game_image(
     );
 
     for (i, (state, pol, _)) in history.iter().enumerate() {
+        let mut state = state.clone();
+        if i % 2 == 1 {
+            state.flip_players_inplace();
+        }
         let x = i as u32 * (fld + line);
 
         let mut pol = pol.iter().copied();

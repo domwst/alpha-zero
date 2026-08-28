@@ -47,7 +47,7 @@ pub async fn generate_self_played_game<
     let mut result = Vec::with_capacity(history.len());
     while let Some((state, policy, switch)) = history.pop() {
         if switch {
-            value = 1.0 - value;
+            value = -value;
         }
         result.push((state, policy, value));
     }

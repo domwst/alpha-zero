@@ -1,25 +1,18 @@
 use std::ops::{Index, Range};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use serde_big_array::BigArray;
 
 use crate::alpha_zero::{Game, MoveParameters, TerminationState};
 
 const N: usize = 19;
 
-const BYTES: usize = (N * N - 1) / (std::mem::size_of::<u8>() * 4) + 1;
+const BYTES: usize = (N * N - 1) / (std::mem::size_of::<u8>() * (8 / 2)) + 1;
 
-#[derive(Clone, Hash, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Hash, PartialEq, Eq)]
 pub struct BoardState {
+    #[serde(with = "BigArray")]
     state: [u8; BYTES],
-}
-
-impl Serialize for BoardState {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.collect_seq(&self.state)
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -36,6 +29,8 @@ impl Default for BoardState {
 }
 
 impl BoardState {
+    pub const N: usize = N;
+
     pub fn new() -> Self {
         Self { state: [0; BYTES] }
     }
@@ -133,7 +128,7 @@ impl Game for BoardState {
             .flatten()
             .filter(|&crd| self[crd] == CellState::Empty)
             .map(|(i, j)| TicTacToeMove(i, j))
-            .collect::<Vec<_>>();
+            .collect();
 
         if moves.is_empty() {
             TerminationState::Terminal(0.0)

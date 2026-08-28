@@ -38,8 +38,13 @@ impl BatchSizeManager {
                 None
             }
         } else if tasks < self.current_batch_size {
-            self.current_batch_size = ((self.current_batch_size * num) / denom).max(1);
-            Some(self.current_batch_size)
+            let new = ((self.current_batch_size * num) / denom).max(1);
+            if new != self.current_batch_size {
+                self.current_batch_size = new;
+                Some(self.current_batch_size)
+            } else {
+                None
+            }
         } else {
             None
         }
@@ -100,17 +105,22 @@ impl<T, TNet: AlphaZeroNet + Send + 'static> ExecutorScope<T, TNet> {
     >(
         &self,
         f: F,
-    ) where
+    ) -> impl Future<Output = ()>
+    where
         T: Send + 'static,
     {
+        let (tx, rx) = tokio::sync::oneshot::channel();
         self.results.push({
             let f = f(self.executor_handle.clone());
             let par = self.parallelism.clone();
             tokio::spawn(async move {
                 let _perm = par.acquire().await.unwrap();
-                f.await
+                let res = f.await;
+                let _ = tx.send(());
+                res
             })
         });
+        async move { rx.await.unwrap() }
     }
 
     pub async fn increase_parallelism(&mut self, delta: usize) {

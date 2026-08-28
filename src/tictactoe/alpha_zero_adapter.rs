@@ -2,69 +2,99 @@ use tch::Tensor;
 
 use crate::alpha_zero::{AlphaZeroAdapter, Game};
 
-use super::{BoardState, CellState, TicTacToeMove, TicTacToeNet};
+use super::{BoardState, CellState, TicTacToeConvNet, TicTacToeMove, TicTacToeResNet};
 
-pub struct TicTacToeAlphaZeroAdapter;
+pub struct TicTacToeConvAlphaZeroAdapter;
 
-impl AlphaZeroAdapter<BoardState, TicTacToeNet> for TicTacToeAlphaZeroAdapter {
-    fn convert_game_to_nn_input(state: &BoardState) -> tch::Tensor {
-        // let start = Instant::now();
-        let mut fld = [[[0; 19]; 19]; 2];
-        for i in 0..19 {
-            for j in 0..19 {
-                let l = match state[(i, j)] {
-                    CellState::X => 0,
-                    CellState::O => 1,
-                    CellState::Empty => continue,
-                };
-                fld[l][i][j] = 1;
-            }
+pub struct TicTacToeResAlphaZeroAdapter;
+
+fn game_to_nn_input(state: &BoardState) -> Tensor {
+    let mut fld = [[[0; 19]; 19]; 2];
+    for i in 0..19 {
+        for j in 0..19 {
+            let l = match state[(i, j)] {
+                CellState::X => 0,
+                CellState::O => 1,
+                CellState::Empty => continue,
+            };
+            fld[l][i][j] = 1;
         }
-        let res = Tensor::from_slice(fld.flatten().flatten()).view([2, 19, 19]);
-        // println!("Converted input to tensor in {:?}", Instant::now() - start);
-        res
+    }
+    Tensor::from_slice(fld.flatten().flatten()).view([2, 19, 19])
+}
+
+fn estimated_policy(policy: &Tensor, moves: &[<BoardState as Game>::Move]) -> Vec<f32> {
+    let policy = policy.exp();
+    let mut res = Vec::with_capacity(moves.len());
+    let policy = <Vec<f32>>::try_from(policy.view([-1])).unwrap();
+    for &TicTacToeMove(i, j) in moves {
+        res.push(policy[i * 19 + j]);
+    }
+
+    let sum = res.iter().sum::<f32>();
+    if sum > 0. {
+        for x in &mut res {
+            *x /= sum;
+        }
+    }
+
+    res
+}
+
+fn policy_to_nn(policy: &[f32], moves: &[<BoardState as Game>::Move]) -> tch::Tensor {
+    let mut res = [[0f32; 19]; 19];
+    for (&TicTacToeMove(i, j), &pol) in moves.iter().zip(policy) {
+        res[i][j] = pol;
+    }
+    Tensor::from_slice(res.flatten()).view([19, 19])
+}
+
+fn reflect_and_augment(state: &Tensor, policy: &Tensor) -> Vec<(Tensor, Tensor)> {
+    let mut rotations = Vec::with_capacity(8);
+    for reflect in [false, true] {
+        for rots in 0..4 {
+            let transform = move |inp: &Tensor, dim: i64| -> Tensor {
+                if reflect { inp.flip([dim]) } else { inp.copy() }.rot90(rots, [dim, dim + 1])
+            };
+            rotations.push((transform(state, 1), transform(policy, 0)));
+        }
+    }
+    rotations
+}
+
+impl AlphaZeroAdapter<BoardState, TicTacToeConvNet> for TicTacToeConvAlphaZeroAdapter {
+    fn convert_game_to_nn_input(state: &BoardState) -> tch::Tensor {
+        game_to_nn_input(state)
     }
 
     fn get_estimated_policy(policy: &Tensor, moves: &[<BoardState as Game>::Move]) -> Vec<f32> {
-        // let start = Instant::now();
-        let policy = policy.exp();
-        let mut res = Vec::with_capacity(moves.len());
-        let policy = <Vec<f32>>::try_from(policy.view([-1])).unwrap();
-        for &TicTacToeMove(i, j) in moves {
-            res.push(policy[i * 19 + j]);
-        }
-
-        let sum = res.iter().sum::<f32>();
-        if sum > 0. {
-            for x in &mut res {
-                *x /= sum;
-            }
-        }
-
-        // println!("Calculated policy in {:?}", Instant::now() - start);
-
-        res
+        estimated_policy(policy, moves)
     }
 
     fn convert_policy_to_nn(policy: &[f32], moves: &[<BoardState as Game>::Move]) -> tch::Tensor {
-        let mut res = [[0f32; 19]; 19];
-        for (&TicTacToeMove(i, j), &pol) in moves.iter().zip(policy) {
-            res[i][j] = pol;
-        }
-        Tensor::from_slice(res.flatten()).view([19, 19])
+        policy_to_nn(policy, moves)
     }
 
     fn reflect_and_augment(state: &Tensor, policy: &Tensor) -> Vec<(Tensor, Tensor)> {
-        let mut rotations = Vec::with_capacity(8);
-        for reflect in [false, true] {
-            for rots in 0..4 {
-                let transform = move |inp: &Tensor, dim: i64| -> Tensor {
-                    if reflect { inp.flip([dim]) } else { inp.copy() }.rot90(rots, [dim, dim + 1])
-                };
-                rotations.push((transform(state, 1), transform(policy, 0)));
-            }
-        }
-        rotations
+        reflect_and_augment(state, policy)
+    }
+}
+
+impl AlphaZeroAdapter<BoardState, TicTacToeResNet> for TicTacToeResAlphaZeroAdapter {
+    fn convert_game_to_nn_input(state: &BoardState) -> tch::Tensor {
+        game_to_nn_input(state)
+    }
+
+    fn get_estimated_policy(policy: &Tensor, moves: &[<BoardState as Game>::Move]) -> Vec<f32> {
+        estimated_policy(policy, moves)
+    }
+
+    fn convert_policy_to_nn(policy: &[f32], moves: &[<BoardState as Game>::Move]) -> tch::Tensor {
+        policy_to_nn(policy, moves)
+    }
+
+    fn reflect_and_augment(state: &Tensor, policy: &Tensor) -> Vec<(Tensor, Tensor)> {
+        reflect_and_augment(state, policy)
     }
 }
 
@@ -72,12 +102,7 @@ impl AlphaZeroAdapter<BoardState, TicTacToeNet> for TicTacToeAlphaZeroAdapter {
 mod tests {
     use tch::IndexOp;
 
-    use crate::{
-        alpha_zero::AlphaZeroAdapter,
-        tictactoe::{BoardState, CellState},
-    };
-
-    use super::TicTacToeAlphaZeroAdapter;
+    use crate::tictactoe::{alpha_zero_adapter::game_to_nn_input, BoardState, CellState};
 
     #[test]
     fn convert_board_to_tensor() {
@@ -85,7 +110,7 @@ mod tests {
         game.set_inplace((10, 0), CellState::O);
         game.set_inplace((1, 3), CellState::X);
 
-        let tensor = TicTacToeAlphaZeroAdapter::convert_game_to_nn_input(&game);
+        let tensor = game_to_nn_input(&game);
         assert_eq!(tensor.size(), [2, 19, 19]);
 
         let ones = [(1, 10, 0), (0, 1, 3)];

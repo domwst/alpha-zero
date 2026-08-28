@@ -1,9 +1,72 @@
 use rand::{rngs::SmallRng, thread_rng, Rng, SeedableRng};
+use std::future::Future;
 
 use super::{
     sample_policy, AlphaZeroAdapter, AlphaZeroNet, Game, MonteCarloTree, MoveParameters,
     NetworkBatchedExecutorHandle, TerminationState,
 };
+
+pub trait Agent<TGame: Game> {
+    fn make_move<'a>(&'a mut self) -> impl Future<Output = usize> + Send + 'a;
+    fn record_opponents_move<'a>(
+        &'a mut self,
+        r#move: usize,
+    ) -> impl Future<Output = ()> + Send + 'a;
+}
+
+pub struct MCTSAgent<
+    TGame: Game,
+    TNet: AlphaZeroNet,
+    TAdapter: AlphaZeroAdapter<TGame, TNet>,
+    R: Rng,
+    F: FnMut(usize) -> f32,
+> {
+    tree: MonteCarloTree<TGame, TNet, TAdapter>,
+    c_puct: f32,
+    samples: usize,
+    rng: R,
+    temp: F,
+    r#move: usize,
+}
+
+impl<
+        TGame: Game + Send + Sync,
+        TNet: AlphaZeroNet + Send,
+        TAdapter: AlphaZeroAdapter<TGame, TNet> + Send,
+        R: Rng + Send,
+        F: FnMut(usize) -> f32 + Send,
+    > Agent<TGame> for MCTSAgent<TGame, TNet, TAdapter, R, F>
+where
+    TGame::Move: Send,
+{
+    fn make_move<'a>(&'a mut self) -> impl Future<Output = usize> + Send + 'a {
+        async {
+            self.tree
+                .do_simulations(self.samples, self.c_puct, &mut self.rng)
+                .await;
+            let r#move = sample_policy(
+                &self.tree.get_policy(),
+                (self.temp)(self.r#move),
+                &mut self.rng,
+            );
+            self.r#move += 1;
+            self.tree.do_move(r#move);
+            r#move
+        }
+    }
+
+    fn record_opponents_move<'a>(
+        &'a mut self,
+        r#move: usize,
+    ) -> impl Future<Output = ()> + Send + 'a {
+        async move {
+            self.tree
+                .do_simulations(2, self.c_puct, &mut self.rng)
+                .await;
+            self.tree.do_move(r#move);
+        }
+    }
+}
 
 async fn make_move<
     TNet1: AlphaZeroNet,
@@ -78,7 +141,7 @@ pub async fn do_battle<
     };
 
     for h in &mut history {
-        h.2 = if h.3 == first { score } else { 1.0 - score };
+        h.2 = if h.3 == first { score } else { -score };
     }
 
     history
