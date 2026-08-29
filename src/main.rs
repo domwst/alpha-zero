@@ -2,7 +2,7 @@ use std::{
     collections::VecDeque,
     fs,
     io::{self, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     str::FromStr,
     time::Duration,
 };
@@ -32,6 +32,36 @@ use unzip3::Unzip3;
 
 fn get_checkpoint_file(epoch: usize) -> PathBuf {
     PathBuf::from(format!("checkpoints/{epoch:02}.safetensors"))
+}
+
+fn find_latest_checkpoint(dir: &Path) -> io::Result<Option<(usize, PathBuf)>> {
+    let mut latest = None;
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("safetensors") {
+            continue;
+        }
+        let Some(epoch) = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .and_then(|stem| stem.parse::<usize>().ok())
+        else {
+            continue;
+        };
+
+        if latest
+            .as_ref()
+            .map_or(true, |(latest_epoch, _)| epoch > *latest_epoch)
+        {
+            latest = Some((epoch, path));
+        }
+    }
+    Ok(latest)
 }
 
 fn get_game_pic_file(epoch: usize, id: usize) -> PathBuf {
@@ -219,27 +249,17 @@ async fn main() -> anyhow::Result<()> {
     let mut opt = nn::Adam::default().wd(1e-4).build(&vs, 1e-3)?;
 
     let mut start_epoch = 0;
-    if get_checkpoint_file(0)
-        .parent()
-        .map(|p| p.exists())
-        .unwrap_or(true)
-    {
+    let checkpoint_dir = get_checkpoint_file(0).parent().unwrap().to_owned();
+    if checkpoint_dir.exists() {
         println!("Checkpoint folder found");
-        let mut cp = 0;
-        while get_checkpoint_file(cp).exists() {
-            cp += 1;
-        }
-        if cp > 0 {
-            cp -= 1;
+        if let Some((cp, checkpoint)) = find_latest_checkpoint(&checkpoint_dir)? {
             println!("Restoring from checkpoint {cp}");
-            vs.load(get_checkpoint_file(cp))?;
+            vs.load(checkpoint)?;
             start_epoch = cp + 1;
         }
     } else {
-        if let Some(p) = get_checkpoint_file(0).parent() {
-            println!("Creating checkpoints folder");
-            fs::create_dir_all(p)?;
-        }
+        println!("Creating checkpoints folder");
+        fs::create_dir_all(checkpoint_dir)?;
     }
 
     if let Some(p) = get_game_pic_file(0, 0).parent() {
@@ -427,4 +447,36 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::find_latest_checkpoint;
+
+    #[test]
+    fn latest_checkpoint_allows_numbering_gaps() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("alz-checkpoints-{unique}"));
+        std::fs::create_dir(&dir).unwrap();
+        for name in [
+            "00.safetensors",
+            "01.safetensors",
+            "376.safetensors",
+            "newest.safetensors",
+            "999.stats",
+        ] {
+            std::fs::write(dir.join(name), b"").unwrap();
+        }
+
+        let (epoch, path) = find_latest_checkpoint(&dir).unwrap().unwrap();
+        assert_eq!(epoch, 376);
+        assert_eq!(path, dir.join("376.safetensors"));
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }
