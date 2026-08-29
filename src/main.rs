@@ -1,5 +1,6 @@
+mod training_snapshot;
+
 use std::{
-    collections::VecDeque,
     fs,
     io::{self, Write},
     path::{Path, PathBuf},
@@ -29,39 +30,11 @@ use tch::{
     Device, Kind, Reduction, Tensor,
 };
 
-fn get_checkpoint_file(epoch: usize) -> PathBuf {
-    PathBuf::from(format!("checkpoints/{epoch:02}.safetensors"))
-}
+use training_snapshot::{
+    find_latest_snapshot, load_training_snapshot, save_training_snapshot, ReplayBuffer,
+};
 
-fn find_latest_checkpoint(dir: &Path) -> io::Result<Option<(usize, PathBuf)>> {
-    let mut latest = None;
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        if !entry.file_type()?.is_file() {
-            continue;
-        }
-
-        let path = entry.path();
-        if path.extension().and_then(|ext| ext.to_str()) != Some("safetensors") {
-            continue;
-        }
-        let Some(epoch) = path
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .and_then(|stem| stem.parse::<usize>().ok())
-        else {
-            continue;
-        };
-
-        if latest
-            .as_ref()
-            .map_or(true, |(latest_epoch, _)| epoch > *latest_epoch)
-        {
-            latest = Some((epoch, path));
-        }
-    }
-    Ok(latest)
-}
+const GAMES_IN_HISTORY: usize = 1800;
 
 fn get_game_pic_file(epoch: usize, id: usize) -> PathBuf {
     PathBuf::from(format!("games/{epoch:02}.{id:02}.png"))
@@ -87,7 +60,9 @@ async fn play_nn_only_game() -> anyhow::Result<()> {
     let net = TicTacToeResNet::new(&vs.root());
     // let mut opt = nn::Adam::default().wd(1e-4).build(&vs, 1e-3)?;
 
-    vs.load(get_checkpoint_file(127))?;
+    find_latest_snapshot(Path::new("checkpoints"))?
+        .ok_or_else(|| anyhow::anyhow!("No complete training snapshot found"))?
+        .load_model(&mut vs)?;
 
     let mut executor = ExecutorScope::new(
         net,
@@ -225,7 +200,9 @@ async fn main() -> anyhow::Result<()> {
     // let net = TicTacToeResNet::new(&vs.root());
     // // let mut opt = nn::Adam::default().wd(1e-4).build(&vs, 1e-3)?;
     //
-    // vs.load(get_checkpoint_file(376))?;
+    // find_latest_snapshot(Path::new("checkpoints"))?
+    //     .unwrap()
+    //     .load_model(&mut vs)?;
     //
     // let mut executor = ExecutorScope::new(
     //     net,
@@ -250,17 +227,18 @@ async fn main() -> anyhow::Result<()> {
     let mut opt = nn::Adam::default().wd(1e-4).build(&vs, 1e-3)?;
 
     let mut start_epoch = 0;
-    let checkpoint_dir = get_checkpoint_file(0).parent().unwrap().to_owned();
-    if checkpoint_dir.exists() {
-        println!("Checkpoint folder found");
-        if let Some((cp, checkpoint)) = find_latest_checkpoint(&checkpoint_dir)? {
-            println!("Restoring from checkpoint {cp}");
-            vs.load(checkpoint)?;
-            start_epoch = cp + 1;
-        }
-    } else {
+    let checkpoint_dir = PathBuf::from("checkpoints");
+    if !checkpoint_dir.exists() {
         println!("Creating checkpoints folder");
-        fs::create_dir_all(checkpoint_dir)?;
+        fs::create_dir_all(&checkpoint_dir)?;
+    }
+
+    let mut games_hist = ReplayBuffer::new();
+    if let Some(snapshot) = find_latest_snapshot(&checkpoint_dir)? {
+        let epoch = snapshot.epoch();
+        println!("Restoring complete training snapshot {epoch}");
+        games_hist = load_training_snapshot(&snapshot, &mut vs, &mut opt)?;
+        start_epoch = epoch + 1;
     }
 
     if let Some(p) = get_game_pic_file(0, 0).parent() {
@@ -276,9 +254,6 @@ async fn main() -> anyhow::Result<()> {
             fs::create_dir_all(p)?;
         }
     }
-
-    let mut games_hist = VecDeque::new();
-    let games_in_hist = 1800;
 
     for epoch in start_epoch.. {
         let mut batch_size = 128;
@@ -372,7 +347,7 @@ async fn main() -> anyhow::Result<()> {
             .collect::<Vec<_>>();
 
         games_hist.extend(history.into_iter());
-        while games_hist.len() > games_in_hist {
+        while games_hist.len() > GAMES_IN_HISTORY {
             games_hist.pop_front();
         }
 
@@ -433,7 +408,7 @@ async fn main() -> anyhow::Result<()> {
 
         println!("Total value and policy loss: ({total_values_loss}, {total_policies_loss})");
 
-        vs.save(get_checkpoint_file(epoch))?;
+        save_training_snapshot(&checkpoint_dir, epoch, &vs, &opt, &games_hist)?;
         for (i, sample_game) in sample_games.into_iter().enumerate() {
             generate_game_image(&sample_game).save(get_game_pic_file(epoch, i))?;
         }
@@ -450,36 +425,4 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    use super::find_latest_checkpoint;
-
-    #[test]
-    fn latest_checkpoint_allows_numbering_gaps() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("alz-checkpoints-{unique}"));
-        std::fs::create_dir(&dir).unwrap();
-        for name in [
-            "00.safetensors",
-            "01.safetensors",
-            "376.safetensors",
-            "newest.safetensors",
-            "999.stats",
-        ] {
-            std::fs::write(dir.join(name), b"").unwrap();
-        }
-
-        let (epoch, path) = find_latest_checkpoint(&dir).unwrap().unwrap();
-        assert_eq!(epoch, 376);
-        assert_eq!(path, dir.join("376.safetensors"));
-
-        std::fs::remove_dir_all(dir).unwrap();
-    }
 }
