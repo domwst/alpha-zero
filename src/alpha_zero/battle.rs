@@ -2,8 +2,8 @@ use rand::{rngs::SmallRng, Rng, SeedableRng};
 use std::future::Future;
 
 use super::{
-    sample_policy, AlphaZeroAdapter, AlphaZeroNet, Game, MonteCarloTree, MoveParameters,
-    NetworkBatchedExecutorHandle, TerminationState,
+    apply_temperature, sample_policy, AlphaZeroAdapter, AlphaZeroNet, Game, MonteCarloTree,
+    MoveParameters, NetworkBatchedExecutorHandle, RootNoise, TerminationState,
 };
 
 pub trait Agent<TGame: Game> {
@@ -44,11 +44,8 @@ where
             self.tree
                 .do_simulations(self.samples, self.c_puct, &mut self.rng)
                 .await;
-            let r#move = sample_policy(
-                &self.tree.get_policy(),
-                (self.temp)(self.r#move),
-                &mut self.rng,
-            );
+            let policy = apply_temperature(&self.tree.get_policy(), (self.temp)(self.r#move));
+            let r#move = sample_policy(&policy, &mut self.rng);
             self.r#move += 1;
             self.tree.do_move(r#move);
             r#move
@@ -85,8 +82,8 @@ async fn make_move<
 ) -> (usize, Vec<f32>) {
     tree1.do_simulations(samples, c_puct, rng).await;
     tree2.do_simulations(2, c_puct, rng).await;
-    let policy = tree1.get_policy();
-    let r#move = sample_policy(&policy, temp, rng);
+    let policy = apply_temperature(&tree1.get_policy(), temp);
+    let r#move = sample_policy(&policy, rng);
 
     tree1.do_move(r#move);
     tree2.do_move(r#move);
@@ -109,8 +106,10 @@ pub async fn do_battle<
     executor1: NetworkBatchedExecutorHandle<TNet1>,
     executor2: NetworkBatchedExecutorHandle<TNet2>,
 ) -> Vec<(TGame, Vec<f32>, f32, bool)> {
-    let mut tree1 = MonteCarloTree::<TGame, TNet1, TAdapter1>::new(start.clone(), executor1);
-    let mut tree2 = MonteCarloTree::<TGame, TNet2, TAdapter2>::new(start.clone(), executor2);
+    let mut tree1 =
+        MonteCarloTree::<TGame, TNet1, TAdapter1>::new(start.clone(), executor1, RootNoise::None);
+    let mut tree2 =
+        MonteCarloTree::<TGame, TNet2, TAdapter2>::new(start.clone(), executor2, RootNoise::None);
     let mut turn = 0;
     let mut first = true;
 

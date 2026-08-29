@@ -30,6 +30,12 @@ pub struct MoveStaticInfo {
     pub player_switch: bool,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum RootNoise {
+    None,
+    Dirichlet { alpha: f32, epsilon: f32 },
+}
+
 struct NodeChild<T> {
     node: MonteCarloNode<T>,
     static_info: MoveStaticInfo,
@@ -124,6 +130,11 @@ impl<T> NodeState<T> {
             .map(|child| child.dyn_info.borrow().descends);
         let sm: usize = iter.clone().sum();
 
+        if self.children.is_empty() {
+            return vec![];
+        }
+        assert!(sm > 0, "No simulations have visited a root move");
+
         iter.map(move |v| v as f32 / sm as f32).collect::<Vec<_>>()
     }
 }
@@ -132,17 +143,30 @@ pub struct MonteCarloTree<TGame: Game, TNet: AlphaZeroNet, TAdapter: AlphaZeroAd
 {
     root: MonteCarloNode<TGame>,
     executor: NetworkBatchedExecutorHandle<TNet>,
+    root_noise: RootNoise,
+    root_noise_sample: Option<Box<[f32]>>,
     _p: PhantomData<TAdapter>,
 }
 
 impl<TGame: Game, TNet: AlphaZeroNet, TAdapter: AlphaZeroAdapter<TGame, TNet>>
     MonteCarloTree<TGame, TNet, TAdapter>
 {
-    pub fn new(state: TGame, executor: NetworkBatchedExecutorHandle<TNet>) -> Self {
+    pub fn new(
+        state: TGame,
+        executor: NetworkBatchedExecutorHandle<TNet>,
+        root_noise: RootNoise,
+    ) -> Self {
+        if let RootNoise::Dirichlet { alpha, epsilon } = root_noise {
+            assert!(alpha.is_finite() && alpha > 0.0);
+            assert!(epsilon.is_finite() && (0.0..=1.0).contains(&epsilon));
+        }
+
         let root = MonteCarloNode::new(state);
         Self {
             root,
             executor,
+            root_noise,
+            root_noise_sample: None,
             _p: PhantomData,
         }
     }
@@ -184,6 +208,12 @@ impl<TGame: Game, TNet: AlphaZeroNet, TAdapter: AlphaZeroAdapter<TGame, TNet>>
             .await;
         let value = f32::try_from(value).unwrap();
         let policy = TAdapter::get_estimated_policy(&policy, &moves);
+        assert!(value.is_finite());
+        assert_eq!(policy.len(), moves.len());
+        assert!(policy
+            .iter()
+            .all(|value| value.is_finite() && (0.0..=1.0).contains(value)));
+        assert!((policy.iter().sum::<f32>() - 1.0).abs() < 1e-4);
 
         NodeState {
             value,
@@ -191,23 +221,44 @@ impl<TGame: Game, TNet: AlphaZeroNet, TAdapter: AlphaZeroAdapter<TGame, TNet>>
             children: moves
                 .iter()
                 .zip(policy)
-                .map(|(r#move, policy)| {
-                    assert!(policy >= 0. && policy <= 1.);
-                    NodeChild {
-                        node: MonteCarloNode::new(state.make_move(r#move)),
-                        static_info: MoveStaticInfo {
-                            priority: policy,
-                            player_switch: r#move.is_player_switch(),
-                        },
-                        dyn_info: AtomicRefCell::new(MoveDynamicInfo {
-                            total_score: 0.0,
-                            descends: 0,
-                        }),
-                    }
+                .map(|(r#move, policy)| NodeChild {
+                    node: MonteCarloNode::new(state.make_move(r#move)),
+                    static_info: MoveStaticInfo {
+                        priority: policy,
+                        player_switch: r#move.is_player_switch(),
+                    },
+                    dyn_info: AtomicRefCell::new(MoveDynamicInfo {
+                        total_score: 0.0,
+                        descends: 0,
+                    }),
                 })
                 .collect::<Vec<_>>()
                 .into(),
         }
+    }
+
+    async fn initialize_root(&mut self) {
+        if self.root.node_state.get().is_none() {
+            let state = Self::create_node_state(&mut self.executor, &self.root.game_state).await;
+            assert!(self.root.node_state.set(state).is_ok());
+        }
+    }
+
+    fn initialize_root_noise<R: Rng + ?Sized>(&mut self, rng: &mut R) {
+        if self.root_noise_sample.is_some() {
+            return;
+        }
+
+        let RootNoise::Dirichlet { alpha, .. } = self.root_noise else {
+            return;
+        };
+        let size = self.root.node_state.get().unwrap().children.len();
+        let adjustment = if size >= 2 {
+            Dirichlet::new(&vec![alpha; size]).unwrap().sample(rng)
+        } else {
+            vec![1.0; size]
+        };
+        self.root_noise_sample = Some(adjustment.into());
     }
 
     pub async fn do_simulations<R: Rng + Send + ?Sized>(
@@ -216,17 +267,12 @@ impl<TGame: Game, TNet: AlphaZeroNet, TAdapter: AlphaZeroAdapter<TGame, TNet>>
         cpuct: f32,
         rng: &mut R,
     ) {
+        assert!(samples > 0, "At least one simulation is required");
+        self.initialize_root().await;
+        self.initialize_root_noise(rng);
+
         let mut state_stack = vec![];
-        let adjustment = {
-            let root_state = self.root.node_state.get().unwrap();
-            let size = root_state.children.len();
-            if size >= 2 {
-                let distr = Dirichlet::new(&vec![0.1; size]).unwrap();
-                distr.sample(rng)
-            } else {
-                vec![1.; size]
-            }
-        };
+        let root_noise_sample = self.root_noise_sample.clone();
 
         let is_root = |node: &MonteCarloNode<TGame>| ptr::eq(node, &self.root);
         for _ in 0..samples {
@@ -237,12 +283,8 @@ impl<TGame: Game, TNet: AlphaZeroNet, TAdapter: AlphaZeroAdapter<TGame, TNet>>
                         break 'cl (r, false);
                     }
                     let state = Self::create_node_state(&mut self.executor, &cur.game_state).await;
-                    let r = cur
-                        .node_state
-                        .try_insert(state)
-                        .map_err(|_| format!("WTF?!"))
-                        .unwrap();
-                    (r, true)
+                    assert!(cur.node_state.set(state).is_ok());
+                    (cur.node_state.get().unwrap(), true)
                 };
 
                 if created || node_state.is_terminal {
@@ -250,7 +292,14 @@ impl<TGame: Game, TNet: AlphaZeroNet, TAdapter: AlphaZeroAdapter<TGame, TNet>>
                 }
 
                 let m = if is_root(cur) {
-                    node_state.pick_next_move_root(cpuct, 0.25, &adjustment)
+                    match self.root_noise {
+                        RootNoise::None => node_state.pick_next_move(cpuct),
+                        RootNoise::Dirichlet { epsilon, .. } => node_state.pick_next_move_root(
+                            cpuct,
+                            epsilon,
+                            root_noise_sample.as_deref().unwrap(),
+                        ),
+                    }
                 } else {
                     node_state.pick_next_move(cpuct)
                 };
@@ -281,5 +330,142 @@ impl<TGame: Game, TNet: AlphaZeroNet, TAdapter: AlphaZeroAdapter<TGame, TNet>>
             .into_vec()
             .swap_remove(move_id)
             .node;
+        self.root_noise_sample = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use rand::{rngs::SmallRng, SeedableRng};
+    use tch::{Device, Kind, Tensor};
+
+    use crate::alpha_zero::{AlphaZeroAdapter, AlphaZeroNet, ExecutorScope, Game, MoveParameters};
+
+    use super::{MonteCarloTree, RootNoise, TerminationState};
+
+    #[derive(Clone)]
+    struct TestGame(Option<f32>);
+
+    #[derive(Clone, Copy)]
+    enum TestMove {
+        Win,
+        Lose,
+    }
+
+    impl MoveParameters for TestMove {
+        fn is_player_switch(&self) -> bool {
+            true
+        }
+    }
+
+    impl Game for TestGame {
+        type Move = TestMove;
+
+        fn get_state(&self) -> TerminationState<Self::Move> {
+            match self.0 {
+                Some(value) => TerminationState::Terminal(value),
+                None => TerminationState::Moves(vec![TestMove::Win, TestMove::Lose].into()),
+            }
+        }
+
+        fn make_move(&self, r#move: &Self::Move) -> Self {
+            match r#move {
+                TestMove::Win => Self(Some(-1.0)),
+                TestMove::Lose => Self(Some(1.0)),
+            }
+        }
+    }
+
+    struct TestNet;
+
+    impl AlphaZeroNet for TestNet {
+        fn forward_t(&self, input: &Tensor, _is_training: bool) -> (Tensor, Tensor) {
+            let batch = input.size()[0];
+            (
+                Tensor::zeros([batch], (Kind::Float, Device::Cpu)),
+                Tensor::zeros([batch, 2], (Kind::Float, Device::Cpu)),
+            )
+        }
+    }
+
+    struct TestAdapter;
+
+    impl AlphaZeroAdapter<TestGame, TestNet> for TestAdapter {
+        fn convert_game_to_nn_input(_state: &TestGame) -> Tensor {
+            Tensor::zeros([1], (Kind::Float, Device::Cpu))
+        }
+
+        fn get_estimated_policy(_policy: &Tensor, _moves: &[TestMove]) -> Vec<f32> {
+            vec![0.75, 0.25]
+        }
+
+        fn convert_policy_to_nn(_policy: &[f32], _moves: &[TestMove]) -> Tensor {
+            unreachable!()
+        }
+    }
+
+    #[tokio::test]
+    async fn first_search_initializes_root_and_records_every_simulation() {
+        let mut scope = ExecutorScope::new(
+            TestNet,
+            1,
+            1,
+            Duration::from_millis(1),
+            (Kind::Float, Device::Cpu),
+        );
+        std::mem::drop(scope.spawn(|handle| async move {
+            let mut tree = MonteCarloTree::<TestGame, TestNet, TestAdapter>::new(
+                TestGame(None),
+                handle,
+                RootNoise::None,
+            );
+            let mut rng = SmallRng::seed_from_u64(1);
+            tree.do_simulations(1, 1.0, &mut rng).await;
+
+            (
+                tree.get_total_descends().unwrap(),
+                tree.get_policy(),
+                tree.get_move_stats(0).unwrap().1.get_avg_score(),
+            )
+        }));
+
+        let (visits, policy, winning_score) = scope.next().await.unwrap();
+        scope.join().await;
+        assert_eq!(visits, 1);
+        assert_eq!(policy, [1.0, 0.0]);
+        assert_eq!(winning_score, 1.0);
+    }
+
+    #[tokio::test]
+    async fn dirichlet_noise_is_reused_for_the_same_root() {
+        let mut scope = ExecutorScope::new(
+            TestNet,
+            1,
+            1,
+            Duration::from_millis(1),
+            (Kind::Float, Device::Cpu),
+        );
+        std::mem::drop(scope.spawn(|handle| async move {
+            let mut tree = MonteCarloTree::<TestGame, TestNet, TestAdapter>::new(
+                TestGame(None),
+                handle,
+                RootNoise::Dirichlet {
+                    alpha: 0.1,
+                    epsilon: 0.25,
+                },
+            );
+            let mut rng = SmallRng::seed_from_u64(1);
+            tree.do_simulations(1, 1.0, &mut rng).await;
+            let first_noise = tree.root_noise_sample.clone();
+            tree.do_simulations(1, 1.0, &mut rng).await;
+            assert_eq!(tree.root_noise_sample, first_noise);
+            tree.do_move(0);
+            assert!(tree.root_noise_sample.is_none());
+        }));
+
+        scope.next().await.unwrap();
+        scope.join().await;
     }
 }

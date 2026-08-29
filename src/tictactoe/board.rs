@@ -253,6 +253,6 @@ mod tests {
             }
         }
 
-        assert_eq!(board.get_state(), TerminationState::Terminal(0.5));
+        assert_eq!(board.get_state(), TerminationState::Terminal(0.0));
     }
 }

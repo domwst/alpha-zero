@@ -9,8 +9,9 @@ use std::{
 
 use alz::{
     alpha_zero::{
-        generate_self_played_game, sample_policy, AlphaZeroAdapter, AlphaZeroNet, ExecutorScope,
-        Game, MonteCarloTree, MoveParameters, NetworkBatchedExecutorHandle, TerminationState,
+        apply_temperature, generate_self_played_game, sample_policy, AlphaZeroAdapter,
+        AlphaZeroNet, ExecutorScope, Game, MonteCarloTree, MoveParameters,
+        NetworkBatchedExecutorHandle, RootNoise, TerminationState,
     },
     tictactoe::{
         generate_game_image, BoardState, CellState, TicTacToeMove, TicTacToeResAlphaZeroAdapter,
@@ -23,12 +24,10 @@ use rand::{
     seq::{IteratorRandom, SliceRandom},
     SeedableRng,
 };
-use tap::{tap, Tap};
 use tch::{
     nn::{self, OptimizerConfig},
     Device, Kind, Reduction, Tensor,
 };
-use unzip3::Unzip3;
 
 fn get_checkpoint_file(epoch: usize) -> PathBuf {
     PathBuf::from(format!("checkpoints/{epoch:02}.safetensors"))
@@ -114,7 +113,7 @@ async fn play_nn_only_game() -> anyhow::Result<()> {
                     .await;
                 let value = f32::try_from(value).unwrap();
                 let policy = TicTacToeResAlphaZeroAdapter::get_estimated_policy(&policy, &moves);
-                let r#move = sample_policy(&policy, 1., &mut rand::rng());
+                let r#move = sample_policy(&policy, &mut rand::rng());
                 let new_state = state.make_move(&moves[r#move]);
                 history.push((std::mem::replace(&mut state, new_state), policy, value));
             };
@@ -156,6 +155,7 @@ async fn play_with_human(
     let mut tree = MonteCarloTree::<BoardState, TicTacToeResNet, TicTacToeResAlphaZeroAdapter>::new(
         state.clone(),
         handle,
+        RootNoise::None,
     );
 
     let v = loop {
@@ -185,7 +185,8 @@ async fn play_with_human(
             moves.iter().position(|&v| v == m).unwrap()
         } else {
             tree.do_simulations(sims, 1.0, &mut rng).await;
-            let r#move = sample_policy(&tree.get_policy(), 0.33, &mut rng);
+            let policy = apply_temperature(&tree.get_policy(), 0.33);
+            let r#move = sample_policy(&policy, &mut rng);
             println!(
                 "Network's move {} {}",
                 moves[r#move].0 + 1,
@@ -375,35 +376,38 @@ async fn main() -> anyhow::Result<()> {
             games_hist.pop_front();
         }
 
-        let history = games_hist
+        let augmentation_count = TicTacToeResAlphaZeroAdapter::augmentation_count();
+        let mut training_samples = games_hist
             .iter()
             .flatten()
-            .map(|(state, policy, value)| {
-                (
-                    TicTacToeResAlphaZeroAdapter::convert_game_to_nn_input(&state),
-                    TicTacToeResAlphaZeroAdapter::convert_policy_to_nn(
-                        &policy,
-                        &state.get_state().get_moves().unwrap(),
-                    ),
-                    value,
-                )
+            .flat_map(|sample| {
+                (0..augmentation_count).map(move |augmentation| (sample, augmentation))
             })
-            .map(|(state, policy, value)| {
-                TicTacToeResAlphaZeroAdapter::reflect_and_augment(&state, &policy)
-                    .into_iter()
-                    .map(move |(state, policy)| (state, policy, Tensor::from(*value)))
-            })
-            .flatten()
-            .collect::<Vec<_>>()
-            .tap_mut(|h| h.shuffle(&mut rand::rng()));
+            .collect::<Vec<_>>();
+        training_samples.shuffle(&mut rand::rng());
 
         let mut total_values_loss = 0.0;
         let mut total_policies_loss = 0.0;
-        for chunk in history.chunks(1024) {
-            let (states, policies, values): (Vec<_>, Vec<_>, Vec<_>) = chunk
-                .into_iter()
-                .map(|(state, policy, value)| (state.copy(), policy.copy(), value.copy()))
-                .unzip3();
+        for chunk in training_samples.chunks(1024) {
+            let mut states = Vec::with_capacity(chunk.len());
+            let mut policies = Vec::with_capacity(chunk.len());
+            let mut values = Vec::with_capacity(chunk.len());
+            for &(sample, augmentation) in chunk {
+                let (state, policy, value) = sample;
+                let state_tensor = TicTacToeResAlphaZeroAdapter::convert_game_to_nn_input(state);
+                let policy_tensor = TicTacToeResAlphaZeroAdapter::convert_policy_to_nn(
+                    policy,
+                    state.get_state().get_moves().unwrap(),
+                );
+                let (state_tensor, policy_tensor) = TicTacToeResAlphaZeroAdapter::augment(
+                    &state_tensor,
+                    &policy_tensor,
+                    augmentation,
+                );
+                states.push(state_tensor);
+                policies.push(policy_tensor);
+                values.push(*value);
+            }
 
             let states = Tensor::stack(&states, 0)
                 .to_kind(Kind::Float)
@@ -411,7 +415,7 @@ async fn main() -> anyhow::Result<()> {
             let policies = Tensor::stack(&policies, 0)
                 .to_kind(Kind::Float)
                 .to(vs.device());
-            let values = Tensor::stack(&values, 0)
+            let values = Tensor::from_slice(&values)
                 .to_kind(Kind::Float)
                 .to(vs.device());
 
@@ -419,9 +423,8 @@ async fn main() -> anyhow::Result<()> {
             // let val_loss = (exp_values - values)
             //     .pow(&Tensor::from(2.).to_kind(Kind::Float).to(vs.device()))
             //     .sum(None);
-            let batch_size = Tensor::from(chunk.len() as f32);
             let val_loss = exp_values.mse_loss(&values, Reduction::Mean);
-            let pol_loss = (policies * exp_policies).sum(None) / batch_size;
+            let pol_loss = (policies * exp_policies).sum(None) / chunk.len() as f64;
             opt.backward_step(&(&val_loss - &pol_loss));
 
             total_values_loss += f32::try_from(&val_loss).unwrap();

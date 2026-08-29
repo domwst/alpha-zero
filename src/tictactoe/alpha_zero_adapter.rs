@@ -24,24 +24,41 @@ fn game_to_nn_input(state: &BoardState) -> Tensor {
 }
 
 fn estimated_policy(policy: &Tensor, moves: &[<BoardState as Game>::Move]) -> Vec<f32> {
-    let policy = policy.exp();
-    let mut res = Vec::with_capacity(moves.len());
     let policy = <Vec<f32>>::try_from(policy.view([-1])).unwrap();
+    assert_eq!(policy.len(), 19 * 19);
+    assert!(!moves.is_empty());
+
+    let mut res = Vec::with_capacity(moves.len());
     for &TicTacToeMove(i, j) in moves {
         res.push(policy[i * 19 + j]);
     }
 
+    assert!(res
+        .iter()
+        .all(|value| !value.is_nan() && *value != f32::INFINITY));
+    let max = res.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    assert!(
+        max.is_finite(),
+        "All legal moves have zero network probability"
+    );
+    for value in &mut res {
+        *value = (*value - max).exp();
+    }
     let sum = res.iter().sum::<f32>();
-    if sum > 0. {
-        for x in &mut res {
-            *x /= sum;
-        }
+    assert!(sum.is_finite() && sum > 0.0);
+    for value in &mut res {
+        *value /= sum;
     }
 
     res
 }
 
 fn policy_to_nn(policy: &[f32], moves: &[<BoardState as Game>::Move]) -> tch::Tensor {
+    assert_eq!(policy.len(), moves.len());
+    assert!(policy
+        .iter()
+        .all(|value| value.is_finite() && *value >= 0.0));
+    assert!((policy.iter().sum::<f32>() - 1.0).abs() < 1e-4);
     let mut res = [[0f32; 19]; 19];
     for (&TicTacToeMove(i, j), &pol) in moves.iter().zip(policy) {
         res[i][j] = pol;
@@ -49,17 +66,19 @@ fn policy_to_nn(policy: &[f32], moves: &[<BoardState as Game>::Move]) -> tch::Te
     Tensor::from_slice(res.as_flattened()).view([19, 19])
 }
 
-fn reflect_and_augment(state: &Tensor, policy: &Tensor) -> Vec<(Tensor, Tensor)> {
-    let mut rotations = Vec::with_capacity(8);
-    for reflect in [false, true] {
-        for rots in 0..4 {
-            let transform = move |inp: &Tensor, dim: i64| -> Tensor {
-                if reflect { inp.flip([dim]) } else { inp.copy() }.rot90(rots, [dim, dim + 1])
-            };
-            rotations.push((transform(state, 1), transform(policy, 0)));
+fn augment(state: &Tensor, policy: &Tensor, augmentation: usize) -> (Tensor, Tensor) {
+    assert!(augmentation < 8);
+    let reflect = augmentation >= 4;
+    let rotations = (augmentation % 4) as i64;
+    let transform = |input: &Tensor, dim: i64| {
+        if reflect {
+            input.flip([dim])
+        } else {
+            input.copy()
         }
-    }
-    rotations
+        .rot90(rotations, [dim, dim + 1])
+    };
+    (transform(state, 1), transform(policy, 0))
 }
 
 impl AlphaZeroAdapter<BoardState, TicTacToeConvNet> for TicTacToeConvAlphaZeroAdapter {
@@ -75,8 +94,12 @@ impl AlphaZeroAdapter<BoardState, TicTacToeConvNet> for TicTacToeConvAlphaZeroAd
         policy_to_nn(policy, moves)
     }
 
-    fn reflect_and_augment(state: &Tensor, policy: &Tensor) -> Vec<(Tensor, Tensor)> {
-        reflect_and_augment(state, policy)
+    fn augmentation_count() -> usize {
+        8
+    }
+
+    fn augment(state: &Tensor, policy: &Tensor, augmentation: usize) -> (Tensor, Tensor) {
+        augment(state, policy, augmentation)
     }
 }
 
@@ -93,16 +116,23 @@ impl AlphaZeroAdapter<BoardState, TicTacToeResNet> for TicTacToeResAlphaZeroAdap
         policy_to_nn(policy, moves)
     }
 
-    fn reflect_and_augment(state: &Tensor, policy: &Tensor) -> Vec<(Tensor, Tensor)> {
-        reflect_and_augment(state, policy)
+    fn augmentation_count() -> usize {
+        8
+    }
+
+    fn augment(state: &Tensor, policy: &Tensor, augmentation: usize) -> (Tensor, Tensor) {
+        augment(state, policy, augmentation)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use tch::IndexOp;
+    use tch::{Device, IndexOp, Kind, Tensor};
 
-    use crate::tictactoe::{alpha_zero_adapter::game_to_nn_input, BoardState, CellState};
+    use crate::tictactoe::{
+        alpha_zero_adapter::{estimated_policy, game_to_nn_input},
+        BoardState, CellState, TicTacToeMove,
+    };
 
     #[test]
     fn convert_board_to_tensor() {
@@ -122,6 +152,29 @@ mod tests {
                     assert_eq!(f32::try_from(tensor.i((i, j, k))).unwrap(), goal);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn legal_policy_normalization_is_stable() {
+        let policy = Tensor::full([19, 19], -1000.0, (Kind::Float, Device::Cpu));
+        let _ = policy.i((0, 0)).fill_(0.0);
+        let policy = estimated_policy(&policy, &[TicTacToeMove(0, 1), TicTacToeMove(0, 2)]);
+
+        assert!((policy[0] - 0.5).abs() < 1e-6);
+        assert!((policy[1] - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn augmentations_keep_state_and_policy_aligned() {
+        let state = Tensor::zeros([2, 19, 19], (Kind::Float, Device::Cpu));
+        let policy = Tensor::zeros([19, 19], (Kind::Float, Device::Cpu));
+        let _ = state.i((0, 2, 3)).fill_(1.0);
+        let _ = policy.i((2, 3)).fill_(1.0);
+
+        for augmentation in 0..8 {
+            let (state, policy) = super::augment(&state, &policy, augmentation);
+            assert!(state.i(0).equal(&policy));
         }
     }
 }

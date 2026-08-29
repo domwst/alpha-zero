@@ -3,8 +3,14 @@ use tch::Tensor;
 use super::{AlphaZeroNet, Game};
 
 pub trait AlphaZeroAdapter<TGame: Game, Net: AlphaZeroNet> {
-    fn reflect_and_augment(state: &Tensor, policy: &Tensor) -> Vec<(Tensor, Tensor)> {
-        vec![(state.copy(), policy.copy())]
+    // TODO: Are there games where augmentations count depends on a position?
+    fn augmentation_count() -> usize {
+        1
+    }
+
+    fn augment(state: &Tensor, policy: &Tensor, augmentation: usize) -> (Tensor, Tensor) {
+        assert_eq!(augmentation, 0);
+        (state.copy(), policy.copy())
     }
 
     fn convert_game_to_nn_input(state: &TGame) -> Tensor;

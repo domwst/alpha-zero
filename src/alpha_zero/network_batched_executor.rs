@@ -153,7 +153,7 @@ impl<Net: AlphaZeroNet> NetworkBatchedExecutor<Net> {
             let timer = Timer::new();
             let input = Tensor::stack(&inputs, 0).totype(kind).to(device);
             timer.print_if_greater(Duration::from_secs(1), "Input construction took {t}");
-            let (values, policies) = nn.forward_t(&input, false);
+            let (values, policies) = tch::no_grad(|| nn.forward_t(&input, false));
             timer.print_if_greater(Duration::from_secs(1), "Input evaluation took {t}");
             let values = values.to(Device::Cpu);
             let policies = policies.to(Device::Cpu);
