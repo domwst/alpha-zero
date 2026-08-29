@@ -125,6 +125,11 @@ impl<T, TNet: AlphaZeroNet + Send + 'static> ExecutorScope<T, TNet> {
         async move { rx.await.unwrap() }
     }
 
+    /// Returns a direct evaluator handle that must be dropped before [`Self::join`].
+    pub fn evaluator_handle(&self) -> NetworkBatchedExecutorHandle<TNet> {
+        self.executor_handle.clone()
+    }
+
     pub async fn increase_parallelism(&mut self, delta: usize) {
         self.parallelism_tokens += delta;
         self.parallelism.add_permits(delta);

@@ -99,31 +99,47 @@ pub fn find_latest_snapshot(root: &Path) -> Result<Option<TrainingSnapshot>> {
 
     candidates.sort_unstable_by_key(|(epoch, _)| Reverse(*epoch));
     if let Some((epoch, path)) = candidates.into_iter().next() {
-        let metadata = read_metadata(&path.join(METADATA_FILE))?;
-        if metadata.format_version != FORMAT_VERSION {
-            bail!(
-                "unsupported snapshot version {} in {}",
-                metadata.format_version,
-                path.display()
-            );
-        }
-        if metadata.action_schema != ACTION_SCHEMA {
-            bail!(
-                "unsupported action schema {} in {}",
-                metadata.action_schema,
-                path.display()
-            );
-        }
-        if metadata.epoch != epoch {
-            bail!(
-                "snapshot directory epoch {epoch} does not match metadata epoch {}",
-                metadata.epoch
-            );
-        }
-
-        return Ok(Some(TrainingSnapshot { path, metadata }));
+        return read_snapshot(path, epoch).map(Some);
     }
     Ok(None)
+}
+
+pub fn resolve_snapshot(path: &Path) -> Result<Option<TrainingSnapshot>> {
+    if !is_complete_snapshot(path) {
+        return find_latest_snapshot(path);
+    }
+
+    let epoch = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.parse::<usize>().ok())
+        .with_context(|| format!("snapshot directory {} has no numeric epoch", path.display()))?;
+    read_snapshot(path.to_owned(), epoch).map(Some)
+}
+
+fn read_snapshot(path: PathBuf, epoch: usize) -> Result<TrainingSnapshot> {
+    let metadata = read_metadata(&path.join(METADATA_FILE))?;
+    if metadata.format_version != FORMAT_VERSION {
+        bail!(
+            "unsupported snapshot version {} in {}",
+            metadata.format_version,
+            path.display()
+        );
+    }
+    if metadata.action_schema != ACTION_SCHEMA {
+        bail!(
+            "unsupported action schema {} in {}",
+            metadata.action_schema,
+            path.display()
+        );
+    }
+    if metadata.epoch != epoch {
+        bail!(
+            "snapshot directory epoch {epoch} does not match metadata epoch {}",
+            metadata.epoch
+        );
+    }
+    Ok(TrainingSnapshot { path, metadata })
 }
 
 fn save_replay(path: &Path, replay: &ReplayBuffer) -> Result<()> {
@@ -359,6 +375,21 @@ mod tests {
 
         let snapshot = find_latest_snapshot(&root).unwrap().unwrap();
         assert_eq!(snapshot.epoch(), 7);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn resolution_accepts_an_exact_snapshot() {
+        let root = temp_dir();
+        fs::create_dir(&root).unwrap();
+        write_fake_snapshot(&root, 1, true);
+        write_fake_snapshot(&root, 7, true);
+
+        let latest = resolve_snapshot(&root).unwrap().unwrap();
+        assert_eq!(latest.epoch(), 7);
+        let snapshot = resolve_snapshot(&snapshot_dir(&root, 1)).unwrap().unwrap();
+        assert_eq!(snapshot.epoch(), 1);
 
         fs::remove_dir_all(root).unwrap();
     }
