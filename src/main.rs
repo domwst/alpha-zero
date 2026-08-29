@@ -47,14 +47,13 @@ fn detect_device() -> Device {
         target_os = "macos" => Device::Mps,
         _ => Device::cuda_if_available(),
     };
-    println!("Using device {device:?}");
+    eprintln!("Using device {device:?}");
     device
 }
 
 #[allow(unused)]
 async fn play_nn_only_game() -> anyhow::Result<()> {
     let mut vs = nn::VarStore::new(detect_device());
-    println!("Going to use device {:?}", vs.device());
 
     let net = TicTacToeResNet::new(&vs.root());
     // let mut opt = nn::Adam::default().wd(1e-4).build(&vs, 1e-3)?;
@@ -191,7 +190,6 @@ async fn play_with_human(
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // let mut vs = nn::VarStore::new(detect_device());
-    // println!("Going to use device {:?}", vs.device());
     //
     // let net = TicTacToeResNet::new(&vs.root());
     // // let mut opt = nn::Adam::default().wd(1e-4).build(&vs, 1e-3)?;
@@ -216,7 +214,6 @@ async fn main() -> anyhow::Result<()> {
     // let mut vs = nn::VarStore::new(Device::Mps);
     // return Ok(());
     let mut vs = nn::VarStore::new(detect_device());
-    println!("Going to use device {:?}", vs.device());
 
     let mut net = TicTacToeResNet::new(&vs.root());
     let mut opt = nn::Adam::default().wd(1e-4).build(&vs, 1e-3)?;
