@@ -1,12 +1,15 @@
 use image::{math::Rect, ImageBuffer, Pixel, Rgb};
 
-use crate::tictactoe::CellState;
+use crate::{alpha_zero::TrainingSample, tictactoe::CellState};
 
-use super::BoardState;
+use super::{BoardState, TicTacToePolicy};
 
 pub fn generate_game_image(
-    history: &[(BoardState, Vec<f32>, f32)],
+    history: &[TrainingSample<BoardState, TicTacToePolicy>],
 ) -> ImageBuffer<Rgb<u8>, Vec<u8>> {
+    if history.is_empty() {
+        return image::RgbImage::new(1, 1);
+    }
     let square = 10;
     let fld = 19 * square;
     let line = 5;
@@ -36,14 +39,13 @@ pub fn generate_game_image(
         Rgb([255., 255., 255.]),
     );
 
-    for (i, (state, pol, _)) in history.iter().enumerate() {
-        let mut state = state.clone();
+    for (i, sample) in history.iter().enumerate() {
+        let mut state = sample.state.clone();
         if i % 2 == 1 {
             state.flip_players_inplace();
         }
         let x = i as u32 * (fld + line);
 
-        let mut pol = pol.iter().copied();
         let x_clr = Rgb([255., 0., 0.]);
         let o_clr = Rgb([0., 0., 255.]);
         let policy = Rgb([0., 255., 0.]);
@@ -54,7 +56,7 @@ pub fn generate_game_image(
                     CellState::X => x_clr,
                     CellState::O => o_clr,
                     CellState::Empty => {
-                        let p = pol.next().unwrap();
+                        let p = sample.policy[(i as usize, j as usize)];
                         policy.map(|x| p * x)
                     }
                 };

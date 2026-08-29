@@ -1,4 +1,5 @@
 use std::{
+    cmp::Reverse,
     collections::VecDeque,
     fs::{self, File},
     io::{BufReader, BufWriter, Write},
@@ -6,24 +7,29 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use alz::tictactoe::BoardState;
+use alz::{
+    alpha_zero::TrainingSample,
+    tictactoe::{BoardState, TicTacToePolicy, ACTION_SCHEMA},
+};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use tch::nn::{Optimizer, VarStore};
 
-const FORMAT_VERSION: u32 = 1;
+const FORMAT_VERSION: u32 = 2;
 const MODEL_FILE: &str = "model.safetensors";
 const OPTIMIZER_FILE: &str = "optimizer.ot";
 const REPLAY_FILE: &str = "replay.bin.zst";
 const METADATA_FILE: &str = "metadata.json";
 
-pub type ReplayPosition = (BoardState, Vec<f32>, f32);
+pub type ReplayPosition = TrainingSample<BoardState, TicTacToePolicy>;
 pub type ReplayGame = Vec<ReplayPosition>;
 pub type ReplayBuffer = VecDeque<ReplayGame>;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct SnapshotMetadata {
     format_version: u32,
+    #[serde(default)]
+    action_schema: String,
     epoch: usize,
     replay_games: usize,
     replay_positions: usize,
@@ -70,7 +76,7 @@ pub fn find_latest_snapshot(root: &Path) -> Result<Option<TrainingSnapshot>> {
         return Ok(None);
     }
 
-    let mut latest: Option<TrainingSnapshot> = None;
+    let mut candidates = Vec::new();
     for entry in fs::read_dir(root).with_context(|| format!("reading {}", root.display()))? {
         let entry = entry?;
         if !entry.file_type()?.is_dir() {
@@ -88,11 +94,23 @@ pub fn find_latest_snapshot(root: &Path) -> Result<Option<TrainingSnapshot>> {
         if !is_complete_snapshot(&path) {
             continue;
         }
+        candidates.push((epoch, path));
+    }
+
+    candidates.sort_unstable_by_key(|(epoch, _)| Reverse(*epoch));
+    if let Some((epoch, path)) = candidates.into_iter().next() {
         let metadata = read_metadata(&path.join(METADATA_FILE))?;
         if metadata.format_version != FORMAT_VERSION {
             bail!(
                 "unsupported snapshot version {} in {}",
                 metadata.format_version,
+                path.display()
+            );
+        }
+        if metadata.action_schema != ACTION_SCHEMA {
+            bail!(
+                "unsupported action schema {} in {}",
+                metadata.action_schema,
                 path.display()
             );
         }
@@ -103,14 +121,9 @@ pub fn find_latest_snapshot(root: &Path) -> Result<Option<TrainingSnapshot>> {
             );
         }
 
-        if latest
-            .as_ref()
-            .is_none_or(|snapshot| epoch > snapshot.epoch())
-        {
-            latest = Some(TrainingSnapshot { path, metadata });
-        }
+        return Ok(Some(TrainingSnapshot { path, metadata }));
     }
-    Ok(latest)
+    Ok(None)
 }
 
 fn save_replay(path: &Path, replay: &ReplayBuffer) -> Result<()> {
@@ -134,6 +147,20 @@ fn load_replay(path: &Path) -> Result<ReplayBuffer> {
     let decoder = zstd::stream::read::Decoder::new(reader)
         .with_context(|| format!("opening zstd stream for {}", path.display()))?;
     bincode::deserialize_from(decoder).with_context(|| format!("deserializing {}", path.display()))
+}
+
+fn validate_replay(replay: &ReplayBuffer) -> Result<()> {
+    for (game_index, game) in replay.iter().enumerate() {
+        for (position_index, sample) in game.iter().enumerate() {
+            sample.policy.validate_for(&sample.state).with_context(|| {
+                format!("validating replay game {game_index}, position {position_index}")
+            })?;
+            if !sample.value.is_finite() || !(-1.0..=1.0).contains(&sample.value) {
+                bail!("replay game {game_index}, position {position_index} has an invalid value");
+            }
+        }
+    }
+    Ok(())
 }
 
 fn write_metadata(path: &Path, metadata: &SnapshotMetadata) -> Result<()> {
@@ -204,6 +231,7 @@ pub fn save_training_snapshot(
         save_replay(&pending_path.join(REPLAY_FILE), replay)?;
         let metadata = SnapshotMetadata {
             format_version: FORMAT_VERSION,
+            action_schema: ACTION_SCHEMA.to_owned(),
             epoch,
             replay_games: replay.len(),
             replay_positions: replay.iter().map(Vec::len).sum(),
@@ -238,6 +266,7 @@ pub fn load_training_snapshot(
     optimizer: &mut Optimizer,
 ) -> Result<ReplayBuffer> {
     let replay = load_replay(&snapshot.path.join(REPLAY_FILE))?;
+    validate_replay(&replay)?;
     let replay_positions = replay.iter().map(Vec::len).sum::<usize>();
     if replay.len() != snapshot.metadata.replay_games
         || replay_positions != snapshot.metadata.replay_positions
@@ -255,21 +284,32 @@ pub fn load_training_snapshot(
 
 #[cfg(test)]
 mod tests {
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::{
+        sync::atomic::{AtomicU64, Ordering},
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     use tch::{
         nn::{self, Module, OptimizerConfig},
         Device, Kind, Tensor,
     };
 
+    use alz::tictactoe::TicTacToeMove;
+
     use super::*;
+
+    static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
     fn temp_dir() -> PathBuf {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!("alz-training-snapshot-{unique}"))
+        let id = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "alz-training-snapshot-{}-{unique}-{id}",
+            std::process::id()
+        ))
     }
 
     fn write_fake_snapshot(root: &Path, epoch: usize, complete: bool) {
@@ -285,10 +325,26 @@ mod tests {
             &path.join(METADATA_FILE),
             &SnapshotMetadata {
                 format_version: FORMAT_VERSION,
+                action_schema: ACTION_SCHEMA.to_owned(),
                 epoch,
                 replay_games: 0,
                 replay_positions: 0,
             },
+        )
+        .unwrap();
+    }
+
+    fn write_v1_snapshot(root: &Path, epoch: usize) {
+        let path = snapshot_dir(root, epoch);
+        fs::create_dir_all(&path).unwrap();
+        for name in [MODEL_FILE, OPTIMIZER_FILE, REPLAY_FILE] {
+            fs::write(path.join(name), b"").unwrap();
+        }
+        fs::write(
+            path.join(METADATA_FILE),
+            format!(
+                r#"{{"format_version":1,"epoch":{epoch},"replay_games":0,"replay_positions":0}}"#
+            ),
         )
         .unwrap();
     }
@@ -307,6 +363,19 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[test]
+    fn older_unsupported_snapshot_does_not_block_latest_snapshot() {
+        let root = temp_dir();
+        fs::create_dir(&root).unwrap();
+        write_v1_snapshot(&root, 1);
+        write_fake_snapshot(&root, 2, true);
+
+        let snapshot = find_latest_snapshot(&root).unwrap().unwrap();
+        assert_eq!(snapshot.epoch(), 2);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
     fn training_step(model: &nn::Linear, optimizer: &mut nn::Optimizer, device: Device) {
         let input = Tensor::from_slice(&[1.0f32, -2.0])
             .view([1, 2])
@@ -318,7 +387,11 @@ mod tests {
     fn assert_snapshot_restores_training(device: Device) {
         tch::manual_seed(1);
         let root = temp_dir();
-        let replay = VecDeque::from([vec![(BoardState::new(), vec![1.0], -1.0)]]);
+        let replay = VecDeque::from([vec![TrainingSample {
+            state: BoardState::new(),
+            policy: TicTacToePolicy::one_hot(TicTacToeMove(0, 0)),
+            value: -1.0,
+        }]]);
 
         let vs = VarStore::new(device);
         let model = nn::linear(vs.root(), 2, 1, Default::default());

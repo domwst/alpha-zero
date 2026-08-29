@@ -10,13 +10,13 @@ use std::{
 
 use alz::{
     alpha_zero::{
-        apply_temperature, generate_self_played_game, sample_policy, AlphaZeroAdapter,
-        AlphaZeroNet, ExecutorScope, Game, MonteCarloTree, MoveParameters,
-        NetworkBatchedExecutorHandle, RootNoise, TerminationState,
+        extract_training_game, generate_self_played_game, run_match, Agent, AlphaZeroNet,
+        ExecutorScope, MctsAgent, MoveDecision, NetworkBatchedExecutorHandle,
+        NetworkPositionEvaluator, PolicyAgent, PositionCodec, RootNoise, Seat, Shared,
+        TrainingCodec, Turn, Versus,
     },
     tictactoe::{
-        generate_game_image, BoardState, CellState, TicTacToeMove, TicTacToeResAlphaZeroAdapter,
-        TicTacToeResNet,
+        generate_game_image, BoardState, CellState, TicTacToeCodec, TicTacToeMove, TicTacToeResNet,
     },
     util::Timer,
 };
@@ -53,11 +53,62 @@ fn detect_device() -> Device {
     device
 }
 
+fn print_state(state: &BoardState) {
+    for row in 0..BoardState::N {
+        for column in 0..BoardState::N {
+            let symbol = match state[(row, column)] {
+                CellState::X => 'X',
+                CellState::O => 'O',
+                CellState::Empty => ' ',
+            };
+            print!("{symbol}");
+        }
+        println!();
+    }
+}
+
+struct HumanAgent;
+
+impl Agent<BoardState> for HumanAgent {
+    fn select_move<'a>(
+        &'a mut self,
+        turn: Turn<'a, BoardState>,
+    ) -> impl std::future::Future<Output = anyhow::Result<MoveDecision>> + Send + 'a {
+        let state = turn.state.clone();
+        let legal_moves = turn.legal_moves.to_vec();
+        async move {
+            tokio::task::spawn_blocking(move || {
+                print_state(&state);
+                let [row, column] = {
+                    let mut input = String::new();
+                    io::stdin().read_line(&mut input)?;
+                    input
+                        .split_whitespace()
+                        .map(FromStr::from_str)
+                        .collect::<Result<Vec<usize>, _>>()?
+                        .try_into()
+                        .map_err(|_| anyhow::anyhow!("expected a row and column"))?
+                };
+                if row == 0 || column == 0 {
+                    anyhow::bail!("row and column are one-based");
+                }
+                let selected = TicTacToeMove(row - 1, column - 1);
+                let move_index = legal_moves
+                    .iter()
+                    .position(|&candidate| candidate == selected)
+                    .ok_or_else(|| anyhow::anyhow!("selected move is not legal"))?;
+                Ok(MoveDecision::new(move_index))
+            })
+            .await?
+        }
+    }
+}
+
 #[allow(unused)]
 async fn play_nn_only_game() -> anyhow::Result<()> {
     let mut vs = nn::VarStore::new(detect_device());
 
-    let net = TicTacToeResNet::new(&vs.root());
+    let net = TicTacToeResNet::new(vs.root());
     // let mut opt = nn::Adam::default().wd(1e-4).build(&vs, 1e-3)?;
 
     find_latest_snapshot(Path::new("checkpoints"))?
@@ -72,34 +123,25 @@ async fn play_nn_only_game() -> anyhow::Result<()> {
         (Kind::Float, vs.device()),
     );
     {
-        let _ = executor.spawn(|mut handle| async move {
-            let mut state = BoardState::new();
-            let mut history = vec![];
-            let _outcome = loop {
-                let moves = match state.get_state() {
-                    TerminationState::Terminal(v) => break v,
-                    TerminationState::Moves(moves) => moves,
-                };
-
-                let (value, policy) = handle
-                    .execute(TicTacToeResAlphaZeroAdapter::convert_game_to_nn_input(
-                        &state,
-                    ))
-                    .await;
-                let value = f32::try_from(value).unwrap();
-                let policy = TicTacToeResAlphaZeroAdapter::get_estimated_policy(&policy, &moves);
-                let r#move = sample_policy(&policy, &mut rand::rng());
-                let new_state = state.make_move(&moves[r#move]);
-                history.push((std::mem::replace(&mut state, new_state), policy, value));
-            };
-            history
-        });
+        std::mem::drop(executor.spawn(|handle| async move {
+            let evaluator =
+                NetworkPositionEvaluator::<TicTacToeResNet, TicTacToeCodec>::new(handle);
+            let agent = PolicyAgent::<BoardState, _, _, _>::new(
+                evaluator,
+                SmallRng::from_rng(&mut rand::rng()),
+                |_| 1.0,
+            );
+            let mut controller = Shared::new(agent);
+            run_match(BoardState::new(), &mut controller).await
+        }));
     }
-    let hist = executor.next().await.unwrap();
-    generate_game_image(&hist).save("out.png")?;
-    for (_, _, value) in &hist {
-        println!("Predicted value is {value}");
+    let record = executor.next().await.unwrap()?;
+    for ply in &record.plies {
+        if let Some(value) = ply.decision.diagnostics.value_estimate {
+            println!("Predicted value is {value}");
+        }
     }
+    executor.join().await;
     Ok(())
 }
 
@@ -109,85 +151,29 @@ async fn play_with_human(
     human_first: bool,
     sims: usize,
 ) -> anyhow::Result<()> {
-    let mut rng = SmallRng::from_rng(&mut rand::rng());
-    let mut current_player = human_first;
-    let mut state = BoardState::new();
-
-    fn print_state(state: &BoardState) {
-        for i in 0..BoardState::N {
-            for j in 0..BoardState::N {
-                let sym = match state[(i, j)] {
-                    CellState::X => 'X',
-                    CellState::O => 'O',
-                    CellState::Empty => ' ',
-                };
-                print!("{sym}");
-            }
-            println!();
-        }
-    }
-
-    let mut tree = MonteCarloTree::<BoardState, TicTacToeResNet, TicTacToeResAlphaZeroAdapter>::new(
-        state.clone(),
-        handle,
+    let start = BoardState::new();
+    let evaluator = NetworkPositionEvaluator::<TicTacToeResNet, TicTacToeCodec>::new(handle);
+    let network = MctsAgent::new(
+        start.clone(),
+        evaluator,
         RootNoise::None,
+        sims,
+        1.0,
+        SmallRng::from_rng(&mut rand::rng()),
+        |_| 0.33,
     );
-
-    let v = loop {
-        let moves = match state.get_state() {
-            TerminationState::Terminal(v) => break v,
-            TerminationState::Moves(moves) => moves,
-        };
-        let r#move = if current_player {
-            print_state(&state);
-            println!(
-                "NN's value prediction: {:?}",
-                tree.get_network_state_estimation()
-            );
-            // tree.do_simulations(sims, 1.0, &mut rng).await;
-            tree.do_simulations(2, 1.0, &mut rng).await;
-            let [i, j] = {
-                let mut s = String::new();
-                io::stdin().read_line(&mut s)?;
-                s.trim()
-                    .split(' ')
-                    .map(FromStr::from_str)
-                    .collect::<Result<Vec<usize>, _>>()?
-                    .try_into()
-                    .unwrap()
-            };
-            let m = TicTacToeMove(i - 1, j - 1);
-            moves.iter().position(|&v| v == m).unwrap()
-        } else {
-            tree.do_simulations(sims, 1.0, &mut rng).await;
-            let policy = apply_temperature(&tree.get_policy(), 0.33);
-            let r#move = sample_policy(&policy, &mut rng);
-            println!(
-                "Network's move {} {}",
-                moves[r#move].0 + 1,
-                moves[r#move].1 + 1
-            );
-            r#move
-        };
-        {
-            let (stat_info, dyn_info) = tree.get_move_stats(r#move).unwrap();
-            println!(
-                "Move: descends={}, avg_score={}, net_policy={}, total_descends={}, most_descends={}",
-                dyn_info.descends,
-                dyn_info.get_avg_score(),
-                stat_info.priority,
-                tree.get_total_descends().unwrap(),
-                tree.most_descends().unwrap(),
-            );
-        }
-        current_player ^= moves[r#move].is_player_switch();
-        tree.do_move(r#move);
-        state = state.make_move(&moves[r#move]);
-    };
-    if (v > 0.0) ^ current_player {
-        println!("Looser!");
+    let (record, human_seat) = if human_first {
+        let mut controller = Versus::new(HumanAgent, network);
+        (run_match(start, &mut controller).await?, Seat::First)
     } else {
-        println!("Congrats");
+        let mut controller = Versus::new(network, HumanAgent);
+        (run_match(start, &mut controller).await?, Seat::Second)
+    };
+    print_state(&record.terminal_state);
+    match record.value_for(human_seat) {
+        value if value > 0.0 => println!("Congrats"),
+        value if value < 0.0 => println!("You lost"),
+        _ => println!("Draw"),
     }
 
     Ok(())
@@ -223,7 +209,7 @@ async fn main() -> anyhow::Result<()> {
     // return Ok(());
     let mut vs = nn::VarStore::new(detect_device());
 
-    let mut net = TicTacToeResNet::new(&vs.root());
+    let mut net = TicTacToeResNet::new(vs.root());
     let mut opt = nn::Adam::default().wd(1e-4).build(&vs, 1e-3)?;
 
     let mut start_epoch = 0;
@@ -269,13 +255,10 @@ async fn main() -> anyhow::Result<()> {
         let games_in_epoch = 600;
         // let total_games = 1;
         for _ in 0..games_in_epoch {
-            let _ = executor.spawn(|handle| async {
-                generate_self_played_game::<
-                    BoardState,
-                    TicTacToeResNet,
-                    TicTacToeResAlphaZeroAdapter,
-                    _,
-                >(
+            std::mem::drop(executor.spawn(|handle| async {
+                let evaluator =
+                    NetworkPositionEvaluator::<TicTacToeResNet, TicTacToeCodec>::new(handle);
+                generate_self_played_game(
                     BoardState::new(),
                     // 128,
                     // 512,
@@ -288,10 +271,10 @@ async fn main() -> anyhow::Result<()> {
                         v @ 8..13 => 1.0 - (v - 7) as f32 * 0.1,
                         13.. => 0.5,
                     },
-                    handle,
+                    evaluator,
                 )
                 .await
-            });
+            }));
         }
 
         let (lim_tx, mut lim_rx) = tokio::sync::mpsc::channel(1);
@@ -320,13 +303,13 @@ async fn main() -> anyhow::Result<()> {
                     executor.set_batch_size(batch_size).await;
                 }
                 task_result = executor.next() => {
-                    let res = match task_result {
-                        Some(v) => v,
+                    let record = match task_result {
+                        Some(v) => v?,
                         None => break,
                     };
-                    total_score += res[0].2;
-                    total_length += res.len();
-                    history.push(res);
+                    total_score += record.value_for(Seat::First);
+                    total_length += record.plies.len();
+                    history.push(extract_training_game::<_, TicTacToeCodec>(record)?);
                     println!("Game finished, {} more to go", executor.len());
                 }
             }
@@ -343,7 +326,7 @@ async fn main() -> anyhow::Result<()> {
             .iter()
             .sample(&mut rand::rng(), 20)
             .into_iter()
-            .map(Vec::clone)
+            .cloned()
             .collect::<Vec<_>>();
 
         games_hist.extend(history.into_iter());
@@ -351,7 +334,7 @@ async fn main() -> anyhow::Result<()> {
             games_hist.pop_front();
         }
 
-        let augmentation_count = TicTacToeResAlphaZeroAdapter::augmentation_count();
+        let augmentation_count = TicTacToeCodec::augmentation_count();
         let mut training_samples = games_hist
             .iter()
             .flatten()
@@ -368,20 +351,13 @@ async fn main() -> anyhow::Result<()> {
             let mut policies = Vec::with_capacity(chunk.len());
             let mut values = Vec::with_capacity(chunk.len());
             for &(sample, augmentation) in chunk {
-                let (state, policy, value) = sample;
-                let state_tensor = TicTacToeResAlphaZeroAdapter::convert_game_to_nn_input(state);
-                let policy_tensor = TicTacToeResAlphaZeroAdapter::convert_policy_to_nn(
-                    policy,
-                    state.get_state().get_moves().unwrap(),
-                );
-                let (state_tensor, policy_tensor) = TicTacToeResAlphaZeroAdapter::augment(
-                    &state_tensor,
-                    &policy_tensor,
-                    augmentation,
-                );
+                let state_tensor = TicTacToeCodec::encode_position(&sample.state);
+                let policy_tensor = TicTacToeCodec::policy_to_tensor(&sample.policy);
+                let (state_tensor, policy_tensor) =
+                    TicTacToeCodec::augment(&state_tensor, &policy_tensor, augmentation);
                 states.push(state_tensor);
                 policies.push(policy_tensor);
-                values.push(*value);
+                values.push(sample.value);
             }
 
             let states = Tensor::stack(&states, 0)

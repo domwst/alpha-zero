@@ -3,7 +3,7 @@ use std::ops::{Index, Range};
 use serde::{Deserialize, Serialize};
 use serde_big_array::BigArray;
 
-use crate::alpha_zero::{Game, MoveParameters, TerminationState};
+use crate::alpha_zero::{Game, MoveParameters, TerminationState, TurnChange};
 
 const N: usize = 19;
 
@@ -108,8 +108,8 @@ impl BoardState {
 pub struct TicTacToeMove(pub usize, pub usize);
 
 impl MoveParameters for TicTacToeMove {
-    fn is_player_switch(&self) -> bool {
-        true
+    fn turn_change(&self) -> TurnChange {
+        TurnChange::SwitchPlayer
     }
 }
 

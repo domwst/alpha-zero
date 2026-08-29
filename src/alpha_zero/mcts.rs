@@ -1,12 +1,13 @@
-use std::{marker::PhantomData, ptr, sync::OnceLock};
+use std::{ptr, sync::OnceLock};
 
+use anyhow::{ensure, Result};
 use atomic_refcell::AtomicRefCell;
 use rand::Rng;
 use rand_distr::{multi::Dirichlet, Distribution};
 
 use crate::alpha_zero::TerminationState;
 
-use super::{AlphaZeroAdapter, AlphaZeroNet, Game, MoveParameters, NetworkBatchedExecutorHandle};
+use super::{Game, MoveParameters, PositionEvaluation, PositionEvaluator, TurnChange};
 
 #[derive(Clone, Copy, Debug)]
 pub struct MoveDynamicInfo {
@@ -27,7 +28,7 @@ impl MoveDynamicInfo {
 #[derive(Clone, Copy, Debug)]
 pub struct MoveStaticInfo {
     pub priority: f32,
-    pub player_switch: bool,
+    pub turn_change: TurnChange,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -36,24 +37,25 @@ pub enum RootNoise {
     Dirichlet { alpha: f32, epsilon: f32 },
 }
 
-struct NodeChild<T> {
+struct NodeChild<T: Game> {
+    action: T::Move,
     node: MonteCarloNode<T>,
     static_info: MoveStaticInfo,
     dyn_info: AtomicRefCell<MoveDynamicInfo>,
 }
 
-struct NodeState<T> {
+struct NodeState<T: Game> {
     value: f32,
     is_terminal: bool,
     children: Box<[NodeChild<T>]>,
 }
 
-struct MonteCarloNode<T> {
+struct MonteCarloNode<T: Game> {
     game_state: T,
     node_state: OnceLock<NodeState<T>>,
 }
 
-impl<T> MonteCarloNode<T> {
+impl<T: Game> MonteCarloNode<T> {
     fn new(state: T) -> Self {
         Self {
             game_state: state,
@@ -62,7 +64,7 @@ impl<T> MonteCarloNode<T> {
     }
 }
 
-impl<T> NodeState<T> {
+impl<T: Game> NodeState<T> {
     fn pick_next_move_internal<F: Fn(f32, usize) -> f32>(
         &self,
         c_puct: f32,
@@ -77,6 +79,7 @@ impl<T> NodeState<T> {
                 |(
                     i,
                     NodeChild {
+                        action: _,
                         node: _,
                         static_info: MoveStaticInfo { priority, .. },
                         dyn_info,
@@ -139,23 +142,20 @@ impl<T> NodeState<T> {
     }
 }
 
-pub struct MonteCarloTree<TGame: Game, TNet: AlphaZeroNet, TAdapter: AlphaZeroAdapter<TGame, TNet>>
-{
+pub struct MonteCarloTree<TGame: Game, Evaluator: PositionEvaluator<TGame>> {
     root: MonteCarloNode<TGame>,
-    executor: NetworkBatchedExecutorHandle<TNet>,
+    evaluator: Evaluator,
     root_noise: RootNoise,
     root_noise_sample: Option<Box<[f32]>>,
-    _p: PhantomData<TAdapter>,
 }
 
-impl<TGame: Game, TNet: AlphaZeroNet, TAdapter: AlphaZeroAdapter<TGame, TNet>>
-    MonteCarloTree<TGame, TNet, TAdapter>
+impl<TGame, Evaluator> MonteCarloTree<TGame, Evaluator>
+where
+    TGame: Game + PartialEq + Send + Sync,
+    TGame::Move: Clone + PartialEq + Send + Sync,
+    Evaluator: PositionEvaluator<TGame> + Send + Sync,
 {
-    pub fn new(
-        state: TGame,
-        executor: NetworkBatchedExecutorHandle<TNet>,
-        root_noise: RootNoise,
-    ) -> Self {
+    pub fn new(state: TGame, evaluator: Evaluator, root_noise: RootNoise) -> Self {
         if let RootNoise::Dirichlet { alpha, epsilon } = root_noise {
             assert!(alpha.is_finite() && alpha > 0.0);
             assert!(epsilon.is_finite() && (0.0..=1.0).contains(&epsilon));
@@ -164,10 +164,9 @@ impl<TGame: Game, TNet: AlphaZeroNet, TAdapter: AlphaZeroAdapter<TGame, TNet>>
         let root = MonteCarloNode::new(state);
         Self {
             root,
-            executor,
+            evaluator,
             root_noise,
             root_noise_sample: None,
-            _p: PhantomData,
         }
     }
 
@@ -189,43 +188,36 @@ impl<TGame: Game, TNet: AlphaZeroNet, TAdapter: AlphaZeroAdapter<TGame, TNet>>
         Some(self.root.node_state.get()?.get_max_visits())
     }
 
-    async fn create_node_state(
-        executor: &mut NetworkBatchedExecutorHandle<TNet>,
-        state: &TGame,
-    ) -> NodeState<TGame> {
+    async fn create_node_state(evaluator: &Evaluator, state: &TGame) -> Result<NodeState<TGame>> {
         let moves = match state.get_state() {
             TerminationState::Terminal(val) => {
-                return NodeState {
+                return Ok(NodeState {
                     value: val,
                     is_terminal: true,
                     children: Box::from(vec![]),
-                };
+                });
             }
             TerminationState::Moves(moves) => moves,
         };
-        let (value, policy) = executor
-            .execute(TAdapter::convert_game_to_nn_input(state))
-            .await;
-        let value = f32::try_from(value).unwrap();
-        let policy = TAdapter::get_estimated_policy(&policy, &moves);
-        assert!(value.is_finite());
-        assert_eq!(policy.len(), moves.len());
-        assert!(policy
-            .iter()
-            .all(|value| value.is_finite() && (0.0..=1.0).contains(value)));
-        assert!((policy.iter().sum::<f32>() - 1.0).abs() < 1e-4);
+        let evaluation = evaluator.evaluate(state, &moves).await?;
+        evaluation.validate_for(moves.len())?;
+        let PositionEvaluation {
+            value,
+            legal_policy,
+        } = evaluation;
 
-        NodeState {
+        Ok(NodeState {
             value,
             is_terminal: false,
             children: moves
                 .iter()
-                .zip(policy)
+                .zip(legal_policy)
                 .map(|(r#move, policy)| NodeChild {
+                    action: r#move.clone(),
                     node: MonteCarloNode::new(state.make_move(r#move)),
                     static_info: MoveStaticInfo {
                         priority: policy,
-                        player_switch: r#move.is_player_switch(),
+                        turn_change: r#move.turn_change(),
                     },
                     dyn_info: AtomicRefCell::new(MoveDynamicInfo {
                         total_score: 0.0,
@@ -234,14 +226,15 @@ impl<TGame: Game, TNet: AlphaZeroNet, TAdapter: AlphaZeroAdapter<TGame, TNet>>
                 })
                 .collect::<Vec<_>>()
                 .into(),
-        }
+        })
     }
 
-    async fn initialize_root(&mut self) {
+    async fn initialize_root(&mut self) -> Result<()> {
         if self.root.node_state.get().is_none() {
-            let state = Self::create_node_state(&mut self.executor, &self.root.game_state).await;
+            let state = Self::create_node_state(&self.evaluator, &self.root.game_state).await?;
             assert!(self.root.node_state.set(state).is_ok());
         }
+        Ok(())
     }
 
     fn initialize_root_noise<R: Rng + ?Sized>(&mut self, rng: &mut R) {
@@ -266,9 +259,9 @@ impl<TGame: Game, TNet: AlphaZeroNet, TAdapter: AlphaZeroAdapter<TGame, TNet>>
         samples: usize,
         cpuct: f32,
         rng: &mut R,
-    ) {
+    ) -> Result<()> {
         assert!(samples > 0, "At least one simulation is required");
-        self.initialize_root().await;
+        self.initialize_root().await?;
         self.initialize_root_noise(rng);
 
         let mut state_stack = vec![];
@@ -282,7 +275,7 @@ impl<TGame: Game, TNet: AlphaZeroNet, TAdapter: AlphaZeroAdapter<TGame, TNet>>
                     if let Some(r) = cur.node_state.get() {
                         break 'cl (r, false);
                     }
-                    let state = Self::create_node_state(&mut self.executor, &cur.game_state).await;
+                    let state = Self::create_node_state(&self.evaluator, &cur.game_state).await?;
                     assert!(cur.node_state.set(state).is_ok());
                     (cur.node_state.get().unwrap(), true)
                 };
@@ -310,7 +303,7 @@ impl<TGame: Game, TNet: AlphaZeroNet, TAdapter: AlphaZeroAdapter<TGame, TNet>>
             while let Some((state, r#move)) = state_stack.pop() {
                 let child = &state.children[r#move];
 
-                if child.static_info.player_switch {
+                if child.static_info.turn_change.switches_player() {
                     value *= -1.;
                 }
 
@@ -319,44 +312,89 @@ impl<TGame: Game, TNet: AlphaZeroNet, TAdapter: AlphaZeroAdapter<TGame, TNet>>
                 dyn_info.descends += 1;
             }
         }
+        Ok(())
     }
 
     pub fn get_policy(&self) -> Vec<f32> {
         self.root.node_state.get().unwrap().get_policy()
     }
 
-    pub fn do_move(&mut self, move_id: usize) {
-        self.root = core::mem::take(&mut self.root.node_state.get_mut().unwrap().children)
-            .into_vec()
-            .swap_remove(move_id)
-            .node;
+    pub fn matches_position(&self, state: &TGame, moves: &[TGame::Move]) -> bool {
+        if &self.root.game_state != state {
+            return false;
+        }
+        self.root.node_state.get().is_none_or(|node_state| {
+            node_state.children.len() == moves.len()
+                && node_state
+                    .children
+                    .iter()
+                    .zip(moves)
+                    .all(|(child, action)| &child.action == action)
+        })
+    }
+
+    pub fn advance(
+        &mut self,
+        move_id: usize,
+        action: &TGame::Move,
+        next_state: TGame,
+    ) -> Result<()> {
+        let next_root = if let Some(state) = self.root.node_state.get_mut() {
+            ensure!(
+                move_id < state.children.len(),
+                "move index {move_id} is outside the MCTS root"
+            );
+            ensure!(
+                &state.children[move_id].action == action,
+                "applied action does not match MCTS move index {move_id}"
+            );
+            ensure!(
+                state.children[move_id].node.game_state == next_state,
+                "MCTS successor does not match the authoritative game state"
+            );
+            Some(
+                core::mem::take(&mut state.children)
+                    .into_vec()
+                    .swap_remove(move_id)
+                    .node,
+            )
+        } else {
+            None
+        };
+        self.root = next_root.unwrap_or_else(|| MonteCarloNode::new(next_state));
         self.root_noise_sample = None;
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{
+        future::{ready, Future},
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        },
+    };
 
     use rand::{rngs::SmallRng, SeedableRng};
-    use tch::{Device, Kind, Tensor};
 
-    use crate::alpha_zero::{AlphaZeroAdapter, AlphaZeroNet, ExecutorScope, Game, MoveParameters};
+    use crate::alpha_zero::{Game, MoveParameters, PositionEvaluation, PositionEvaluator};
 
-    use super::{MonteCarloTree, RootNoise, TerminationState};
+    use super::{MonteCarloTree, RootNoise, TerminationState, TurnChange};
 
-    #[derive(Clone)]
+    #[derive(Clone, PartialEq)]
     struct TestGame(Option<f32>);
 
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, PartialEq)]
     enum TestMove {
         Win,
         Lose,
     }
 
     impl MoveParameters for TestMove {
-        fn is_player_switch(&self) -> bool {
-            true
+        fn turn_change(&self) -> TurnChange {
+            TurnChange::SwitchPlayer
         }
     }
 
@@ -378,94 +416,123 @@ mod tests {
         }
     }
 
-    struct TestNet;
+    struct TestEvaluator;
 
-    impl AlphaZeroNet for TestNet {
-        fn forward_t(&self, input: &Tensor, _is_training: bool) -> (Tensor, Tensor) {
-            let batch = input.size()[0];
-            (
-                Tensor::zeros([batch], (Kind::Float, Device::Cpu)),
-                Tensor::zeros([batch, 2], (Kind::Float, Device::Cpu)),
-            )
+    impl PositionEvaluator<TestGame> for TestEvaluator {
+        fn evaluate<'a>(
+            &'a self,
+            _state: &'a TestGame,
+            _moves: &'a [TestMove],
+        ) -> impl Future<Output = anyhow::Result<PositionEvaluation>> + Send + 'a {
+            ready(Ok(PositionEvaluation {
+                value: 0.0,
+                legal_policy: vec![0.75, 0.25],
+            }))
         }
     }
 
-    struct TestAdapter;
+    #[derive(Clone, PartialEq)]
+    struct DepthGame(usize);
 
-    impl AlphaZeroAdapter<TestGame, TestNet> for TestAdapter {
-        fn convert_game_to_nn_input(_state: &TestGame) -> Tensor {
-            Tensor::zeros([1], (Kind::Float, Device::Cpu))
+    #[derive(Clone, Copy, PartialEq)]
+    struct Step;
+
+    impl MoveParameters for Step {
+        fn turn_change(&self) -> TurnChange {
+            TurnChange::SwitchPlayer
+        }
+    }
+
+    impl Game for DepthGame {
+        type Move = Step;
+
+        fn get_state(&self) -> TerminationState<Self::Move> {
+            if self.0 == 0 {
+                TerminationState::Terminal(-1.0)
+            } else {
+                TerminationState::Moves(vec![Step].into())
+            }
         }
 
-        fn get_estimated_policy(_policy: &Tensor, _moves: &[TestMove]) -> Vec<f32> {
-            vec![0.75, 0.25]
+        fn make_move(&self, _move: &Self::Move) -> Self {
+            Self(self.0 - 1)
         }
+    }
 
-        fn convert_policy_to_nn(_policy: &[f32], _moves: &[TestMove]) -> Tensor {
-            unreachable!()
+    #[derive(Clone)]
+    struct CountingEvaluator(Arc<AtomicUsize>);
+
+    impl PositionEvaluator<DepthGame> for CountingEvaluator {
+        fn evaluate<'a>(
+            &'a self,
+            _state: &'a DepthGame,
+            _moves: &'a [Step],
+        ) -> impl Future<Output = anyhow::Result<PositionEvaluation>> + Send + 'a {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            ready(Ok(PositionEvaluation {
+                value: 0.0,
+                legal_policy: vec![1.0],
+            }))
         }
     }
 
     #[tokio::test]
     async fn first_search_initializes_root_and_records_every_simulation() {
-        let mut scope = ExecutorScope::new(
-            TestNet,
-            1,
-            1,
-            Duration::from_millis(1),
-            (Kind::Float, Device::Cpu),
-        );
-        std::mem::drop(scope.spawn(|handle| async move {
-            let mut tree = MonteCarloTree::<TestGame, TestNet, TestAdapter>::new(
-                TestGame(None),
-                handle,
-                RootNoise::None,
-            );
-            let mut rng = SmallRng::seed_from_u64(1);
-            tree.do_simulations(1, 1.0, &mut rng).await;
+        let mut tree = MonteCarloTree::new(TestGame(None), TestEvaluator, RootNoise::None);
+        let mut rng = SmallRng::seed_from_u64(1);
+        tree.do_simulations(1, 1.0, &mut rng).await.unwrap();
 
-            (
-                tree.get_total_descends().unwrap(),
-                tree.get_policy(),
-                tree.get_move_stats(0).unwrap().1.get_avg_score(),
-            )
-        }));
-
-        let (visits, policy, winning_score) = scope.next().await.unwrap();
-        scope.join().await;
-        assert_eq!(visits, 1);
-        assert_eq!(policy, [1.0, 0.0]);
-        assert_eq!(winning_score, 1.0);
+        assert_eq!(tree.get_total_descends(), Some(1));
+        assert_eq!(tree.get_policy(), [1.0, 0.0]);
+        assert_eq!(tree.get_move_stats(0).unwrap().1.get_avg_score(), 1.0);
     }
 
     #[tokio::test]
     async fn dirichlet_noise_is_reused_for_the_same_root() {
-        let mut scope = ExecutorScope::new(
-            TestNet,
-            1,
-            1,
-            Duration::from_millis(1),
-            (Kind::Float, Device::Cpu),
+        let mut tree = MonteCarloTree::new(
+            TestGame(None),
+            TestEvaluator,
+            RootNoise::Dirichlet {
+                alpha: 0.1,
+                epsilon: 0.25,
+            },
         );
-        std::mem::drop(scope.spawn(|handle| async move {
-            let mut tree = MonteCarloTree::<TestGame, TestNet, TestAdapter>::new(
-                TestGame(None),
-                handle,
-                RootNoise::Dirichlet {
-                    alpha: 0.1,
-                    epsilon: 0.25,
-                },
-            );
-            let mut rng = SmallRng::seed_from_u64(1);
-            tree.do_simulations(1, 1.0, &mut rng).await;
-            let first_noise = tree.root_noise_sample.clone();
-            tree.do_simulations(1, 1.0, &mut rng).await;
-            assert_eq!(tree.root_noise_sample, first_noise);
-            tree.do_move(0);
-            assert!(tree.root_noise_sample.is_none());
-        }));
+        let mut rng = SmallRng::seed_from_u64(1);
+        tree.do_simulations(1, 1.0, &mut rng).await.unwrap();
+        let first_noise = tree.root_noise_sample.clone();
+        tree.do_simulations(1, 1.0, &mut rng).await.unwrap();
+        assert_eq!(tree.root_noise_sample, first_noise);
+        tree.advance(0, &TestMove::Win, TestGame(Some(-1.0)))
+            .unwrap();
+        assert!(tree.root_noise_sample.is_none());
+    }
 
-        scope.next().await.unwrap();
-        scope.join().await;
+    #[tokio::test]
+    async fn advance_reuses_subtree_without_evaluation() {
+        let evaluations = Arc::new(AtomicUsize::new(0));
+        let evaluator = CountingEvaluator(evaluations.clone());
+        let mut tree = MonteCarloTree::new(DepthGame(2), evaluator, RootNoise::None);
+        let mut rng = SmallRng::seed_from_u64(1);
+
+        tree.do_simulations(2, 1.0, &mut rng).await.unwrap();
+        assert_eq!(evaluations.load(Ordering::Relaxed), 2);
+        tree.advance(0, &Step, DepthGame(1)).unwrap();
+
+        assert_eq!(tree.get_total_descends(), Some(1));
+        assert_eq!(evaluations.load(Ordering::Relaxed), 2);
+        tree.do_simulations(1, 1.0, &mut rng).await.unwrap();
+        assert_eq!(evaluations.load(Ordering::Relaxed), 2);
+    }
+
+    #[tokio::test]
+    async fn position_and_successor_mismatches_are_rejected() {
+        let mut tree = MonteCarloTree::new(TestGame(None), TestEvaluator, RootNoise::None);
+        let mut rng = SmallRng::seed_from_u64(1);
+        tree.do_simulations(1, 1.0, &mut rng).await.unwrap();
+
+        assert!(!tree.matches_position(&TestGame(None), &[TestMove::Lose, TestMove::Win]));
+        assert!(tree
+            .advance(0, &TestMove::Win, TestGame(Some(1.0)))
+            .is_err());
     }
 }

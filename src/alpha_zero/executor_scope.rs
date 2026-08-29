@@ -79,7 +79,9 @@ impl<T, TNet: AlphaZeroNet + Send + 'static> ExecutorScope<T, TNet> {
         batch_acc_time: Duration,
         options: (Kind, Device),
     ) -> Self {
-        let executor = NetworkBatchedExecutor::new(nn);
+        assert!(parallelism > 0);
+        assert!(batch_size > 0);
+        let executor = NetworkBatchedExecutor::new(nn, parallelism.max(batch_size));
         let handle = executor.mint_handle();
         let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel(1);
         let executor = tokio::spawn(async move {
@@ -130,6 +132,7 @@ impl<T, TNet: AlphaZeroNet + Send + 'static> ExecutorScope<T, TNet> {
     }
 
     pub async fn set_batch_size(&mut self, batch_size: usize) {
+        assert!(batch_size > 0);
         if let Some(v) = self.batch_size_manager.change_max_batch_size(batch_size) {
             self.executor_cmd
                 .send(BatcherCommand::SetBatchSize(v))
@@ -170,5 +173,9 @@ impl<T, TNet: AlphaZeroNet + Send + 'static> ExecutorScope<T, TNet> {
 
     pub fn len(&self) -> usize {
         self.results.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.results.is_empty()
     }
 }

@@ -1,47 +1,46 @@
 use std::{marker::PhantomData, time::Duration};
 
-use futures::{stream::FuturesUnordered, StreamExt};
+use anyhow::{anyhow, Context, Result};
 use tch::{Device, Kind, Tensor};
-
-use tokio::sync::mpsc::{
-    channel, unbounded_channel, Receiver, Sender, UnboundedReceiver, UnboundedSender,
-};
+use tokio::sync::{mpsc, oneshot};
 
 use crate::util::Timer;
 
 use super::AlphaZeroNet;
 
+struct InferenceRequest {
+    input: Tensor,
+    response: oneshot::Sender<(Tensor, Tensor)>,
+}
+
 pub struct NetworkBatchedExecutor<Net: AlphaZeroNet> {
-    receiver: UnboundedReceiver<(Tensor, Sender<(Tensor, Tensor)>)>,
-    sender: UnboundedSender<(Tensor, Sender<(Tensor, Tensor)>)>,
+    receiver: mpsc::Receiver<InferenceRequest>,
+    sender: mpsc::Sender<InferenceRequest>,
     nn: Net,
 }
 
 pub struct NetworkBatchedExecutorHandle<Net: AlphaZeroNet> {
-    task_sender: UnboundedSender<(Tensor, Sender<(Tensor, Tensor)>)>,
-    result_sender: Sender<(Tensor, Tensor)>,
-    result_receiver: Receiver<(Tensor, Tensor)>,
-    _p: PhantomData<Net>,
+    task_sender: mpsc::Sender<InferenceRequest>,
+    _net: PhantomData<fn() -> Net>,
 }
 
 impl<Net: AlphaZeroNet> Clone for NetworkBatchedExecutorHandle<Net> {
     fn clone(&self) -> Self {
-        let (tx, rx) = tokio::sync::mpsc::channel(1);
         Self {
             task_sender: self.task_sender.clone(),
-            result_sender: tx,
-            result_receiver: rx,
-            _p: PhantomData,
+            _net: PhantomData,
         }
     }
 }
 
 impl<Net: AlphaZeroNet> NetworkBatchedExecutorHandle<Net> {
-    pub async fn execute(&mut self, task: Tensor) -> (Tensor, Tensor) {
+    pub async fn execute(&self, input: Tensor) -> Result<(Tensor, Tensor)> {
+        let (response, result) = oneshot::channel();
         self.task_sender
-            .send((task, self.result_sender.clone()))
-            .unwrap();
-        self.result_receiver.recv().await.unwrap()
+            .send(InferenceRequest { input, response })
+            .await
+            .map_err(|_| anyhow!("network evaluator stopped before accepting the request"))?;
+        result.await.context("network evaluator stopped")
     }
 }
 
@@ -50,22 +49,20 @@ pub enum BatcherCommand {
 }
 
 impl<Net: AlphaZeroNet> NetworkBatchedExecutor<Net> {
-    pub fn new(nn: Net) -> Self {
-        let (tx, rx) = unbounded_channel();
+    pub fn new(nn: Net, queue_capacity: usize) -> Self {
+        assert!(queue_capacity > 0);
+        let (sender, receiver) = mpsc::channel(queue_capacity);
         Self {
-            receiver: rx,
-            sender: tx,
+            receiver,
+            sender,
             nn,
         }
     }
 
     pub fn mint_handle(&self) -> NetworkBatchedExecutorHandle<Net> {
-        let (tx, rx) = channel(1);
         NetworkBatchedExecutorHandle {
             task_sender: self.sender.clone(),
-            result_sender: tx,
-            result_receiver: rx,
-            _p: PhantomData,
+            _net: PhantomData,
         }
     }
 
@@ -73,11 +70,9 @@ impl<Net: AlphaZeroNet> NetworkBatchedExecutor<Net> {
         self,
         mut max_batch: usize,
         batch_acc_time: Duration,
-        mut command_receiver: Receiver<BatcherCommand>,
+        mut command_receiver: mpsc::Receiver<BatcherCommand>,
         (kind, device): (Kind, Device),
     ) -> Net {
-        const MAX_PAR_RESPS: usize = 1;
-
         let NetworkBatchedExecutor {
             mut receiver,
             nn,
@@ -86,69 +81,71 @@ impl<Net: AlphaZeroNet> NetworkBatchedExecutor<Net> {
         drop(sender);
         assert!(max_batch > 0);
 
-        let mut inputs = vec![];
-        let mut responses = vec![];
-        let mut buf = vec![];
-
-        let mut response_tasks = FuturesUnordered::new();
-
-        let mut acc_time = batch_acc_time;
-
+        let mut pending = Vec::with_capacity(max_batch);
+        let mut input_closed = false;
+        let mut commands_open = true;
         let mut invocations = 0;
         let mut total_tensors = 0;
 
-        'main: loop {
-            let deadline = tokio::time::sleep(acc_time);
-            tokio::pin!(deadline);
-            loop {
-                let cur_len = buf.len();
+        loop {
+            while pending.is_empty() && !input_closed {
                 tokio::select! {
-                    () = &mut deadline => {
-                        // println!("Executor finished accumulating batch due to deadline");
-                        break;
+                    request = receiver.recv() => match request {
+                        Some(request) => pending.push(request),
+                        None => input_closed = true,
                     },
-                    p = receiver.recv_many(&mut buf, max_batch - cur_len) => {
-                        // println!("Executer received {p} tensors");
-                        if p == 0 {
-                            // println!("Stopping work");
-                            assert!(buf.is_empty());
-                            break 'main;
+                    command = command_receiver.recv(), if commands_open => match command {
+                        Some(BatcherCommand::SetBatchSize(size)) if size > 0 => {
+                            println!("Changing batch size to {size}");
+                            max_batch = size;
                         }
+                        Some(BatcherCommand::SetBatchSize(_)) => {
+                            eprintln!("Ignoring zero network batch size");
+                        }
+                        None => commands_open = false,
                     },
-                    cmd = command_receiver.recv() => {
-                        let cmd = match cmd {
-                            Some(v) => v,
-                            None => continue,
-                        };
-                        match cmd {
-                            BatcherCommand::SetBatchSize(s) => {
-                                println!("Changing batch size to {s}");
-                                max_batch = s;
-                            },
-                        }
-                    }
-                }
-                if buf.len() >= max_batch {
-                    // println!("Executor finished accumulating batch due to size");
-                    break;
                 }
             }
 
-            if buf.len() != max_batch {
-                println!("Batch of size {} (max_batch = {max_batch})", buf.len());
+            if pending.is_empty() && input_closed {
+                break;
             }
-            if buf.is_empty() {
-                acc_time *= 2;
+
+            let deadline = tokio::time::sleep(batch_acc_time);
+            tokio::pin!(deadline);
+            while pending.len() < max_batch && !input_closed {
+                tokio::select! {
+                    () = &mut deadline => break,
+                    request = receiver.recv() => match request {
+                        Some(request) => pending.push(request),
+                        None => input_closed = true,
+                    },
+                    command = command_receiver.recv(), if commands_open => match command {
+                        Some(BatcherCommand::SetBatchSize(size)) if size > 0 => {
+                            println!("Changing batch size to {size}");
+                            max_batch = size;
+                        }
+                        Some(BatcherCommand::SetBatchSize(_)) => {
+                            eprintln!("Ignoring zero network batch size");
+                        }
+                        None => commands_open = false,
+                    },
+                }
+            }
+
+            pending.retain(|request| !request.response.is_closed());
+            if pending.is_empty() {
                 continue;
-            } else {
-                // println!("Batch of size {}", buf.len());
-                acc_time = batch_acc_time;
+            }
+            let batch_len = pending.len().min(max_batch);
+            if batch_len != max_batch {
+                println!("Batch of size {batch_len} (max_batch = {max_batch})");
             }
 
-            while let Some((inp, send)) = buf.pop() {
-                inputs.push(inp);
-                responses.push(send);
-            }
+            let (inputs, responses): (Vec<_>, Vec<_>) = pending
+                .drain(..batch_len)
+                .map(|request| (request.input, request.response))
+                .unzip();
 
             let timer = Timer::new();
             let input = Tensor::stack(&inputs, 0).totype(kind).to(device);
@@ -158,31 +155,131 @@ impl<Net: AlphaZeroNet> NetworkBatchedExecutor<Net> {
             let values = values.to(Device::Cpu);
             let policies = policies.to(Device::Cpu);
             timer.print_if_greater(Duration::from_secs(1), "CPU conversion took {t}");
-            response_tasks.push(tokio::spawn(async move {
-                for (i, resp) in responses.iter().enumerate() {
-                    let value = values.get(i as i64);
-                    let policy = policies.get(i as i64);
-                    resp.send((value, policy)).await.unwrap();
-                }
-                timer.print_if_greater(Duration::from_secs(1), "Reply took {t}");
-            }));
+
+            for (index, response) in responses.into_iter().enumerate() {
+                let value = values.get(index as i64);
+                let policy = policies.get(index as i64);
+                let _ = response.send((value, policy));
+            }
 
             invocations += 1;
             total_tensors += inputs.len();
-
             if invocations % 1000 == 0 {
                 println!("Invocations: {invocations}, total tensors: {total_tensors}");
             }
+        }
 
-            inputs.clear();
-            responses = Vec::with_capacity(max_batch);
-            while response_tasks.len() > MAX_PAR_RESPS {
-                response_tasks.next().await;
+        nn
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use super::*;
+
+    struct EchoNet;
+
+    impl AlphaZeroNet for EchoNet {
+        fn forward_t(&self, input: &Tensor, _is_training: bool) -> (Tensor, Tensor) {
+            let batch = input.size()[0];
+            (
+                input.view([batch]),
+                Tensor::zeros([batch, 1], (Kind::Float, Device::Cpu)),
+            )
+        }
+    }
+
+    struct RecordingNet(Arc<Mutex<Vec<i64>>>);
+
+    impl AlphaZeroNet for RecordingNet {
+        fn forward_t(&self, input: &Tensor, _is_training: bool) -> (Tensor, Tensor) {
+            let batch = input.size()[0];
+            self.0.lock().unwrap().push(batch);
+            (
+                input.view([batch]),
+                Tensor::zeros([batch, 1], (Kind::Float, Device::Cpu)),
+            )
+        }
+    }
+
+    #[tokio::test]
+    async fn cancelled_request_does_not_change_the_next_response() {
+        let executor = NetworkBatchedExecutor::new(EchoNet, 4);
+        let handle = executor.mint_handle();
+        let (command_sender, command_receiver) = mpsc::channel(1);
+        let server = tokio::spawn(executor.serve(
+            2,
+            Duration::from_millis(50),
+            command_receiver,
+            (Kind::Float, Device::Cpu),
+        ));
+
+        {
+            let first = handle.execute(Tensor::from_slice(&[1.0f32]));
+            tokio::pin!(first);
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_millis(1)) => {}
+                result = &mut first => panic!("request unexpectedly completed: {result:?}"),
             }
         }
 
-        while let Some(_) = response_tasks.next().await {}
+        let (value, _) = handle.execute(Tensor::from_slice(&[2.0f32])).await.unwrap();
+        assert_eq!(f32::try_from(value).unwrap(), 2.0);
 
-        nn
+        drop((handle, command_sender));
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn stopped_executor_returns_an_error() {
+        let executor = NetworkBatchedExecutor::new(EchoNet, 1);
+        let handle = executor.mint_handle();
+        drop(executor);
+
+        let result = handle.execute(Tensor::from_slice(&[1.0f32])).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn shrinking_batch_size_limits_an_accumulated_batch() {
+        let observed_batches = Arc::new(Mutex::new(Vec::new()));
+        let executor = NetworkBatchedExecutor::new(RecordingNet(observed_batches.clone()), 8);
+        let handle = executor.mint_handle();
+        let (command_sender, command_receiver) = mpsc::channel(1);
+        let server = tokio::spawn(executor.serve(
+            4,
+            Duration::from_millis(50),
+            command_receiver,
+            (Kind::Float, Device::Cpu),
+        ));
+
+        let requests = (0..3)
+            .map(|value| {
+                let handle = handle.clone();
+                tokio::spawn(async move {
+                    handle
+                        .execute(Tensor::from_slice(&[value as f32]))
+                        .await
+                        .unwrap()
+                })
+            })
+            .collect::<Vec<_>>();
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        command_sender
+            .send(BatcherCommand::SetBatchSize(2))
+            .await
+            .unwrap();
+
+        for request in requests {
+            let _ = request.await.unwrap();
+        }
+        drop((handle, command_sender));
+        server.await.unwrap();
+
+        let batches = observed_batches.lock().unwrap();
+        assert_eq!(batches.iter().sum::<i64>(), 3);
+        assert!(batches.iter().all(|size| *size <= 2));
     }
 }
