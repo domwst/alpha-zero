@@ -262,7 +262,7 @@ impl<TGame: Game, TNet: AlphaZeroNet, TAdapter: AlphaZeroAdapter<TGame, TNet>>
                 let child = &state.children[r#move];
 
                 if child.static_info.player_switch {
-                    value *= -1;
+                    value *= -1.;
                 }
 
                 let mut dyn_info = child.dyn_info.borrow_mut();
