@@ -15,7 +15,7 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use tch::nn::{Optimizer, VarStore};
 
-const FORMAT_VERSION: u32 = 2;
+const FORMAT_VERSION: u32 = 1;
 const MODEL_FILE: &str = "model.safetensors";
 const OPTIMIZER_FILE: &str = "optimizer.ot";
 const REPLAY_FILE: &str = "replay.bin.zst";
@@ -26,9 +26,9 @@ pub type ReplayGame = Vec<ReplayPosition>;
 pub type ReplayBuffer = VecDeque<ReplayGame>;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct SnapshotMetadata {
     format_version: u32,
-    #[serde(default)]
     action_schema: String,
     epoch: usize,
     replay_games: usize,
@@ -350,21 +350,6 @@ mod tests {
         .unwrap();
     }
 
-    fn write_v1_snapshot(root: &Path, epoch: usize) {
-        let path = snapshot_dir(root, epoch);
-        fs::create_dir_all(&path).unwrap();
-        for name in [MODEL_FILE, OPTIMIZER_FILE, REPLAY_FILE] {
-            fs::write(path.join(name), b"").unwrap();
-        }
-        fs::write(
-            path.join(METADATA_FILE),
-            format!(
-                r#"{{"format_version":1,"epoch":{epoch},"replay_games":0,"replay_positions":0}}"#
-            ),
-        )
-        .unwrap();
-    }
-
     #[test]
     fn discovery_uses_latest_complete_snapshot() {
         let root = temp_dir();
@@ -390,19 +375,6 @@ mod tests {
         assert_eq!(latest.epoch(), 7);
         let snapshot = resolve_snapshot(&snapshot_dir(&root, 1)).unwrap().unwrap();
         assert_eq!(snapshot.epoch(), 1);
-
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn older_unsupported_snapshot_does_not_block_latest_snapshot() {
-        let root = temp_dir();
-        fs::create_dir(&root).unwrap();
-        write_v1_snapshot(&root, 1);
-        write_fake_snapshot(&root, 2, true);
-
-        let snapshot = find_latest_snapshot(&root).unwrap().unwrap();
-        assert_eq!(snapshot.epoch(), 2);
 
         fs::remove_dir_all(root).unwrap();
     }
