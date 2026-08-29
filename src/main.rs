@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use pytorch::{
+use alz::{
     alpha_zero::{
         generate_self_played_game, sample_policy, AlphaZeroAdapter, AlphaZeroNet, ExecutorScope,
         Game, MonteCarloTree, MoveParameters, NetworkBatchedExecutorHandle, TerminationState,
