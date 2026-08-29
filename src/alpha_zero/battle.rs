@@ -1,4 +1,4 @@
-use rand::{rngs::SmallRng, thread_rng, Rng, SeedableRng};
+use rand::{rngs::SmallRng, Rng, SeedableRng};
 use std::future::Future;
 
 use super::{
@@ -118,7 +118,7 @@ pub async fn do_battle<
 
     let mut history = vec![];
 
-    let mut rng = SmallRng::from_rng(thread_rng()).unwrap();
+    let mut rng = SmallRng::from_rng(&mut rand::rng());
 
     let score = loop {
         let moves = match state.get_state() {

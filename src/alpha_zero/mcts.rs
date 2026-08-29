@@ -1,8 +1,8 @@
-use std::{borrow::Borrow, convert::identity, marker::PhantomData, ptr, sync::OnceLock};
+use std::{marker::PhantomData, ptr, sync::OnceLock};
 
 use atomic_refcell::AtomicRefCell;
 use rand::Rng;
-use rand_distr::{Dirichlet, Distribution};
+use rand_distr::{multi::Dirichlet, Distribution};
 
 use crate::alpha_zero::TerminationState;
 
@@ -154,7 +154,7 @@ impl<TGame: Game, TNet: AlphaZeroNet, TAdapter: AlphaZeroAdapter<TGame, TNet>>
     pub fn get_move_stats(&self, r#move: usize) -> Option<(MoveStaticInfo, MoveDynamicInfo)> {
         let state = self.root.node_state.get()?;
         let child = &state.children[r#move];
-        Some((child.1, *child.2.borrow()))
+        Some((child.static_info, *child.dyn_info.borrow()))
     }
 
     pub fn get_total_descends(&self) -> Option<usize> {
@@ -193,19 +193,20 @@ impl<TGame: Game, TNet: AlphaZeroNet, TAdapter: AlphaZeroAdapter<TGame, TNet>>
                 .zip(policy)
                 .map(|(r#move, policy)| {
                     assert!(policy >= 0. && policy <= 1.);
-                    (
-                        MonteCarloNode::new(state.make_move(r#move)),
-                        MoveStaticInfo {
+                    NodeChild {
+                        node: MonteCarloNode::new(state.make_move(r#move)),
+                        static_info: MoveStaticInfo {
                             priority: policy,
                             player_switch: r#move.is_player_switch(),
                         },
-                        AtomicRefCell::new(MoveDynamicInfo {
+                        dyn_info: AtomicRefCell::new(MoveDynamicInfo {
                             total_score: 0.0,
                             descends: 0,
                         }),
-                    )
+                    }
                 })
-                .collect(),
+                .collect::<Vec<_>>()
+                .into(),
         }
     }
 
@@ -220,7 +221,7 @@ impl<TGame: Game, TNet: AlphaZeroNet, TAdapter: AlphaZeroAdapter<TGame, TNet>>
             let root_state = self.root.node_state.get().unwrap();
             let size = root_state.children.len();
             if size >= 2 {
-                let distr = Dirichlet::new_with_size(0.1, size).unwrap();
+                let distr = Dirichlet::new(&vec![0.1; size]).unwrap();
                 distr.sample(rng)
             } else {
                 vec![1.; size]
@@ -236,7 +237,11 @@ impl<TGame: Game, TNet: AlphaZeroNet, TAdapter: AlphaZeroAdapter<TGame, TNet>>
                         break 'cl (r, false);
                     }
                     let state = Self::create_node_state(&mut self.executor, &cur.game_state).await;
-                    let r = cur.node_state.try_insert(state).unwrap();
+                    let r = cur
+                        .node_state
+                        .try_insert(state)
+                        .map_err(|_| format!("WTF?!"))
+                        .unwrap();
                     (r, true)
                 };
 
@@ -249,18 +254,18 @@ impl<TGame: Game, TNet: AlphaZeroNet, TAdapter: AlphaZeroAdapter<TGame, TNet>>
                 } else {
                     node_state.pick_next_move(cpuct)
                 };
-                cur = &node_state.children[m].0;
+                cur = &node_state.children[m].node;
                 state_stack.push((node_state, m));
             };
 
             while let Some((state, r#move)) = state_stack.pop() {
                 let child = &state.children[r#move];
 
-                if child.1.player_switch {
+                if child.static_info.player_switch {
                     value *= -0.97;
                 }
 
-                let mut dyn_info = child.2.borrow_mut();
+                let mut dyn_info = child.dyn_info.borrow_mut();
                 dyn_info.total_score += value;
                 dyn_info.descends += 1;
             }
@@ -272,14 +277,9 @@ impl<TGame: Game, TNet: AlphaZeroNet, TAdapter: AlphaZeroAdapter<TGame, TNet>>
     }
 
     pub fn do_move(&mut self, move_id: usize) {
-        let root = self
-            .root
-            .node_state
-            .get_mut()
-            .unwrap()
-            .children
+        self.root = core::mem::take(&mut self.root.node_state.get_mut().unwrap().children)
+            .into_vec()
             .swap_remove(move_id)
-            .0;
-        self.root = root;
+            .node;
     }
 }

@@ -1,5 +1,5 @@
 use rand::{
-    distributions::{Distribution, WeightedIndex},
+    distr::{weighted::WeightedIndex, Distribution},
     Rng,
 };
 

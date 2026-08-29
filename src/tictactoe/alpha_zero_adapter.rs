@@ -20,7 +20,7 @@ fn game_to_nn_input(state: &BoardState) -> Tensor {
             fld[l][i][j] = 1;
         }
     }
-    Tensor::from_slice(fld.flatten().flatten()).view([2, 19, 19])
+    Tensor::from_slice(fld.as_flattened().as_flattened()).view([2, 19, 19])
 }
 
 fn estimated_policy(policy: &Tensor, moves: &[<BoardState as Game>::Move]) -> Vec<f32> {
@@ -46,7 +46,7 @@ fn policy_to_nn(policy: &[f32], moves: &[<BoardState as Game>::Move]) -> tch::Te
     for (&TicTacToeMove(i, j), &pol) in moves.iter().zip(policy) {
         res[i][j] = pol;
     }
-    Tensor::from_slice(res.flatten()).view([19, 19])
+    Tensor::from_slice(res.as_flattened()).view([19, 19])
 }
 
 fn reflect_and_augment(state: &Tensor, policy: &Tensor) -> Vec<(Tensor, Tensor)> {

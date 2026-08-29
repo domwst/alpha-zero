@@ -1,4 +1,4 @@
-use rand::{rngs::SmallRng, thread_rng, SeedableRng};
+use rand::{rngs::SmallRng, SeedableRng};
 
 use crate::alpha_zero::{AlphaZeroAdapter, AlphaZeroNet, Game, MonteCarloTree, MoveParameters};
 
@@ -18,7 +18,7 @@ pub async fn generate_self_played_game<
 ) -> Vec<(TGame, Vec<f32>, f32)> {
     let mut tree = MonteCarloTree::<TGame, TNet, TAdapter>::new(start.clone(), executor);
     let mut turn = 0;
-    let mut rng = SmallRng::from_rng(thread_rng()).unwrap();
+    let mut rng = SmallRng::from_rng(&mut rand::rng());
 
     let mut state = start;
 

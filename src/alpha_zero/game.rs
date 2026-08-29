@@ -16,7 +16,7 @@ impl<Move> TerminationState<Move> {
         }
     }
 
-    pub fn get_moves(self) -> Option<&[Move]> {
+    pub fn get_moves(&self) -> Option<&[Move]> {
         match self {
             TerminationState::Terminal(_) => None,
             TerminationState::Moves(moves) => Some(&*moves),

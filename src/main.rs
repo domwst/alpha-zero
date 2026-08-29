@@ -1,5 +1,3 @@
-#![feature(exclusive_range_pattern)]
-
 use std::{
     collections::VecDeque,
     fs,
@@ -23,7 +21,7 @@ use pytorch::{
 use rand::{
     rngs::SmallRng,
     seq::{IteratorRandom, SliceRandom},
-    thread_rng, SeedableRng,
+    SeedableRng,
 };
 use tap::{tap, Tap};
 use tch::{
@@ -44,6 +42,7 @@ fn get_stats_file(epoch: usize) -> PathBuf {
     PathBuf::from(format!("stats/{epoch:02}.stats"))
 }
 
+#[allow(unused)]
 async fn play_nn_only_game() -> anyhow::Result<()> {
     let mut vs = nn::VarStore::new(Device::Mps);
     // let mut vs = nn::VarStore::new(Device::cuda_if_available());
@@ -78,7 +77,7 @@ async fn play_nn_only_game() -> anyhow::Result<()> {
                     .await;
                 let value = f32::try_from(value).unwrap();
                 let policy = TicTacToeResAlphaZeroAdapter::get_estimated_policy(&policy, &moves);
-                let r#move = sample_policy(&policy, 0.33, &mut thread_rng());
+                let r#move = sample_policy(&policy, 1., &mut rand::rng());
                 let new_state = state.make_move(&moves[r#move]);
                 history.push((std::mem::replace(&mut state, new_state), policy, value));
             };
@@ -93,12 +92,13 @@ async fn play_nn_only_game() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[allow(unused)]
 async fn play_with_human(
     handle: NetworkBatchedExecutorHandle<TicTacToeResNet>,
     human_first: bool,
     sims: usize,
 ) -> anyhow::Result<()> {
-    let mut rng = SmallRng::from_rng(&mut thread_rng())?;
+    let mut rng = SmallRng::from_rng(&mut rand::rng());
     let mut current_player = human_first;
     let mut state = BoardState::new();
 
@@ -182,28 +182,28 @@ async fn play_with_human(
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let mut vs = nn::VarStore::new(Device::Mps);
-    // let mut vs = nn::VarStore::new(Device::cuda_if_available());
-    println!("Going to use device {:?}", vs.device());
-
-    let net = TicTacToeResNet::new(&vs.root());
-    // let mut opt = nn::Adam::default().wd(1e-4).build(&vs, 1e-3)?;
-
-    vs.load(get_checkpoint_file(376))?;
-
-    let mut executor = ExecutorScope::new(
-        net,
-        1,
-        1,
-        Duration::from_secs(100),
-        (Kind::Float, vs.device()),
-    );
-    let _ = executor.spawn(|handle| async move {
-        play_with_human(handle, true, 4096).await.unwrap();
-    });
-    executor.next().await;
-    executor.join().await;
-    return Ok(());
+    // let mut vs = nn::VarStore::new(Device::Mps);
+    // // let mut vs = nn::VarStore::new(Device::cuda_if_available());
+    // println!("Going to use device {:?}", vs.device());
+    //
+    // let net = TicTacToeResNet::new(&vs.root());
+    // // let mut opt = nn::Adam::default().wd(1e-4).build(&vs, 1e-3)?;
+    //
+    // vs.load(get_checkpoint_file(376))?;
+    //
+    // let mut executor = ExecutorScope::new(
+    //     net,
+    //     1,
+    //     1,
+    //     Duration::from_secs(100),
+    //     (Kind::Float, vs.device()),
+    // );
+    // let _ = executor.spawn(|handle| async move {
+    //     play_with_human(handle, true, 4096).await.unwrap();
+    // });
+    // executor.next().await;
+    // executor.join().await;
+    // return Ok(());
 
     // play_nn_only_game().await?;
     // let mut vs = nn::VarStore::new(Device::Mps);
@@ -341,7 +341,7 @@ async fn main() -> anyhow::Result<()> {
 
         let sample_games = history
             .iter()
-            .choose_multiple(&mut thread_rng(), 20)
+            .sample(&mut rand::rng(), 20)
             .into_iter()
             .map(Vec::clone)
             .collect::<Vec<_>>();
@@ -371,7 +371,7 @@ async fn main() -> anyhow::Result<()> {
             })
             .flatten()
             .collect::<Vec<_>>()
-            .tap_mut(|h| h.shuffle(&mut thread_rng()));
+            .tap_mut(|h| h.shuffle(&mut rand::rng()));
 
         let mut total_values_loss = 0.0;
         let mut total_policies_loss = 0.0;

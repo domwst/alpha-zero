@@ -128,12 +128,12 @@ impl Game for BoardState {
             .flatten()
             .filter(|&crd| self[crd] == CellState::Empty)
             .map(|(i, j)| TicTacToeMove(i, j))
-            .collect();
+            .collect::<Vec<_>>();
 
         if moves.is_empty() {
             TerminationState::Terminal(0.0)
         } else {
-            TerminationState::Moves(moves)
+            TerminationState::Moves(moves.into())
         }
     }
 
