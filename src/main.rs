@@ -42,10 +42,18 @@ fn get_stats_file(epoch: usize) -> PathBuf {
     PathBuf::from(format!("stats/{epoch:02}.stats"))
 }
 
+fn detect_device() -> Device {
+    let device = cfg_select! {
+        target_os = "macos" => Device::Mps,
+        _ => Device::cuda_if_available(),
+    };
+    println!("Using device {device:?}");
+    device
+}
+
 #[allow(unused)]
 async fn play_nn_only_game() -> anyhow::Result<()> {
-    let mut vs = nn::VarStore::new(Device::Mps);
-    // let mut vs = nn::VarStore::new(Device::cuda_if_available());
+    let mut vs = nn::VarStore::new(detect_device());
     println!("Going to use device {:?}", vs.device());
 
     let net = TicTacToeResNet::new(&vs.root());
@@ -182,8 +190,7 @@ async fn play_with_human(
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // let mut vs = nn::VarStore::new(Device::Mps);
-    // // let mut vs = nn::VarStore::new(Device::cuda_if_available());
+    // let mut vs = nn::VarStore::new(detect_device());
     // println!("Going to use device {:?}", vs.device());
     //
     // let net = TicTacToeResNet::new(&vs.root());
@@ -208,7 +215,7 @@ async fn main() -> anyhow::Result<()> {
     // play_nn_only_game().await?;
     // let mut vs = nn::VarStore::new(Device::Mps);
     // return Ok(());
-    let mut vs = nn::VarStore::new(Device::cuda_if_available());
+    let mut vs = nn::VarStore::new(detect_device());
     println!("Going to use device {:?}", vs.device());
 
     let mut net = TicTacToeResNet::new(&vs.root());
