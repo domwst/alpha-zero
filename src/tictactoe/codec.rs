@@ -18,8 +18,8 @@ pub struct TicTacToePolicy {
 }
 
 impl TicTacToePolicy {
-    pub fn one_hot(TicTacToeMove(row, column): TicTacToeMove) -> Self {
-        assert!(row < BoardState::N && column < BoardState::N);
+    pub fn one_hot(r#move: TicTacToeMove) -> Self {
+        let (row, column) = r#move.to_xy();
         let mut values = [[0.0; BoardState::N]; BoardState::N];
         values[row][column] = 1.0;
         Self { values }
@@ -104,7 +104,8 @@ fn estimated_policy(policy: &Tensor, moves: &[TicTacToeMove]) -> Result<Vec<f32>
     );
 
     let mut result = Vec::with_capacity(moves.len());
-    for &TicTacToeMove(row, column) in moves {
+    for r#move in moves {
+        let (row, column) = r#move.to_xy();
         result.push(policy[row * BoardState::N + column]);
     }
 
@@ -153,7 +154,8 @@ fn canonical_policy(policy: &[f32], moves: &[TicTacToeMove]) -> Result<TicTacToe
     );
 
     let mut values = [[0.0; BoardState::N]; BoardState::N];
-    for (&TicTacToeMove(row, column), &probability) in moves.iter().zip(policy) {
+    for (r#move, &probability) in moves.iter().zip(policy) {
+        let (row, column) = r#move.to_xy();
         values[row][column] = probability;
     }
     let policy = TicTacToePolicy { values };
@@ -243,8 +245,11 @@ mod tests {
     fn legal_policy_normalization_is_stable() {
         let policy = Tensor::full([19, 19], -1000.0, (Kind::Float, Device::Cpu));
         let _ = policy.i((0, 0)).fill_(0.0);
-        let policy =
-            estimated_policy(&policy, &[TicTacToeMove(0, 1), TicTacToeMove(0, 2)]).unwrap();
+        let policy = estimated_policy(
+            &policy,
+            &[TicTacToeMove::from_xy(0, 1), TicTacToeMove::from_xy(0, 2)],
+        )
+        .unwrap();
 
         assert!((policy[0] - 0.5).abs() < 1e-6);
         assert!((policy[1] - 0.5).abs() < 1e-6);
@@ -252,8 +257,11 @@ mod tests {
 
     #[test]
     fn canonical_policy_uses_fixed_action_indices() {
-        let policy =
-            canonical_policy(&[0.25, 0.75], &[TicTacToeMove(2, 3), TicTacToeMove(10, 12)]).unwrap();
+        let policy = canonical_policy(
+            &[0.25, 0.75],
+            &[TicTacToeMove::from_xy(2, 3), TicTacToeMove::from_xy(10, 12)],
+        )
+        .unwrap();
 
         assert_eq!(policy[(2, 3)], 0.25);
         assert_eq!(policy[(10, 12)], 0.75);

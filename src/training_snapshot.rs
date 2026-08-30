@@ -392,7 +392,7 @@ mod tests {
         let root = temp_dir();
         let replay = VecDeque::from([vec![TrainingSample {
             state: BoardState::new(),
-            policy: TicTacToePolicy::one_hot(TicTacToeMove(0, 0)),
+            policy: TicTacToePolicy::one_hot(TicTacToeMove::from_xy(0, 0)),
             value: -1.0,
         }]]);
 

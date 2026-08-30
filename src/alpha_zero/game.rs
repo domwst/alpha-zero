@@ -1,7 +1,7 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TurnChange {
-    SamePlayer,
-    SwitchPlayer,
+    SamePlayer = 0,
+    SwitchPlayer = 1,
 }
 
 impl TurnChange {

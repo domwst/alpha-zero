@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use alz::{
     alpha_zero::{do_battle, ExecutorScope, NetworkPositionEvaluator, Seat},
-    tictactoe::{BoardState, TicTacToeCodec, TicTacToeMove, TicTacToeResNet},
+    tictactoe::{BoardState, TicTacToeCodec, TicTacToeResNet},
 };
 use anyhow::{ensure, Result};
 use tch::Kind;
@@ -68,7 +68,7 @@ pub async fn run(args: BattleArgs) -> Result<()> {
     println!("First snapshot epoch: {first_epoch}");
     println!("Second snapshot epoch: {second_epoch}");
     for (ply, turn) in record.plies.iter().enumerate() {
-        let TicTacToeMove(row, column) = turn.action;
+        let (row, column) = turn.action.to_xy();
         println!(
             "Ply {}: {:?} played {} {}",
             ply + 1,

@@ -45,7 +45,7 @@ impl Agent<BoardState> for HumanAgent {
                     .map_err(|_| anyhow::anyhow!("expected a row and column"))?;
                 ensure!(row > 0 && column > 0, "row and column are one-based");
 
-                let selected = TicTacToeMove(row - 1, column - 1);
+                let selected = TicTacToeMove::from_xy(row - 1, column - 1);
                 let move_index = legal_moves
                     .iter()
                     .position(|&candidate| candidate == selected)
@@ -144,7 +144,7 @@ pub async fn run_policy(args: PolicyArgs) -> Result<()> {
     let record = result?;
 
     for (ply, turn) in record.plies.iter().enumerate() {
-        let TicTacToeMove(row, column) = turn.action;
+        let (row, column) = turn.action.to_xy();
         if let Some(value) = turn.decision.diagnostics.value_estimate {
             println!(
                 "Ply {}: {:?} played {} {} (value {value})",

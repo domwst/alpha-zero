@@ -97,7 +97,24 @@ impl BoardState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TicTacToeMove(pub usize, pub usize);
+pub struct TicTacToeMove {
+    x: u8,
+    y: u8,
+}
+
+impl TicTacToeMove {
+    pub fn from_xy(x: usize, y: usize) -> Self {
+        debug_assert!(x < N && y < N);
+        Self {
+            x: x as _,
+            y: y as _,
+        }
+    }
+
+    pub fn to_xy(self) -> (usize, usize) {
+        (self.x as _, self.y as _)
+    }
+}
 
 impl MoveParameters for TicTacToeMove {
     fn turn_change(&self) -> TurnChange {
@@ -118,7 +135,7 @@ impl Game for BoardState {
         let moves = (0..N)
             .flat_map(|i| (0..N).map(move |j| (i, j)))
             .filter(|&crd| self[crd] == CellState::Empty)
-            .map(|(i, j)| TicTacToeMove(i, j))
+            .map(|(i, j)| TicTacToeMove::from_xy(i, j))
             .collect::<Vec<_>>();
 
         if moves.is_empty() {
@@ -130,7 +147,7 @@ impl Game for BoardState {
 
     fn make_move(&self, m: &Self::Move) -> Self {
         let mut new_state = self.clone();
-        let &TicTacToeMove(i, j) = m;
+        let (i, j) = m.to_xy();
         new_state.set_inplace((i, j), CellState::X);
         new_state.flip_players()
     }
@@ -255,8 +272,9 @@ mod tests {
         let mut board = BoardState::new();
 
         b.iter(|| {
+            let cell = TicTacToeMove::from_xy(0, 0);
             for _ in 0..65536 {
-                board = core::hint::black_box(board.make_move(&TicTacToeMove(0, 0)));
+                board = core::hint::black_box(board.make_move(&cell));
             }
             board.clone()
         });

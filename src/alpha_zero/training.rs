@@ -55,7 +55,7 @@ mod tests {
     #[test]
     fn extraction_expands_policy_and_uses_actor_perspective() {
         let state = BoardState::new();
-        let action = TicTacToeMove(0, 0);
+        let action = TicTacToeMove::from_xy(0, 0);
         let mut legal_policy = vec![0.0; BoardState::N * BoardState::N];
         legal_policy[0] = 1.0;
         let terminal_state = state.make_move(&action);

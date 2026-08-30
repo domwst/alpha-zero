@@ -11,7 +11,7 @@ use super::{Game, MoveParameters, PositionEvaluation, PositionEvaluator, TurnCha
 #[derive(Clone, Copy, Debug)]
 pub struct MoveDynamicInfo {
     pub total_score: f32,
-    pub descends: usize,
+    pub descends: u32,
 }
 
 impl MoveDynamicInfo {
@@ -24,10 +24,36 @@ impl MoveDynamicInfo {
     }
 }
 
+#[derive(Clone, Copy)]
+pub struct MoveStaticInfoRepr {
+    blob: u32,
+}
+
+impl From<MoveStaticInfo> for MoveStaticInfoRepr {
+    fn from(value: MoveStaticInfo) -> Self {
+        Self {
+            blob: (value.priority.to_bits() & !1) | (value.turn_change as u32),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct MoveStaticInfo {
     pub priority: f32,
     pub turn_change: TurnChange,
+}
+
+impl From<MoveStaticInfoRepr> for MoveStaticInfo {
+    fn from(value: MoveStaticInfoRepr) -> Self {
+        Self {
+            priority: f32::from_bits(value.blob & !1),
+            turn_change: match value.blob & 1 {
+                0 => TurnChange::SamePlayer,
+                1 => TurnChange::SwitchPlayer,
+                _ => unreachable!(),
+            },
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -39,8 +65,14 @@ pub enum RootNoise {
 struct NodeChild<T: Game> {
     action: T::Move,
     node: MonteCarloNode<T>,
-    static_info: MoveStaticInfo,
+    static_info: MoveStaticInfoRepr,
     dyn_info: SyncUnsafeCell<MoveDynamicInfo>,
+}
+
+impl<T: Game> NodeChild<T> {
+    fn static_info(&self) -> MoveStaticInfo {
+        MoveStaticInfo::from(self.static_info)
+    }
 }
 
 struct NodeState<T: Game> {
@@ -80,15 +112,16 @@ impl<T: Game> NodeState<T> {
                     NodeChild {
                         action: _,
                         node: _,
-                        static_info: MoveStaticInfo { priority, .. },
+                        static_info,
                         dyn_info,
                     },
                 )| {
+                    let priority = MoveStaticInfo::from(*static_info).priority;
                     let dyn_info = unsafe { &*dyn_info.get() };
                     (
                         dyn_info.get_avg_score()
                             + c_puct
-                                * priority_adj(*priority, i)
+                                * priority_adj(priority, i)
                                 * (sqrt_total_visits / (1 + dyn_info.descends) as f32 + 1e-9),
                         i,
                     )
@@ -107,14 +140,14 @@ impl<T: Game> NodeState<T> {
             .iter()
             .map(|child| unsafe { *child.dyn_info.get() }.descends)
             .max()
-            .unwrap_or(0)
+            .unwrap_or(0) as _
     }
 
     fn count_total_visits(&self) -> usize {
         self.children
             .iter()
             .map(|child| unsafe { *child.dyn_info.get() }.descends)
-            .sum()
+            .sum::<u32>() as _
     }
 
     fn pick_next_move(&self, c_puct: f32) -> usize {
@@ -130,7 +163,7 @@ impl<T: Game> NodeState<T> {
             .children
             .iter()
             .map(|child| unsafe { *child.dyn_info.get() }.descends);
-        let sm: usize = iter.clone().sum();
+        let sm: u32 = iter.clone().sum();
 
         if self.children.is_empty() {
             return vec![];
@@ -176,7 +209,7 @@ where
     pub fn get_move_stats(&self, r#move: usize) -> Option<(MoveStaticInfo, MoveDynamicInfo)> {
         let state = self.root.node_state.get()?;
         let child = &state.children[r#move];
-        Some((child.static_info, unsafe { *child.dyn_info.get() }))
+        Some((child.static_info(), unsafe { *child.dyn_info.get() }))
     }
 
     pub fn get_total_descends(&self) -> Option<usize> {
@@ -217,7 +250,8 @@ where
                     static_info: MoveStaticInfo {
                         priority: policy,
                         turn_change: r#move.turn_change(),
-                    },
+                    }
+                    .into(),
                     dyn_info: SyncUnsafeCell::new(MoveDynamicInfo {
                         total_score: 0.0,
                         descends: 0,
@@ -302,7 +336,7 @@ where
             while let Some((state, r#move)) = state_stack.pop() {
                 let child = &state.children[r#move];
 
-                if child.static_info.turn_change.switches_player() {
+                if child.static_info().turn_change.switches_player() {
                     value *= -1.;
                 }
 
