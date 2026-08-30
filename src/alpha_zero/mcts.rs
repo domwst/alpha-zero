@@ -1,7 +1,6 @@
-use std::{ptr, sync::OnceLock};
+use std::{cell::SyncUnsafeCell, ptr, sync::OnceLock};
 
 use anyhow::{ensure, Result};
-use atomic_refcell::AtomicRefCell;
 use rand::Rng;
 use rand_distr::{multi::Dirichlet, Distribution};
 
@@ -41,7 +40,7 @@ struct NodeChild<T: Game> {
     action: T::Move,
     node: MonteCarloNode<T>,
     static_info: MoveStaticInfo,
-    dyn_info: AtomicRefCell<MoveDynamicInfo>,
+    dyn_info: SyncUnsafeCell<MoveDynamicInfo>,
 }
 
 struct NodeState<T: Game> {
@@ -85,7 +84,7 @@ impl<T: Game> NodeState<T> {
                         dyn_info,
                     },
                 )| {
-                    let dyn_info = dyn_info.borrow();
+                    let dyn_info = unsafe { &*dyn_info.get() };
                     (
                         dyn_info.get_avg_score()
                             + c_puct
@@ -106,7 +105,7 @@ impl<T: Game> NodeState<T> {
     fn get_max_visits(&self) -> usize {
         self.children
             .iter()
-            .map(|child| child.dyn_info.borrow().descends)
+            .map(|child| unsafe { *child.dyn_info.get() }.descends)
             .max()
             .unwrap_or(0)
     }
@@ -114,7 +113,7 @@ impl<T: Game> NodeState<T> {
     fn count_total_visits(&self) -> usize {
         self.children
             .iter()
-            .map(|child| child.dyn_info.borrow().descends)
+            .map(|child| unsafe { *child.dyn_info.get() }.descends)
             .sum()
     }
 
@@ -130,7 +129,7 @@ impl<T: Game> NodeState<T> {
         let iter = self
             .children
             .iter()
-            .map(|child| child.dyn_info.borrow().descends);
+            .map(|child| unsafe { *child.dyn_info.get() }.descends);
         let sm: usize = iter.clone().sum();
 
         if self.children.is_empty() {
@@ -177,7 +176,7 @@ where
     pub fn get_move_stats(&self, r#move: usize) -> Option<(MoveStaticInfo, MoveDynamicInfo)> {
         let state = self.root.node_state.get()?;
         let child = &state.children[r#move];
-        Some((child.static_info, *child.dyn_info.borrow()))
+        Some((child.static_info, unsafe { *child.dyn_info.get() }))
     }
 
     pub fn get_total_descends(&self) -> Option<usize> {
@@ -219,7 +218,7 @@ where
                         priority: policy,
                         turn_change: r#move.turn_change(),
                     },
-                    dyn_info: AtomicRefCell::new(MoveDynamicInfo {
+                    dyn_info: SyncUnsafeCell::new(MoveDynamicInfo {
                         total_score: 0.0,
                         descends: 0,
                     }),
@@ -307,7 +306,7 @@ where
                     value *= -1.;
                 }
 
-                let mut dyn_info = child.dyn_info.borrow_mut();
+                let dyn_info = unsafe { &mut *child.dyn_info.get() };
                 dyn_info.total_score += value;
                 dyn_info.descends += 1;
             }
