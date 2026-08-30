@@ -104,7 +104,7 @@ pub struct TicTacToeMove {
 
 impl TicTacToeMove {
     pub fn from_xy(x: usize, y: usize) -> Self {
-        debug_assert!(x < N && y < N);
+        assert!(x < N && y < N);
         Self {
             x: x as _,
             y: y as _,

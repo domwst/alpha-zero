@@ -29,10 +29,12 @@ pub struct MoveStaticInfoRepr {
     blob: u32,
 }
 
+const SIGN_BIT: u32 = 1 << 31;
+
 impl From<MoveStaticInfo> for MoveStaticInfoRepr {
     fn from(value: MoveStaticInfo) -> Self {
         Self {
-            blob: (value.priority.to_bits() & !1) | (value.turn_change as u32),
+            blob: (value.priority.to_bits() & !SIGN_BIT) | (value.turn_change as u32 * SIGN_BIT),
         }
     }
 }
@@ -46,10 +48,10 @@ pub struct MoveStaticInfo {
 impl From<MoveStaticInfoRepr> for MoveStaticInfo {
     fn from(value: MoveStaticInfoRepr) -> Self {
         Self {
-            priority: f32::from_bits(value.blob & !1),
-            turn_change: match value.blob & 1 {
+            priority: f32::from_bits(value.blob & !SIGN_BIT),
+            turn_change: match value.blob & SIGN_BIT {
                 0 => TurnChange::SamePlayer,
-                1 => TurnChange::SwitchPlayer,
+                SIGN_BIT => TurnChange::SwitchPlayer,
                 _ => unreachable!(),
             },
         }
