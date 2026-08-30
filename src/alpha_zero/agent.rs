@@ -1,4 +1,4 @@
-use std::{future::Future, marker::PhantomData};
+use std::marker::PhantomData;
 
 use anyhow::{ensure, Result};
 use rand::Rng;
@@ -56,35 +56,30 @@ where
     Random: Rng + Send,
     Temperature: Fn(usize) -> f32 + Send,
 {
-    fn select_move<'a>(
-        &'a mut self,
-        turn: Turn<'a, TGame>,
-    ) -> impl Future<Output = Result<MoveDecision>> + Send + 'a {
-        async move {
-            ensure!(
-                self.tree.matches_position(turn.state, turn.legal_moves),
-                "MCTS root does not match the authoritative game state"
-            );
-            self.tree
-                .do_simulations(self.simulations, self.c_puct, &mut self.random)
-                .await?;
-            ensure!(
-                self.tree.matches_position(turn.state, turn.legal_moves),
-                "MCTS root does not match the authoritative game state"
-            );
-            let search_policy = self.tree.get_policy();
-            let sampling_policy = apply_temperature(&search_policy, (self.temperature)(turn.ply));
-            let move_index = sample_policy(&sampling_policy, &mut self.random);
+    async fn select_move<'a>(&'a mut self, turn: Turn<'a, TGame>) -> Result<MoveDecision> {
+        ensure!(
+            self.tree.matches_position(turn.state, turn.legal_moves),
+            "MCTS root does not match the authoritative game state"
+        );
+        self.tree
+            .do_simulations(self.simulations, self.c_puct, &mut self.random)
+            .await?;
+        ensure!(
+            self.tree.matches_position(turn.state, turn.legal_moves),
+            "MCTS root does not match the authoritative game state"
+        );
+        let search_policy = self.tree.get_policy();
+        let sampling_policy = apply_temperature(&search_policy, (self.temperature)(turn.ply));
+        let move_index = sample_policy(&sampling_policy, &mut self.random);
 
-            Ok(MoveDecision {
-                move_index,
-                training_policy: Some(sampling_policy),
-                diagnostics: DecisionDiagnostics {
-                    value_estimate: self.tree.get_network_state_estimation(),
-                    sampling_policy: None,
-                },
-            })
-        }
+        Ok(MoveDecision {
+            move_index,
+            training_policy: Some(sampling_policy),
+            diagnostics: DecisionDiagnostics {
+                value_estimate: self.tree.get_network_state_estimation(),
+                sampling_policy: None,
+            },
+        })
     }
 
     fn observe_move(&mut self, applied: &AppliedMove<'_, TGame>) -> Result<()> {
@@ -125,27 +120,22 @@ where
     Random: Rng + Send,
     Temperature: Fn(usize) -> f32 + Send,
 {
-    fn select_move<'a>(
-        &'a mut self,
-        turn: Turn<'a, TGame>,
-    ) -> impl Future<Output = Result<MoveDecision>> + Send + 'a {
-        async move {
-            let evaluation = self
-                .evaluator
-                .evaluate(turn.state, turn.legal_moves)
-                .await?;
-            evaluation.validate_for(turn.legal_moves.len())?;
-            let sampling_policy =
-                apply_temperature(&evaluation.legal_policy, (self.temperature)(turn.ply));
-            let move_index = sample_policy(&sampling_policy, &mut self.random);
-            Ok(MoveDecision {
-                move_index,
-                training_policy: None,
-                diagnostics: DecisionDiagnostics {
-                    value_estimate: Some(evaluation.value),
-                    sampling_policy: Some(sampling_policy),
-                },
-            })
-        }
+    async fn select_move<'a>(&'a mut self, turn: Turn<'a, TGame>) -> Result<MoveDecision> {
+        let evaluation = self
+            .evaluator
+            .evaluate(turn.state, turn.legal_moves)
+            .await?;
+        evaluation.validate_for(turn.legal_moves.len())?;
+        let sampling_policy =
+            apply_temperature(&evaluation.legal_policy, (self.temperature)(turn.ply));
+        let move_index = sample_policy(&sampling_policy, &mut self.random);
+        Ok(MoveDecision {
+            move_index,
+            training_policy: None,
+            diagnostics: DecisionDiagnostics {
+                value_estimate: Some(evaluation.value),
+                sampling_policy: Some(sampling_policy),
+            },
+        })
     }
 }
