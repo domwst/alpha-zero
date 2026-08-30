@@ -133,6 +133,10 @@ impl<T, TNet: AlphaZeroNet + Send + 'static> ExecutorScope<T, TNet> {
         self.executor_handle.clone()
     }
 
+    pub fn completed_evaluations(&self) -> u64 {
+        self.executor_handle.completed_evaluations()
+    }
+
     pub async fn increase_parallelism(&mut self, delta: usize) {
         self.parallelism_tokens += delta;
         self.parallelism.add_permits(delta);

@@ -20,7 +20,7 @@ use super::{
     train::{SelfPlaySettings, collect_epoch_games},
 };
 
-const BENCHMARK_SCHEMA_VERSION: u32 = 1;
+const BENCHMARK_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Serialize)]
 struct InferenceResult<'a> {
@@ -58,6 +58,7 @@ struct SelfPlayResult<'a> {
     games: usize,
     games_per_second: f64,
     total_game_length: usize,
+    moves_per_second: f64,
     average_game_length: f64,
     total_score: f32,
     evaluations: u64,
@@ -258,6 +259,7 @@ async fn run_self_play(args: SelfPlayBenchmarkArgs) -> Result<()> {
         games: game_count,
         games_per_second: game_count as f64 / duration_seconds,
         total_game_length: games.total_length,
+        moves_per_second: games.total_length as f64 / duration_seconds,
         average_game_length: games.total_length as f64 / game_count as f64,
         total_score: games.total_score,
         evaluations: games.batch_stats.requests,
@@ -287,6 +289,6 @@ fn emit_result<T: Serialize>(result: &T, output: Option<&Path>) -> Result<()> {
         use std::io::Write as _;
         writeln!(file)?;
     }
-    println!("BENCHMARK_RESULT {}", serde_json::to_string(result)?);
+    tracing::info!(result = %serde_json::to_string(result)?, "BENCHMARK_RESULT");
     Ok(())
 }

@@ -65,22 +65,21 @@ pub async fn run(args: BattleArgs) -> Result<()> {
         tokio::join!(first_executor.join(), second_executor.join());
     let record = result?;
 
-    println!("First snapshot epoch: {first_epoch}");
-    println!("Second snapshot epoch: {second_epoch}");
+    tracing::info!(first_epoch, second_epoch, "battle snapshots loaded");
     for (ply, turn) in record.plies.iter().enumerate() {
         let (row, column) = turn.action.to_xy();
-        println!(
-            "Ply {}: {:?} played {} {}",
-            ply + 1,
-            turn.actor,
-            row + 1,
-            column + 1
+        tracing::info!(
+            ply = ply + 1,
+            actor = ?turn.actor,
+            row = row + 1,
+            column = column + 1,
+            "battle move"
         );
     }
     match record.value_for(Seat::First) {
-        value if value > 0.0 => println!("First snapshot won"),
-        value if value < 0.0 => println!("Second snapshot won"),
-        _ => println!("Draw"),
+        value if value > 0.0 => tracing::info!(winner = "first", "battle complete"),
+        value if value < 0.0 => tracing::info!(winner = "second", "battle complete"),
+        _ => tracing::info!(winner = "draw", "battle complete"),
     }
     Ok(())
 }

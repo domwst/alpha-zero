@@ -36,7 +36,7 @@ use super::common::resolve_device;
 
 const DEFAULT_LEARNING_RATE: f64 = 1e-3;
 const DEFAULT_WEIGHT_DECAY: f64 = 1e-4;
-const METRICS_SCHEMA_VERSION: u32 = 1;
+const METRICS_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct SelfPlaySettings {
@@ -83,6 +83,7 @@ struct EpochStats<'a> {
     replay_games: usize,
     replay_positions: usize,
     evaluations_per_second: f64,
+    moves_per_second: f64,
     games_per_second: f64,
     self_play_seconds: f64,
     network: &'a NetworkBatchStats,
@@ -125,7 +126,10 @@ pub async fn run(args: TrainArgs) -> Result<()> {
     let mut start_epoch = 0;
     if let Some(snapshot) = find_latest_snapshot(&args.model.checkpoint_dir)? {
         let epoch = snapshot.epoch();
-        println!("Restoring complete training snapshot {epoch}");
+        tracing::info!(
+            snapshot_epoch = epoch,
+            "restoring complete training snapshot"
+        );
         replay = load_training_snapshot(&snapshot, &mut var_store, &mut optimizer)?;
         if let Some(learning_rate) = args.learning_rate {
             optimizer.set_lr(learning_rate);
@@ -138,9 +142,10 @@ pub async fn run(args: TrainArgs) -> Result<()> {
 
     let target_epoch_count = args.epochs.unwrap_or(usize::MAX);
     if start_epoch >= target_epoch_count {
-        println!(
-            "Training already reached target epoch count {target_epoch_count}; latest completed epoch is {}",
-            start_epoch.saturating_sub(1)
+        tracing::info!(
+            target_epoch_count,
+            latest_completed_epoch = start_epoch.saturating_sub(1),
+            "training already reached target epoch count"
         );
     }
     for epoch in start_epoch..target_epoch_count {
@@ -165,7 +170,24 @@ pub async fn run(args: TrainArgs) -> Result<()> {
         let total_length = epoch_games.total_length;
         let avg_score = total_score / games_in_epoch as f32;
         let avg_length = total_length as f32 / games_in_epoch as f32;
-        println!("Average score: {avg_score:.4}; average length: {avg_length:.2}");
+        let self_play_seconds = epoch_games.duration.as_secs_f64();
+        let games_per_second = games_in_epoch as f64 / self_play_seconds;
+        let moves_per_second = total_length as f64 / self_play_seconds;
+        let evaluations_per_second = epoch_games.batch_stats.requests as f64 / self_play_seconds;
+        tracing::info!(
+            epoch,
+            games = games_in_epoch,
+            moves = total_length,
+            evaluations = epoch_games.batch_stats.requests,
+            average_score = avg_score,
+            average_game_length = avg_length,
+            self_play_seconds,
+            games_per_second,
+            moves_per_second,
+            evaluations_per_second,
+            average_batch_size = epoch_games.batch_stats.average_batch_size(),
+            "self-play complete"
+        );
 
         let mut render_rng =
             SmallRng::seed_from_u64(derive_seed(args.seed, epoch as u64 ^ 0x5245_4e44_4552));
@@ -193,12 +215,15 @@ pub async fn run(args: TrainArgs) -> Result<()> {
             var_store.device(),
             derive_seed(args.seed, epoch as u64 ^ 0x0054_5241_494e),
         )?;
-        println!(
-            "Training loss: value={:.6}, policy={:.6}, total={:.6}; {:.0} samples/s",
-            training_stats.value_loss,
-            training_stats.policy_loss,
-            training_stats.total_loss,
-            training_stats.samples_per_second,
+        tracing::info!(
+            epoch,
+            value_loss = training_stats.value_loss,
+            policy_loss = training_stats.policy_loss,
+            total_loss = training_stats.total_loss,
+            samples = training_stats.samples,
+            samples_per_second = training_stats.samples_per_second,
+            duration_seconds = training_stats.duration_seconds,
+            "training complete"
         );
 
         let checkpoint_started = Instant::now();
@@ -228,10 +253,10 @@ pub async fn run(args: TrainArgs) -> Result<()> {
             average_game_length: avg_length,
             replay_games: replay.len(),
             replay_positions,
-            evaluations_per_second: epoch_games.batch_stats.requests as f64
-                / epoch_games.duration.as_secs_f64(),
-            games_per_second: games_in_epoch as f64 / epoch_games.duration.as_secs_f64(),
-            self_play_seconds: epoch_games.duration.as_secs_f64(),
+            evaluations_per_second,
+            moves_per_second,
+            games_per_second,
+            self_play_seconds,
             network: &epoch_games.batch_stats,
             network_average_batch_size: epoch_games.batch_stats.average_batch_size(),
             network_average_queue_wait_us: epoch_games.batch_stats.average_queue_wait_us(),
@@ -245,7 +270,14 @@ pub async fn run(args: TrainArgs) -> Result<()> {
             epoch_seconds: epoch_duration.as_secs_f64(),
         };
         write_stats(&args.stats_dir, epoch, &stats)?;
-        println!("EPOCH_METRICS {}", serde_json::to_string(&stats)?);
+        tracing::info!(
+            epoch,
+            epoch_seconds = stats.epoch_seconds,
+            checkpoint_seconds = stats.checkpoint_seconds,
+            rendering_seconds = stats.rendering_seconds,
+            "epoch complete"
+        );
+        tracing::debug!(metrics = %serde_json::to_string(&stats)?, "epoch metrics");
     }
 
     Ok(())
@@ -313,12 +345,20 @@ pub(super) async fn collect_epoch_games(
             tokio::select! {
                 record = executor.next() => record,
                 _ = timer.tick() => {
-                    println!(
-                        "Self-play heartbeat: {}/{} games complete ({:.1}s elapsed; {} unfinished)",
-                        games.len(),
-                        settings.games,
-                        started.elapsed().as_secs_f64(),
-                        executor.len(),
+                    let elapsed_seconds = started.elapsed().as_secs_f64();
+                    let completed_evaluations = executor.completed_evaluations();
+                    tracing::info!(
+                        update = "heartbeat",
+                        games_completed = games.len(),
+                        games_total = settings.games,
+                        unfinished_games = executor.len(),
+                        completed_moves = total_length,
+                        completed_evaluations,
+                        elapsed_seconds,
+                        games_per_second = games.len() as f64 / elapsed_seconds,
+                        moves_per_second = total_length as f64 / elapsed_seconds,
+                        evaluations_per_second = completed_evaluations as f64 / elapsed_seconds,
+                        "self-play progress"
                     );
                     continue;
                 }
@@ -336,12 +376,20 @@ pub(super) async fn collect_epoch_games(
         if settings.progress_every_games > 0
             && (games.len() % settings.progress_every_games == 0 || games.len() == settings.games)
         {
-            let rate = games.len() as f64 / started.elapsed().as_secs_f64();
-            println!(
-                "Self-play: {}/{} games complete ({rate:.3} games/s; {} unfinished)",
-                games.len(),
-                settings.games,
-                executor.len()
+            let elapsed_seconds = started.elapsed().as_secs_f64();
+            let completed_evaluations = executor.completed_evaluations();
+            tracing::info!(
+                update = "completion",
+                games_completed = games.len(),
+                games_total = settings.games,
+                unfinished_games = executor.len(),
+                completed_moves = total_length,
+                completed_evaluations,
+                elapsed_seconds,
+                games_per_second = games.len() as f64 / elapsed_seconds,
+                moves_per_second = total_length as f64 / elapsed_seconds,
+                evaluations_per_second = completed_evaluations as f64 / elapsed_seconds,
+                "self-play progress"
             );
         }
     }

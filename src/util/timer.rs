@@ -20,10 +20,7 @@ impl Timer {
         if passed < threshold {
             return;
         }
-        println!(
-            "{}",
-            msg.to_string().replace("{t}", &format!("{:?}", passed))
-        );
+        tracing::info!("{}", msg.replace("{t}", &format!("{passed:?}")));
     }
 }
 

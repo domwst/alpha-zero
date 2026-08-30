@@ -146,12 +146,13 @@ pub async fn run_policy(args: PolicyArgs) -> Result<()> {
     for (ply, turn) in record.plies.iter().enumerate() {
         let (row, column) = turn.action.to_xy();
         if let Some(value) = turn.decision.diagnostics.value_estimate {
-            println!(
-                "Ply {}: {:?} played {} {} (value {value})",
-                ply + 1,
-                turn.actor,
-                row + 1,
-                column + 1
+            tracing::info!(
+                ply = ply + 1,
+                actor = ?turn.actor,
+                row = row + 1,
+                column = column + 1,
+                value_estimate = value,
+                "policy move"
             );
         }
     }

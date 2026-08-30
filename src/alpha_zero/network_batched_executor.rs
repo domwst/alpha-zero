@@ -1,6 +1,10 @@
 use std::{
     collections::BTreeMap,
     marker::PhantomData,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -75,11 +79,13 @@ fn elapsed_us(start: Instant) -> u64 {
 pub struct NetworkBatchedExecutor<Net: AlphaZeroNet> {
     receiver: mpsc::Receiver<InferenceRequest>,
     sender: mpsc::Sender<InferenceRequest>,
+    completed_requests: Arc<AtomicU64>,
     nn: Net,
 }
 
 pub struct NetworkBatchedExecutorHandle<Net: AlphaZeroNet> {
     task_sender: mpsc::Sender<InferenceRequest>,
+    completed_requests: Arc<AtomicU64>,
     _net: PhantomData<fn() -> Net>,
 }
 
@@ -87,12 +93,17 @@ impl<Net: AlphaZeroNet> Clone for NetworkBatchedExecutorHandle<Net> {
     fn clone(&self) -> Self {
         Self {
             task_sender: self.task_sender.clone(),
+            completed_requests: self.completed_requests.clone(),
             _net: PhantomData,
         }
     }
 }
 
 impl<Net: AlphaZeroNet> NetworkBatchedExecutorHandle<Net> {
+    pub fn completed_evaluations(&self) -> u64 {
+        self.completed_requests.load(Ordering::Relaxed)
+    }
+
     pub async fn execute(&self, input: Tensor) -> Result<(Tensor, Tensor)> {
         let (response, result) = oneshot::channel();
         self.task_sender
@@ -118,6 +129,7 @@ impl<Net: AlphaZeroNet> NetworkBatchedExecutor<Net> {
         Self {
             receiver,
             sender,
+            completed_requests: Arc::new(AtomicU64::new(0)),
             nn,
         }
     }
@@ -125,6 +137,7 @@ impl<Net: AlphaZeroNet> NetworkBatchedExecutor<Net> {
     pub fn mint_handle(&self) -> NetworkBatchedExecutorHandle<Net> {
         NetworkBatchedExecutorHandle {
             task_sender: self.sender.clone(),
+            completed_requests: self.completed_requests.clone(),
             _net: PhantomData,
         }
     }
@@ -140,6 +153,7 @@ impl<Net: AlphaZeroNet> NetworkBatchedExecutor<Net> {
             mut receiver,
             nn,
             sender,
+            completed_requests,
         } = self;
         drop(sender);
         assert!(max_batch > 0);
@@ -158,11 +172,11 @@ impl<Net: AlphaZeroNet> NetworkBatchedExecutor<Net> {
                     },
                     command = command_receiver.recv(), if commands_open => match command {
                         Some(BatcherCommand::SetBatchSize(size)) if size > 0 => {
-                            println!("Changing batch size to {size}");
+                            tracing::debug!(batch_size = size, "network batch size changed");
                             max_batch = size;
                         }
                         Some(BatcherCommand::SetBatchSize(_)) => {
-                            eprintln!("Ignoring zero network batch size");
+                            tracing::warn!("ignoring zero network batch size");
                         }
                         None => commands_open = false,
                     },
@@ -184,11 +198,11 @@ impl<Net: AlphaZeroNet> NetworkBatchedExecutor<Net> {
                     },
                     command = command_receiver.recv(), if commands_open => match command {
                         Some(BatcherCommand::SetBatchSize(size)) if size > 0 => {
-                            println!("Changing batch size to {size}");
+                            tracing::debug!(batch_size = size, "network batch size changed");
                             max_batch = size;
                         }
                         Some(BatcherCommand::SetBatchSize(_)) => {
-                            eprintln!("Ignoring zero network batch size");
+                            tracing::warn!("ignoring zero network batch size");
                         }
                         None => commands_open = false,
                     },
@@ -227,6 +241,11 @@ impl<Net: AlphaZeroNet> NetworkBatchedExecutor<Net> {
             let policies = policies.to(Device::Cpu);
             let output_sync_us = elapsed_us(phase_started);
             let service_us = elapsed_us(service_started);
+
+            completed_requests.store(
+                completed_requests.load(Ordering::Relaxed) + batch_len as u64,
+                Ordering::Relaxed,
+            );
 
             for (index, (response, submitted_at)) in
                 responses.into_iter().zip(submitted_at).enumerate()
@@ -314,6 +333,7 @@ mod tests {
 
         let (value, _) = handle.execute(Tensor::from_slice(&[2.0f32])).await.unwrap();
         assert_eq!(f32::try_from(value).unwrap(), 2.0);
+        assert_eq!(handle.completed_evaluations(), 1);
 
         drop((handle, command_sender));
         server.await.unwrap();

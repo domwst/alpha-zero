@@ -29,7 +29,7 @@ pub fn resolve_device(args: &DeviceArgs) -> Result<Device> {
             Device::Cuda(args.cuda_index)
         }
     };
-    eprintln!("Using device {device:?}");
+    tracing::info!(device = ?device, "using compute device");
     Ok(device)
 }
 
@@ -47,9 +47,10 @@ pub fn load_network(
     })?;
     let epoch = snapshot.epoch();
     snapshot.load_model(&mut var_store)?;
-    eprintln!(
-        "Loaded snapshot {epoch} from {}",
-        snapshot_or_run_dir.display()
+    tracing::info!(
+        snapshot_epoch = epoch,
+        path = %snapshot_or_run_dir.display(),
+        "loaded snapshot"
     );
     Ok((var_store, network, epoch))
 }
