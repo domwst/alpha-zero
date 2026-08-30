@@ -335,15 +335,17 @@ mod tests {
     #[test]
     fn battle_requires_both_snapshots() {
         assert!(Cli::try_parse_from(["alz", "battle"]).is_err());
-        assert!(Cli::try_parse_from([
-            "alz",
-            "battle",
-            "--first-checkpoint-dir",
-            "first",
-            "--second-checkpoint-dir",
-            "second",
-        ])
-        .is_ok());
+        assert!(
+            Cli::try_parse_from([
+                "alz",
+                "battle",
+                "--first-checkpoint-dir",
+                "first",
+                "--second-checkpoint-dir",
+                "second",
+            ])
+            .is_ok()
+        );
     }
 
     #[test]

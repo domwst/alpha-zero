@@ -1,6 +1,6 @@
 use std::borrow::Borrow;
 
-use tch::nn::{batch_norm2d, conv2d, BatchNorm, Conv2D, ConvConfig, ModuleT, Path};
+use tch::nn::{BatchNorm, Conv2D, ConvConfig, ModuleT, Path, batch_norm2d, conv2d};
 
 #[derive(Debug)]
 pub struct ResBlock {

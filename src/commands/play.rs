@@ -7,13 +7,13 @@ use std::{
 
 use alz::{
     alpha_zero::{
-        run_match, Agent, ExecutorScope, MctsAgent, MoveDecision, NetworkPositionEvaluator,
-        PolicyAgent, RootNoise, Seat, Shared, Turn, Versus,
+        Agent, ExecutorScope, MctsAgent, MoveDecision, NetworkPositionEvaluator, PolicyAgent,
+        RootNoise, Seat, Shared, Turn, Versus, run_match,
     },
     tictactoe::{BoardState, CellState, TicTacToeCodec, TicTacToeMove, TicTacToeResNet},
 };
-use anyhow::{ensure, Result};
-use rand::{rngs::SmallRng, SeedableRng};
+use anyhow::{Result, ensure};
+use rand::{SeedableRng, rngs::SmallRng};
 use tch::Kind;
 
 use crate::cli::{HumanArgs, HumanSeat, PolicyArgs};

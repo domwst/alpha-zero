@@ -7,28 +7,28 @@ use std::{
 
 use alz::{
     alpha_zero::{
-        extract_training_game, generate_self_played_game, AlphaZeroNet, ExecutorScope,
-        NetworkBatchStats, NetworkPositionEvaluator, PositionCodec, Seat, TrainingCodec,
+        AlphaZeroNet, ExecutorScope, NetworkBatchStats, NetworkPositionEvaluator, PositionCodec,
+        Seat, TrainingCodec, extract_training_game, generate_self_played_game,
     },
-    tictactoe::{generate_game_image, BoardState, TicTacToeCodec, TicTacToeResNet},
+    tictactoe::{BoardState, TicTacToeCodec, TicTacToeResNet, generate_game_image},
 };
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result, ensure};
 use rand::{
+    SeedableRng,
     rngs::SmallRng,
     seq::{IteratorRandom, SliceRandom},
-    SeedableRng,
 };
 use serde::Serialize;
 use tch::{
-    nn::{self, Optimizer, OptimizerConfig},
     Kind, Reduction, Tensor,
+    nn::{self, Optimizer, OptimizerConfig},
 };
 
 use crate::{
     cli::TrainArgs,
     training_snapshot::{
-        find_latest_snapshot, load_training_snapshot, save_training_snapshot, ReplayBuffer,
-        ReplayGame,
+        ReplayBuffer, ReplayGame, find_latest_snapshot, load_training_snapshot,
+        save_training_snapshot,
     },
 };
 

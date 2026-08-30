@@ -1,7 +1,7 @@
 use anyhow::Result;
-use rand::{rngs::SmallRng, SeedableRng};
+use rand::{SeedableRng, rngs::SmallRng};
 
-use super::{run_match, Game, MatchRecord, MctsAgent, PositionEvaluator, RootNoise, Versus};
+use super::{Game, MatchRecord, MctsAgent, PositionEvaluator, RootNoise, Versus, run_match};
 
 pub async fn do_battle<TGame, FirstEvaluator, SecondEvaluator, Temperature>(
     start: TGame,

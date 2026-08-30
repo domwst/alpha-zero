@@ -1,4 +1,4 @@
-use image::{math::Rect, ImageBuffer, Pixel, Rgb};
+use image::{ImageBuffer, Pixel, Rgb, math::Rect};
 
 use crate::{alpha_zero::TrainingSample, tictactoe::CellState};
 

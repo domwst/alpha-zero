@@ -1,7 +1,7 @@
 use anyhow::Result;
 use rand::Rng;
 
-use super::{run_match, Game, MatchRecord, MctsAgent, PositionEvaluator, RootNoise, Shared};
+use super::{Game, MatchRecord, MctsAgent, PositionEvaluator, RootNoise, Shared, run_match};
 
 pub async fn generate_self_played_game<TGame, Evaluator, Temperature, Random>(
     start: TGame,

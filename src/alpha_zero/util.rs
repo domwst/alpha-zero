@@ -1,14 +1,16 @@
 use rand::{
-    distr::{weighted::WeightedIndex, Distribution},
     Rng,
+    distr::{Distribution, weighted::WeightedIndex},
 };
 
 pub fn apply_temperature(policy: &[f32], temperature: f32) -> Vec<f32> {
     assert!(!policy.is_empty());
     assert!(temperature.is_finite() && temperature >= 0.0);
-    assert!(policy
-        .iter()
-        .all(|weight| weight.is_finite() && *weight >= 0.0));
+    assert!(
+        policy
+            .iter()
+            .all(|weight| weight.is_finite() && *weight >= 0.0)
+    );
 
     let (max_index, max_weight) = policy
         .iter()
@@ -44,9 +46,11 @@ pub fn apply_temperature(policy: &[f32], temperature: f32) -> Vec<f32> {
 
 pub fn sample_policy<R: Rng + ?Sized>(policy: &[f32], rng: &mut R) -> usize {
     assert!(!policy.is_empty());
-    assert!(policy
-        .iter()
-        .all(|weight| weight.is_finite() && *weight >= 0.0));
+    assert!(
+        policy
+            .iter()
+            .all(|weight| weight.is_finite() && *weight >= 0.0)
+    );
     assert!(policy.iter().any(|weight| *weight > 0.0));
     WeightedIndex::new(policy).unwrap().sample(rng)
 }

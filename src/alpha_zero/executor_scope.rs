@@ -1,9 +1,9 @@
 use std::{future::Future, sync::Arc, time::Duration};
 
-use futures::{stream::FuturesUnordered, StreamExt};
+use futures::{StreamExt, stream::FuturesUnordered};
 use tch::{Device, Kind};
 use tokio::{
-    sync::{mpsc::Sender, Semaphore},
+    sync::{Semaphore, mpsc::Sender},
     task::JoinHandle,
 };
 

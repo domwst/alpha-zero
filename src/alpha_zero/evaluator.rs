@@ -1,6 +1,6 @@
 use std::{future::Future, marker::PhantomData};
 
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result, ensure};
 
 use super::{AlphaZeroNet, Game, NetworkBatchedExecutorHandle, PositionCodec};
 
@@ -96,17 +96,21 @@ mod tests {
 
     #[test]
     fn evaluation_validation_rejects_malformed_policies() {
-        assert!(PositionEvaluation {
-            value: 0.0,
-            legal_policy: vec![1.0],
-        }
-        .validate_for(2)
-        .is_err());
-        assert!(PositionEvaluation {
-            value: 0.0,
-            legal_policy: vec![f32::NAN, 0.0],
-        }
-        .validate_for(2)
-        .is_err());
+        assert!(
+            PositionEvaluation {
+                value: 0.0,
+                legal_policy: vec![1.0],
+            }
+            .validate_for(2)
+            .is_err()
+        );
+        assert!(
+            PositionEvaluation {
+                value: 0.0,
+                legal_policy: vec![f32::NAN, 0.0],
+            }
+            .validate_for(2)
+            .is_err()
+        );
     }
 }

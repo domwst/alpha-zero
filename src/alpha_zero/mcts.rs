@@ -1,8 +1,8 @@
 use std::{cell::SyncUnsafeCell, ptr, sync::OnceLock};
 
-use anyhow::{ensure, Result};
+use anyhow::{Result, ensure};
 use rand::Rng;
-use rand_distr::{multi::Dirichlet, Distribution};
+use rand_distr::{Distribution, multi::Dirichlet};
 
 use crate::alpha_zero::TerminationState;
 
@@ -321,7 +321,9 @@ where
                     break node_state.value;
                 }
 
-                let m = if is_root(cur) && let RootNoise::Dirichlet { epsilon, .. } = self.root_noise {
+                let m = if is_root(cur)
+                    && let RootNoise::Dirichlet { epsilon, .. } = self.root_noise
+                {
                     node_state.pick_next_move_root(
                         cpuct,
                         epsilon,
@@ -410,14 +412,14 @@ where
 #[cfg(test)]
 mod tests {
     use std::{
-        future::{ready, Future},
+        future::{Future, ready},
         sync::{
-            atomic::{AtomicUsize, Ordering},
             Arc,
+            atomic::{AtomicUsize, Ordering},
         },
     };
 
-    use rand::{rngs::SmallRng, SeedableRng};
+    use rand::{SeedableRng, rngs::SmallRng};
 
     use crate::alpha_zero::{Game, MoveParameters, PositionEvaluation, PositionEvaluator};
 
@@ -571,8 +573,9 @@ mod tests {
         tree.do_simulations(1, 1.0, &mut rng).await.unwrap();
 
         assert!(!tree.matches_position(&TestGame(None), &[TestMove::Lose, TestMove::Win]));
-        assert!(tree
-            .advance(0, &TestMove::Win, TestGame(Some(1.0)))
-            .is_err());
+        assert!(
+            tree.advance(0, &TestMove::Win, TestGame(Some(1.0)))
+                .is_err()
+        );
     }
 }

@@ -1,6 +1,6 @@
 use std::future::Future;
 
-use anyhow::{ensure, Result};
+use anyhow::{Result, ensure};
 
 use super::{Game, MoveParameters, TerminationState, TurnChange};
 
@@ -280,7 +280,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{future::ready, future::Future};
+    use std::{future::Future, future::ready};
 
     use super::*;
 

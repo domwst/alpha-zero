@@ -50,7 +50,7 @@ mod tests {
         tictactoe::{BoardState, TicTacToeCodec, TicTacToeMove},
     };
 
-    use super::{extract_training_game, MatchRecord};
+    use super::{MatchRecord, extract_training_game};
 
     #[test]
     fn extraction_expands_policy_and_uses_actor_perspective() {

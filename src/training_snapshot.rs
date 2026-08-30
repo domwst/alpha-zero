@@ -9,9 +9,9 @@ use std::{
 
 use alz::{
     alpha_zero::TrainingSample,
-    tictactoe::{BoardState, TicTacToePolicy, ACTION_SCHEMA},
+    tictactoe::{ACTION_SCHEMA, BoardState, TicTacToePolicy},
 };
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use tch::nn::{Optimizer, VarStore};
 
@@ -306,8 +306,8 @@ mod tests {
     };
 
     use tch::{
-        nn::{self, Module, OptimizerConfig},
         Device, Kind, Tensor,
+        nn::{self, Module, OptimizerConfig},
     };
 
     use alz::tictactoe::TicTacToeMove;

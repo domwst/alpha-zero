@@ -1,11 +1,11 @@
 use std::borrow::Borrow;
 
 use tch::{
-    nn::{
-        batch_norm2d, conv2d, linear, seq_t, BatchNorm, Conv2D, ConvConfig, ModuleT, Path,
-        SequentialT,
-    },
     Tensor,
+    nn::{
+        BatchNorm, Conv2D, ConvConfig, ModuleT, Path, SequentialT, batch_norm2d, conv2d, linear,
+        seq_t,
+    },
 };
 
 use crate::{alpha_zero::AlphaZeroNet, util::ResBlock};
@@ -113,7 +113,7 @@ impl AlphaZeroNet for TicTacToeResNet {
 
 #[cfg(test)]
 mod tests {
-    use tch::{nn, Device, Kind, Tensor};
+    use tch::{Device, Kind, Tensor, nn};
 
     use crate::alpha_zero::AlphaZeroNet;
 

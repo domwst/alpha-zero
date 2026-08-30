@@ -4,11 +4,11 @@ use alz::{
     alpha_zero::{AlphaZeroNet, NetworkBatchStats},
     tictactoe::TicTacToeResNet,
 };
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result, ensure};
 use serde::Serialize;
 use tch::{
-    nn::{self, Optimizer, OptimizerConfig},
     Device, Kind, Reduction, Tensor,
+    nn::{self, Optimizer, OptimizerConfig},
 };
 
 use crate::cli::{
@@ -17,7 +17,7 @@ use crate::cli::{
 
 use super::{
     common::resolve_device,
-    train::{collect_epoch_games, SelfPlaySettings},
+    train::{SelfPlaySettings, collect_epoch_games},
 };
 
 const BENCHMARK_SCHEMA_VERSION: u32 = 1;

@@ -1,10 +1,10 @@
 use std::time::Duration;
 
 use alz::{
-    alpha_zero::{do_battle, ExecutorScope, NetworkPositionEvaluator, Seat},
+    alpha_zero::{ExecutorScope, NetworkPositionEvaluator, Seat, do_battle},
     tictactoe::{BoardState, TicTacToeCodec, TicTacToeResNet},
 };
-use anyhow::{ensure, Result};
+use anyhow::{Result, ensure};
 use tch::Kind;
 
 use crate::cli::BattleArgs;

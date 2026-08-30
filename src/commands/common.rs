@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use alz::tictactoe::TicTacToeResNet;
-use anyhow::{ensure, Context, Result};
-use tch::{nn, Cuda, Device};
+use anyhow::{Context, Result, ensure};
+use tch::{Cuda, Device, nn};
 
 use crate::{
     cli::{DeviceArgs, DeviceChoice},

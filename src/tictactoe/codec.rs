@@ -1,6 +1,6 @@
 use std::ops::Index;
 
-use anyhow::{bail, ensure, Context, Result};
+use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use tch::Tensor;
 
@@ -216,8 +216,8 @@ mod tests {
     use tch::{Device, IndexOp, Kind, Tensor};
 
     use crate::tictactoe::{
-        codec::{canonical_policy, estimated_policy, game_to_nn_input},
         BoardState, CellState, TicTacToeMove,
+        codec::{canonical_policy, estimated_policy, game_to_nn_input},
     };
 
     #[test]
