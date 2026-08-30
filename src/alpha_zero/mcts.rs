@@ -578,4 +578,25 @@ mod tests {
                 .is_err()
         );
     }
+
+    #[tokio::test]
+    async fn failed_advance_preserves_the_existing_tree() {
+        let mut tree = MonteCarloTree::new(TestGame(None), TestEvaluator, RootNoise::None);
+        let mut rng = SmallRng::seed_from_u64(1);
+        tree.do_simulations(1, 1.0, &mut rng).await.unwrap();
+
+        let descends_before = tree.get_total_descends();
+        let policy_before = tree.get_policy();
+
+        assert!(
+            tree.advance(0, &TestMove::Win, TestGame(Some(1.0)))
+                .is_err()
+        );
+        assert!(tree.matches_position(&TestGame(None), &[TestMove::Win, TestMove::Lose]));
+        assert_eq!(tree.get_total_descends(), descends_before);
+        assert_eq!(tree.get_policy(), policy_before);
+
+        tree.do_simulations(1, 1.0, &mut rng).await.unwrap();
+        assert_eq!(tree.get_total_descends(), Some(2));
+    }
 }
