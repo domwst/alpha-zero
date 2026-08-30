@@ -1,5 +1,12 @@
 /target
+/.venv
 
 /venv
+
+/checkpoints
+/games
+/stats
+/runs
+/remote-results
 
 .DS_Store
