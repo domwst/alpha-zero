@@ -84,14 +84,12 @@ struct NodeState<T: Game> {
 }
 
 struct MonteCarloNode<T: Game> {
-    game_state: T,
     node_state: OnceLock<NodeState<T>>,
 }
 
 impl<T: Game> MonteCarloNode<T> {
-    fn new(state: T) -> Self {
+    fn new() -> Self {
         Self {
-            game_state: state,
             node_state: OnceLock::new(),
         }
     }
@@ -170,13 +168,14 @@ impl<T: Game> NodeState<T> {
         if self.children.is_empty() {
             return vec![];
         }
-        assert!(sm > 0, "No simulations have visited a root move");
+        assert!(sm > 0, "No simulations have visited a root node");
 
         iter.map(move |v| v as f32 / sm as f32).collect::<Vec<_>>()
     }
 }
 
 pub struct MonteCarloTree<TGame: Game, Evaluator: PositionEvaluator<TGame>> {
+    root_game_state: TGame,
     root: MonteCarloNode<TGame>,
     evaluator: Evaluator,
     root_noise: RootNoise,
@@ -185,7 +184,7 @@ pub struct MonteCarloTree<TGame: Game, Evaluator: PositionEvaluator<TGame>> {
 
 impl<TGame, Evaluator> MonteCarloTree<TGame, Evaluator>
 where
-    TGame: Game + PartialEq + Send + Sync,
+    TGame: Game + Clone + PartialEq + Send + Sync,
     TGame::Move: Clone + PartialEq + Send + Sync,
     Evaluator: PositionEvaluator<TGame> + Send + Sync,
 {
@@ -195,8 +194,9 @@ where
             assert!(epsilon.is_finite() && (0.0..=1.0).contains(&epsilon));
         }
 
-        let root = MonteCarloNode::new(state);
+        let root = MonteCarloNode::new();
         Self {
+            root_game_state: state,
             root,
             evaluator,
             root_noise,
@@ -248,7 +248,7 @@ where
                 .zip(legal_policy)
                 .map(|(r#move, policy)| NodeChild {
                     action: r#move.clone(),
-                    node: MonteCarloNode::new(state.make_move(r#move)),
+                    node: MonteCarloNode::new(),
                     static_info: MoveStaticInfo {
                         priority: policy,
                         turn_change: r#move.turn_change(),
@@ -266,7 +266,7 @@ where
 
     async fn initialize_root(&mut self) -> Result<()> {
         if self.root.node_state.get().is_none() {
-            let state = Self::create_node_state(&self.evaluator, &self.root.game_state).await?;
+            let state = Self::create_node_state(&self.evaluator, &self.root_game_state).await?;
             assert!(self.root.node_state.set(state).is_ok());
         }
         Ok(())
@@ -305,12 +305,14 @@ where
         let is_root = |node: &MonteCarloNode<TGame>| ptr::eq(node, &self.root);
         for _ in 0..samples {
             let mut cur = &self.root;
+            let mut cur_game_state = self.root_game_state.clone();
+
             let mut value = loop {
                 let (node_state, created) = 'cl: {
                     if let Some(r) = cur.node_state.get() {
                         break 'cl (r, false);
                     }
-                    let state = Self::create_node_state(&self.evaluator, &cur.game_state).await?;
+                    let state = Self::create_node_state(&self.evaluator, &cur_game_state).await?;
                     assert!(cur.node_state.set(state).is_ok());
                     (cur.node_state.get().unwrap(), true)
                 };
@@ -319,19 +321,19 @@ where
                     break node_state.value;
                 }
 
-                let m = if is_root(cur) {
-                    match self.root_noise {
-                        RootNoise::None => node_state.pick_next_move(cpuct),
-                        RootNoise::Dirichlet { epsilon, .. } => node_state.pick_next_move_root(
-                            cpuct,
-                            epsilon,
-                            root_noise_sample.as_deref().unwrap(),
-                        ),
-                    }
+                let m = if is_root(cur) && let RootNoise::Dirichlet { epsilon, .. } = self.root_noise {
+                    node_state.pick_next_move_root(
+                        cpuct,
+                        epsilon,
+                        root_noise_sample.as_deref().unwrap(),
+                    )
                 } else {
                     node_state.pick_next_move(cpuct)
                 };
-                cur = &node_state.children[m].node;
+
+                let child = &node_state.children[m];
+                cur_game_state = cur_game_state.make_move(&child.action);
+                cur = &child.node;
                 state_stack.push((node_state, m));
             };
 
@@ -355,7 +357,7 @@ where
     }
 
     pub fn matches_position(&self, state: &TGame, moves: &[TGame::Move]) -> bool {
-        if &self.root.game_state != state {
+        if &self.root_game_state != state {
             return false;
         }
         self.root.node_state.get().is_none_or(|node_state| {
@@ -383,10 +385,6 @@ where
                 &state.children[move_id].action == action,
                 "applied action does not match MCTS move index {move_id}"
             );
-            ensure!(
-                state.children[move_id].node.game_state == next_state,
-                "MCTS successor does not match the authoritative game state"
-            );
             Some(
                 core::mem::take(&mut state.children)
                     .into_vec()
@@ -396,7 +394,14 @@ where
         } else {
             None
         };
-        self.root = next_root.unwrap_or_else(|| MonteCarloNode::new(next_state));
+
+        ensure!(
+            self.root_game_state.make_move(action) == next_state,
+            "MCTS successor does not match the authoritative game state"
+        );
+
+        self.root_game_state = next_state;
+        self.root = next_root.unwrap_or_else(|| MonteCarloNode::new());
         self.root_noise_sample = None;
         Ok(())
     }

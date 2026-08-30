@@ -1,11 +1,11 @@
 use std::marker::PhantomData;
 
-use anyhow::{ensure, Result};
+use anyhow::{Result, ensure};
 use rand::Rng;
 
 use super::{
-    apply_temperature, sample_policy, Agent, AppliedMove, DecisionDiagnostics, Game,
-    MonteCarloTree, MoveDecision, PositionEvaluator, RootNoise, Turn,
+    Agent, AppliedMove, DecisionDiagnostics, Game, MonteCarloTree, MoveDecision, PositionEvaluator,
+    RootNoise, Turn, apply_temperature, sample_policy,
 };
 
 pub struct MctsAgent<TGame: Game, Evaluator: PositionEvaluator<TGame>, Random, Temperature> {
@@ -18,7 +18,7 @@ pub struct MctsAgent<TGame: Game, Evaluator: PositionEvaluator<TGame>, Random, T
 
 impl<TGame, Evaluator, Random, Temperature> MctsAgent<TGame, Evaluator, Random, Temperature>
 where
-    TGame: Game + PartialEq + Send + Sync,
+    TGame: Game + Clone + PartialEq + Send + Sync,
     TGame::Move: Clone + PartialEq + Send + Sync,
     Evaluator: PositionEvaluator<TGame> + Send + Sync,
 {
