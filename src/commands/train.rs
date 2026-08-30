@@ -1,20 +1,24 @@
 use std::{
-    fs,
+    fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use alz::{
     alpha_zero::{
         extract_training_game, generate_self_played_game, AlphaZeroNet, ExecutorScope,
-        NetworkPositionEvaluator, PositionCodec, Seat, TrainingCodec,
+        NetworkBatchStats, NetworkPositionEvaluator, PositionCodec, Seat, TrainingCodec,
     },
     tictactoe::{generate_game_image, BoardState, TicTacToeCodec, TicTacToeResNet},
-    util::Timer,
 };
 use anyhow::{ensure, Context, Result};
-use rand::seq::{IteratorRandom, SliceRandom};
+use rand::{
+    rngs::SmallRng,
+    seq::{IteratorRandom, SliceRandom},
+    SeedableRng,
+};
+use serde::Serialize;
 use tch::{
     nn::{self, Optimizer, OptimizerConfig},
     Kind, Reduction, Tensor,
@@ -32,11 +36,64 @@ use super::common::resolve_device;
 
 const DEFAULT_LEARNING_RATE: f64 = 1e-3;
 const DEFAULT_WEIGHT_DECAY: f64 = 1e-4;
+const METRICS_SCHEMA_VERSION: u32 = 1;
 
-struct EpochGames {
-    games: Vec<ReplayGame>,
+#[derive(Clone, Copy, Debug)]
+pub(super) struct SelfPlaySettings {
+    pub games: usize,
+    pub simulations: usize,
+    pub c_puct: f32,
+    pub inference_batch_size: usize,
+    pub games_parallelism: usize,
+    pub batch_timeout: Duration,
+    pub seed: u64,
+    pub progress_every_games: usize,
+    pub heartbeat_interval: Duration,
+}
+
+pub(super) struct EpochGames {
+    pub games: Vec<ReplayGame>,
+    pub total_score: f32,
+    pub total_length: usize,
+    pub batch_stats: NetworkBatchStats,
+    pub duration: Duration,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct TrainingStats {
+    samples: usize,
+    batches: usize,
+    value_loss: f64,
+    policy_loss: f64,
+    total_loss: f64,
+    samples_per_second: f64,
+    duration_seconds: f64,
+}
+
+#[derive(Serialize)]
+struct EpochStats<'a> {
+    schema_version: u32,
+    epoch: usize,
+    config: &'a TrainArgs,
+    games: usize,
     total_score: f32,
-    total_length: usize,
+    average_score: f32,
+    total_game_length: usize,
+    average_game_length: f32,
+    replay_games: usize,
+    replay_positions: usize,
+    evaluations_per_second: f64,
+    games_per_second: f64,
+    self_play_seconds: f64,
+    network: &'a NetworkBatchStats,
+    network_average_batch_size: f64,
+    network_average_queue_wait_us: f64,
+    network_average_request_latency_us: f64,
+    network_average_service_us: f64,
+    training: &'a TrainingStats,
+    checkpoint_seconds: f64,
+    rendering_seconds: f64,
+    epoch_seconds: f64,
 }
 
 pub async fn run(args: TrainArgs) -> Result<()> {
@@ -52,7 +109,9 @@ pub async fn run(args: TrainArgs) -> Result<()> {
         .with_context(|| format!("creating {}", args.games_dir.display()))?;
     fs::create_dir_all(&args.stats_dir)
         .with_context(|| format!("creating {}", args.stats_dir.display()))?;
+    write_invocation_config(&args.stats_dir, &args)?;
 
+    tch::manual_seed((args.seed & i64::MAX as u64) as i64);
     let device = resolve_device(&args.model.device)?;
     let mut var_store = nn::VarStore::new(device);
     let mut network = TicTacToeResNet::new(var_store.root());
@@ -77,11 +136,28 @@ pub async fn run(args: TrainArgs) -> Result<()> {
         start_epoch = epoch + 1;
     }
 
-    let epochs = args.epochs.unwrap_or(usize::MAX);
-    for epoch in (start_epoch..).take(epochs) {
-        let timer = Timer::new();
+    let target_epoch_count = args.epochs.unwrap_or(usize::MAX);
+    if start_epoch >= target_epoch_count {
+        println!(
+            "Training already reached target epoch count {target_epoch_count}; latest completed epoch is {}",
+            start_epoch.saturating_sub(1)
+        );
+    }
+    for epoch in start_epoch..target_epoch_count {
+        let epoch_started = Instant::now();
+        let settings = SelfPlaySettings {
+            games: args.games_per_epoch,
+            simulations: args.simulations,
+            c_puct: args.c_puct,
+            inference_batch_size: args.inference_batch_size,
+            games_parallelism: args.games_parallelism,
+            batch_timeout: Duration::from_micros(args.batch_timeout_us),
+            seed: derive_seed(args.seed, epoch as u64),
+            progress_every_games: args.progress_every_games,
+            heartbeat_interval: Duration::from_secs(args.heartbeat_seconds),
+        };
         let (returned_network, epoch_games) =
-            collect_epoch_games(network, &args, var_store.device()).await?;
+            collect_epoch_games(network, settings, var_store.device()).await?;
         network = returned_network;
 
         let games_in_epoch = epoch_games.games.len();
@@ -89,14 +165,15 @@ pub async fn run(args: TrainArgs) -> Result<()> {
         let total_length = epoch_games.total_length;
         let avg_score = total_score / games_in_epoch as f32;
         let avg_length = total_length as f32 / games_in_epoch as f32;
-        println!("Average score is {avg_score}");
-        println!("Average length is {avg_length}");
+        println!("Average score: {avg_score:.4}; average length: {avg_length:.2}");
 
+        let mut render_rng =
+            SmallRng::seed_from_u64(derive_seed(args.seed, epoch as u64 ^ 0x5245_4e44_4552));
         let sample_games = epoch_games
             .games
             .iter()
             .sample(
-                &mut rand::rng(),
+                &mut render_rng,
                 args.rendered_games.min(epoch_games.games.len()),
             )
             .into_iter()
@@ -108,15 +185,23 @@ pub async fn run(args: TrainArgs) -> Result<()> {
             replay.pop_front();
         }
 
-        let (value_loss, policy_loss) = train_epoch(
+        let training_stats = train_epoch(
             &network,
             &mut optimizer,
             &replay,
             args.training_batch_size,
             var_store.device(),
+            derive_seed(args.seed, epoch as u64 ^ 0x0054_5241_494e),
+        )?;
+        println!(
+            "Training loss: value={:.6}, policy={:.6}, total={:.6}; {:.0} samples/s",
+            training_stats.value_loss,
+            training_stats.policy_loss,
+            training_stats.total_loss,
+            training_stats.samples_per_second,
         );
-        println!("Total value and policy loss: ({value_loss}, {policy_loss})");
 
+        let checkpoint_started = Instant::now();
         save_training_snapshot(
             &args.model.checkpoint_dir,
             epoch,
@@ -124,44 +209,80 @@ pub async fn run(args: TrainArgs) -> Result<()> {
             &optimizer,
             &replay,
         )?;
+        let checkpoint_duration = checkpoint_started.elapsed();
+
+        let rendering_started = Instant::now();
         render_sample_games(&args.games_dir, epoch, sample_games)?;
-        write_stats(
-            &args.stats_dir,
+        let rendering_duration = rendering_started.elapsed();
+
+        let epoch_duration = epoch_started.elapsed();
+        let replay_positions = replay.iter().map(Vec::len).sum::<usize>();
+        let stats = EpochStats {
+            schema_version: METRICS_SCHEMA_VERSION,
             epoch,
-            games_in_epoch,
+            config: &args,
+            games: games_in_epoch,
             total_score,
-            total_length,
-            avg_score,
-            avg_length,
-            value_loss,
-            policy_loss,
-            timer.passed(),
-        )?;
+            average_score: avg_score,
+            total_game_length: total_length,
+            average_game_length: avg_length,
+            replay_games: replay.len(),
+            replay_positions,
+            evaluations_per_second: epoch_games.batch_stats.requests as f64
+                / epoch_games.duration.as_secs_f64(),
+            games_per_second: games_in_epoch as f64 / epoch_games.duration.as_secs_f64(),
+            self_play_seconds: epoch_games.duration.as_secs_f64(),
+            network: &epoch_games.batch_stats,
+            network_average_batch_size: epoch_games.batch_stats.average_batch_size(),
+            network_average_queue_wait_us: epoch_games.batch_stats.average_queue_wait_us(),
+            network_average_request_latency_us: epoch_games
+                .batch_stats
+                .average_request_latency_us(),
+            network_average_service_us: epoch_games.batch_stats.average_service_us(),
+            training: &training_stats,
+            checkpoint_seconds: checkpoint_duration.as_secs_f64(),
+            rendering_seconds: rendering_duration.as_secs_f64(),
+            epoch_seconds: epoch_duration.as_secs_f64(),
+        };
+        write_stats(&args.stats_dir, epoch, &stats)?;
+        println!("EPOCH_METRICS {}", serde_json::to_string(&stats)?);
     }
 
     Ok(())
 }
 
-async fn collect_epoch_games(
+pub(super) async fn collect_epoch_games(
     network: TicTacToeResNet,
-    args: &TrainArgs,
+    settings: SelfPlaySettings,
     device: tch::Device,
 ) -> Result<(TicTacToeResNet, EpochGames)> {
-    let mut batch_size = args.inference_batch_size;
-    let parallelism = batch_size
-        .checked_add(args.parallelism_padding)
-        .context("initial parallelism overflowed usize")?;
+    ensure!(settings.games > 0, "games must be greater than zero");
+    ensure!(
+        settings.simulations > 0,
+        "simulations must be greater than zero"
+    );
+    ensure!(
+        settings.inference_batch_size > 0,
+        "inference batch size must be greater than zero"
+    );
+    ensure!(
+        settings.games_parallelism > 0,
+        "games parallelism must be greater than zero"
+    );
+
+    let started = Instant::now();
     let mut executor = ExecutorScope::new(
         network,
-        parallelism,
-        batch_size,
-        Duration::from_millis(args.batch_accumulation_ms),
+        settings.games_parallelism,
+        settings.inference_batch_size,
+        settings.batch_timeout,
         (Kind::Float, device),
     );
 
-    for _ in 0..args.games_per_epoch {
-        let simulations = args.simulations;
-        let c_puct = args.c_puct;
+    for game_index in 0..settings.games {
+        let simulations = settings.simulations;
+        let c_puct = settings.c_puct;
+        let game_seed = derive_seed(settings.seed, game_index as u64);
         std::mem::drop(executor.spawn(move |handle| async move {
             let evaluator =
                 NetworkPositionEvaluator::<TicTacToeResNet, TicTacToeCodec>::new(handle);
@@ -171,51 +292,69 @@ async fn collect_epoch_games(
                 c_puct,
                 self_play_temperature,
                 evaluator,
+                SmallRng::seed_from_u64(game_seed),
             )
             .await
         }));
     }
 
-    let ramp_interval = Duration::from_secs(args.parallelism_step_seconds);
-    let ramp_sleep = tokio::time::sleep(ramp_interval);
-    tokio::pin!(ramp_sleep);
-    let mut completed_ramps = 0;
-
-    let mut games = Vec::with_capacity(args.games_per_epoch);
+    let mut games = Vec::with_capacity(settings.games);
     let mut total_score = 0.0;
     let mut total_length = 0;
+    let mut heartbeat = (settings.heartbeat_interval > Duration::ZERO)
+        .then(|| tokio::time::interval(settings.heartbeat_interval));
+    if let Some(timer) = heartbeat.as_mut() {
+        timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        timer.tick().await;
+    }
+
     loop {
-        tokio::select! {
-            () = &mut ramp_sleep, if completed_ramps < args.parallelism_steps => {
-                println!("Increasing parallelism by {}", args.parallelism_step);
-                executor.increase_parallelism(args.parallelism_step).await;
-                batch_size = batch_size
-                    .checked_add(args.parallelism_step)
-                    .context("inference batch size overflowed usize")?;
-                executor.set_batch_size(batch_size).await;
-                completed_ramps += 1;
-                ramp_sleep.as_mut().reset(tokio::time::Instant::now() + ramp_interval);
+        let maybe_record = if let Some(timer) = heartbeat.as_mut() {
+            tokio::select! {
+                record = executor.next() => record,
+                _ = timer.tick() => {
+                    println!(
+                        "Self-play heartbeat: {}/{} games complete ({:.1}s elapsed; {} unfinished)",
+                        games.len(),
+                        settings.games,
+                        started.elapsed().as_secs_f64(),
+                        executor.len(),
+                    );
+                    continue;
+                }
             }
-            task_result = executor.next() => {
-                let Some(record) = task_result else {
-                    break;
-                };
-                let record = record?;
-                total_score += record.value_for(Seat::First);
-                total_length += record.plies.len();
-                games.push(extract_training_game::<_, TicTacToeCodec>(record)?);
-                println!("Game finished, {} more to go", executor.len());
-            }
+        } else {
+            executor.next().await
+        };
+        let Some(record) = maybe_record else {
+            break;
+        };
+        let record = record?;
+        total_score += record.value_for(Seat::First);
+        total_length += record.plies.len();
+        games.push(extract_training_game::<_, TicTacToeCodec>(record)?);
+        if settings.progress_every_games > 0
+            && (games.len() % settings.progress_every_games == 0 || games.len() == settings.games)
+        {
+            let rate = games.len() as f64 / started.elapsed().as_secs_f64();
+            println!(
+                "Self-play: {}/{} games complete ({rate:.3} games/s; {} unfinished)",
+                games.len(),
+                settings.games,
+                executor.len()
+            );
         }
     }
 
-    let network = executor.join().await;
+    let (network, batch_stats) = executor.join_with_stats().await;
     Ok((
         network,
         EpochGames {
             games,
             total_score,
             total_length,
+            batch_stats,
+            duration: started.elapsed(),
         },
     ))
 }
@@ -226,17 +365,20 @@ fn train_epoch(
     replay: &ReplayBuffer,
     batch_size: usize,
     device: tch::Device,
-) -> (f32, f32) {
+    seed: u64,
+) -> Result<TrainingStats> {
+    let started = Instant::now();
     let augmentation_count = TicTacToeCodec::augmentation_count();
     let mut training_samples = replay
         .iter()
         .flatten()
         .flat_map(|sample| (0..augmentation_count).map(move |augmentation| (sample, augmentation)))
         .collect::<Vec<_>>();
-    training_samples.shuffle(&mut rand::rng());
+    training_samples.shuffle(&mut SmallRng::seed_from_u64(seed));
 
-    let mut total_value_loss = 0.0;
-    let mut total_policy_loss = 0.0;
+    let mut total_value_loss = 0.0f64;
+    let mut total_policy_loss = 0.0f64;
+    let mut batches = 0;
     for chunk in training_samples.chunks(batch_size) {
         let mut states = Vec::with_capacity(chunk.len());
         let mut policies = Vec::with_capacity(chunk.len());
@@ -256,13 +398,30 @@ fn train_epoch(
 
         let (expected_values, expected_policies) = network.forward_t(&states, true);
         let value_loss = expected_values.mse_loss(&values, Reduction::Mean);
-        let policy_loss = (policies * expected_policies).sum(None) / chunk.len() as f64;
-        optimizer.backward_step(&(&value_loss - &policy_loss));
+        let policy_loss = -(policies * expected_policies).sum(None) / chunk.len() as f64;
+        optimizer.backward_step(&(&value_loss + &policy_loss));
 
-        total_value_loss += f32::try_from(&value_loss).unwrap();
-        total_policy_loss += f32::try_from(&policy_loss).unwrap();
+        let chunk_len = chunk.len() as f64;
+        total_value_loss +=
+            f32::try_from(&value_loss).context("reading value loss")? as f64 * chunk_len;
+        total_policy_loss +=
+            f32::try_from(&policy_loss).context("reading policy loss")? as f64 * chunk_len;
+        batches += 1;
     }
-    (total_value_loss, total_policy_loss)
+
+    let samples = training_samples.len();
+    let duration = started.elapsed();
+    let value_loss = total_value_loss / samples as f64;
+    let policy_loss = total_policy_loss / samples as f64;
+    Ok(TrainingStats {
+        samples,
+        batches,
+        value_loss,
+        policy_loss,
+        total_loss: value_loss + policy_loss,
+        samples_per_second: samples as f64 / duration.as_secs_f64(),
+        duration_seconds: duration.as_secs_f64(),
+    })
 }
 
 fn render_sample_games(games_dir: &Path, epoch: usize, games: Vec<ReplayGame>) -> Result<()> {
@@ -272,37 +431,48 @@ fn render_sample_games(games_dir: &Path, epoch: usize, games: Vec<ReplayGame>) -
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-fn write_stats(
-    stats_dir: &Path,
-    epoch: usize,
-    games_in_epoch: usize,
-    total_score: f32,
-    total_length: usize,
-    avg_score: f32,
-    avg_length: f32,
-    value_loss: f32,
-    policy_loss: f32,
-    duration: Duration,
-) -> Result<()> {
-    let mut file = fs::File::create(stats_path(stats_dir, epoch))?;
-    writeln!(file, "Total games: {games_in_epoch}")?;
-    writeln!(file, "Average game length: {avg_length}")?;
-    writeln!(file, "Average game score: {avg_score}")?;
-    writeln!(file, "Total game length: {total_length}")?;
-    writeln!(file, "Total game score: {total_score}")?;
-    writeln!(file, "Value loss: {value_loss}")?;
-    writeln!(file, "Policy loss: {policy_loss}")?;
-    writeln!(file, "Epoch duration: {duration:?}")?;
+fn write_invocation_config(stats_dir: &Path, args: &TrainArgs) -> Result<()> {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let path = stats_dir.join(format!(
+        "invocation-{timestamp}-{}.json",
+        std::process::id()
+    ));
+    let mut file = fs::File::create(&path)
+        .with_context(|| format!("creating invocation config {}", path.display()))?;
+    serde_json::to_writer_pretty(&mut file, args)?;
+    writeln!(file)?;
+    Ok(())
+}
+
+fn write_stats(stats_dir: &Path, epoch: usize, stats: &EpochStats<'_>) -> Result<()> {
+    let path = stats_path(stats_dir, epoch);
+    let mut file =
+        fs::File::create(&path).with_context(|| format!("creating stats {}", path.display()))?;
+    serde_json::to_writer_pretty(&mut file, stats)?;
+    writeln!(file)?;
+    file.flush()?;
+
+    let jsonl_path = stats_dir.join("epochs.jsonl");
+    let mut jsonl = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&jsonl_path)
+        .with_context(|| format!("opening stats stream {}", jsonl_path.display()))?;
+    serde_json::to_writer(&mut jsonl, stats)?;
+    writeln!(jsonl)?;
+    jsonl.flush()?;
     Ok(())
 }
 
 fn game_path(root: &Path, epoch: usize, id: usize) -> PathBuf {
-    root.join(format!("{epoch:02}.{id:02}.png"))
+    root.join(format!("{epoch:08}.{id:02}.png"))
 }
 
 fn stats_path(root: &Path, epoch: usize) -> PathBuf {
-    root.join(format!("{epoch:02}.stats"))
+    root.join(format!("{epoch:08}.json"))
 }
 
 fn self_play_temperature(turn: usize) -> f32 {
@@ -311,6 +481,13 @@ fn self_play_temperature(turn: usize) -> f32 {
         value @ 8..13 => 1.0 - (value - 7) as f32 * 0.1,
         13.. => 0.5,
     }
+}
+
+pub(super) fn derive_seed(base: u64, stream: u64) -> u64 {
+    let mut value = base ^ stream.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    value ^ (value >> 31)
 }
 
 fn validate_args(args: &TrainArgs) -> Result<()> {
@@ -335,6 +512,14 @@ fn validate_args(args: &TrainArgs) -> Result<()> {
         "inference-batch-size must be greater than zero"
     );
     ensure!(
+        args.games_parallelism > 0,
+        "games-parallelism must be greater than zero"
+    );
+    ensure!(
+        args.games_parallelism <= tokio::sync::Semaphore::MAX_PERMITS,
+        "games-parallelism exceeds Tokio's semaphore limit"
+    );
+    ensure!(
         args.training_batch_size > 0,
         "training-batch-size must be greater than zero"
     );
@@ -348,19 +533,17 @@ fn validate_args(args: &TrainArgs) -> Result<()> {
             .is_none_or(|weight_decay| weight_decay.is_finite() && weight_decay >= 0.0),
         "weight-decay must be finite and non-negative"
     );
-
-    let growth = args
-        .parallelism_step
-        .checked_mul(args.parallelism_steps)
-        .context("parallelism growth overflowed usize")?;
-    let max_parallelism = args
-        .inference_batch_size
-        .checked_add(args.parallelism_padding)
-        .and_then(|parallelism| parallelism.checked_add(growth))
-        .context("maximum parallelism overflowed usize")?;
-    ensure!(
-        max_parallelism <= tokio::sync::Semaphore::MAX_PERMITS,
-        "maximum parallelism exceeds Tokio's semaphore limit"
-    );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::derive_seed;
+
+    #[test]
+    fn derived_seeds_are_stable_and_stream_specific() {
+        assert_eq!(derive_seed(7, 11), derive_seed(7, 11));
+        assert_ne!(derive_seed(7, 11), derive_seed(7, 12));
+        assert_ne!(derive_seed(7, 11), derive_seed(8, 11));
+    }
 }

@@ -64,7 +64,7 @@ pub fn generate_game_image(
                     &mut img,
                     Rect {
                         x: x + i * square,
-                        y: 0 + j * square,
+                        y: j * square,
                         width: square,
                         height: square,
                     },

@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use serde::Serialize;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -21,9 +22,12 @@ pub enum Command {
     Play(PlayArgs),
     /// Evaluate two snapshots against each other.
     Battle(BattleArgs),
+    /// Measure inference, training, or self-play throughput without creating checkpoints.
+    Benchmark(BenchmarkArgs),
 }
 
-#[derive(Clone, Copy, Debug, ValueEnum)]
+#[derive(Clone, Copy, Debug, Serialize, ValueEnum)]
+#[serde(rename_all = "snake_case")]
 pub enum DeviceChoice {
     Auto,
     Cpu,
@@ -31,7 +35,7 @@ pub enum DeviceChoice {
     Cuda,
 }
 
-#[derive(Clone, Debug, Args)]
+#[derive(Clone, Debug, Args, Serialize)]
 pub struct DeviceArgs {
     /// Compute device. Auto prefers MPS, then CUDA, then CPU.
     #[arg(long, value_enum, default_value = "auto")]
@@ -42,7 +46,7 @@ pub struct DeviceArgs {
     pub cuda_index: usize,
 }
 
-#[derive(Clone, Debug, Args)]
+#[derive(Clone, Debug, Args, Serialize)]
 pub struct ModelArgs {
     /// Directory used to select or store checkpoints.
     #[arg(long, default_value = "checkpoints")]
@@ -52,7 +56,7 @@ pub struct ModelArgs {
     pub device: DeviceArgs,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Serialize)]
 pub struct TrainArgs {
     #[command(flatten)]
     pub model: ModelArgs,
@@ -65,7 +69,7 @@ pub struct TrainArgs {
     #[arg(long, default_value = "stats")]
     pub stats_dir: PathBuf,
 
-    /// Stop after this many epochs. Omit to train indefinitely.
+    /// Total number of epochs to reach, including restored epochs. Omit to train indefinitely.
     #[arg(long)]
     pub epochs: Option<usize>,
 
@@ -84,13 +88,15 @@ pub struct TrainArgs {
     #[arg(long, default_value_t = 128)]
     pub inference_batch_size: usize,
 
-    #[arg(long, default_value_t = 32)]
-    pub parallelism_padding: usize,
+    /// Maximum number of games that may perform self-play concurrently.
+    #[arg(long, default_value_t = 160)]
+    pub games_parallelism: usize,
 
-    #[arg(long, default_value_t = 100)]
-    pub batch_accumulation_ms: u64,
+    /// Maximum wait after the first queued request before dispatching a partial inference batch.
+    #[arg(long, default_value_t = 100_000)]
+    pub batch_timeout_us: u64,
 
-    #[arg(long, default_value_t = 1024)]
+    #[arg(long, default_value_t = 256)]
     pub training_batch_size: usize,
 
     /// Override the restored learning rate. New runs default to 0.001.
@@ -104,14 +110,110 @@ pub struct TrainArgs {
     #[arg(long, default_value_t = 20)]
     pub rendered_games: usize,
 
-    #[arg(long, default_value_t = 16)]
-    pub parallelism_step: usize,
+    /// Base seed. Per-game and per-epoch streams are deterministically derived from it.
+    #[arg(long, default_value_t = 0)]
+    pub seed: u64,
 
-    #[arg(long, default_value_t = 8)]
-    pub parallelism_steps: usize,
+    /// Print one self-play progress line per this many completed games. Zero disables progress.
+    #[arg(long, default_value_t = 10)]
+    pub progress_every_games: usize,
 
+    /// Print a self-play heartbeat at this interval. Zero disables time-based heartbeats.
     #[arg(long, default_value_t = 60)]
-    pub parallelism_step_seconds: u64,
+    pub heartbeat_seconds: u64,
+}
+
+#[derive(Debug, Args)]
+pub struct BenchmarkArgs {
+    #[command(subcommand)]
+    pub mode: BenchmarkMode,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum BenchmarkMode {
+    /// Measure forward inference including host/device transfers and output synchronization.
+    Inference(InferenceBenchmarkArgs),
+    /// Measure optimizer training steps on a fixed synthetic batch.
+    Training(TrainingBenchmarkArgs),
+    /// Measure the complete MCTS self-play scheduler without training or checkpoints.
+    SelfPlay(SelfPlayBenchmarkArgs),
+}
+
+#[derive(Debug, Args, Serialize)]
+pub struct InferenceBenchmarkArgs {
+    #[command(flatten)]
+    pub device: DeviceArgs,
+
+    #[arg(long, default_value_t = 128)]
+    pub batch_size: usize,
+
+    #[arg(long, default_value_t = 20)]
+    pub warmup_iterations: usize,
+
+    #[arg(long, default_value_t = 100)]
+    pub iterations: usize,
+
+    #[arg(long, default_value_t = 0)]
+    pub seed: u64,
+
+    /// Optional path for the JSON result. The result is always printed to stdout.
+    #[arg(long)]
+    pub output: Option<PathBuf>,
+}
+
+#[derive(Debug, Args, Serialize)]
+pub struct TrainingBenchmarkArgs {
+    #[command(flatten)]
+    pub device: DeviceArgs,
+
+    #[arg(long, default_value_t = 1024)]
+    pub batch_size: usize,
+
+    #[arg(long, default_value_t = 5)]
+    pub warmup_iterations: usize,
+
+    #[arg(long, default_value_t = 20)]
+    pub iterations: usize,
+
+    #[arg(long, default_value_t = 0)]
+    pub seed: u64,
+
+    #[arg(long)]
+    pub output: Option<PathBuf>,
+}
+
+#[derive(Debug, Args, Serialize)]
+pub struct SelfPlayBenchmarkArgs {
+    #[command(flatten)]
+    pub device: DeviceArgs,
+
+    #[arg(long, default_value_t = 32)]
+    pub games: usize,
+
+    /// Full synthetic inference batches used to initialize CUDA and convolution algorithms.
+    #[arg(long, default_value_t = 10)]
+    pub warmup_batches: usize,
+
+    #[arg(long, default_value_t = 256)]
+    pub simulations: usize,
+
+    #[arg(long, default_value_t = 1.0)]
+    pub c_puct: f32,
+
+    #[arg(long, default_value_t = 128)]
+    pub inference_batch_size: usize,
+
+    #[arg(long, default_value_t = 160)]
+    pub games_parallelism: usize,
+
+    #[arg(long, default_value_t = 100_000)]
+    pub batch_timeout_us: u64,
+
+    #[arg(long, default_value_t = 0)]
+    pub seed: u64,
+
+    #[arg(long)]
+    pub output: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -189,7 +291,7 @@ pub struct BattleArgs {
 mod tests {
     use clap::Parser;
 
-    use super::{Cli, Command, HumanSeat, PlayMode};
+    use super::{BenchmarkMode, Cli, Command, HumanSeat, PlayMode};
 
     #[test]
     fn parses_train_defaults() {
@@ -202,6 +304,10 @@ mod tests {
         assert_eq!(args.epochs, None);
         assert_eq!(args.learning_rate, None);
         assert_eq!(args.weight_decay, None);
+        assert_eq!(args.games_parallelism, 160);
+        assert_eq!(args.batch_timeout_us, 100_000);
+        assert_eq!(args.training_batch_size, 256);
+        assert_eq!(args.heartbeat_seconds, 60);
     }
 
     #[test]
@@ -238,5 +344,26 @@ mod tests {
             "second",
         ])
         .is_ok());
+    }
+
+    #[test]
+    fn parses_inference_benchmark() {
+        let cli = Cli::try_parse_from([
+            "alz",
+            "benchmark",
+            "inference",
+            "--device",
+            "cuda",
+            "--batch-size",
+            "256",
+        ])
+        .unwrap();
+        let Command::Benchmark(args) = cli.command else {
+            panic!("expected benchmark command");
+        };
+        let BenchmarkMode::Inference(args) = args.mode else {
+            panic!("expected inference benchmark");
+        };
+        assert_eq!(args.batch_size, 256);
     }
 }
