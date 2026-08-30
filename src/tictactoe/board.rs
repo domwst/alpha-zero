@@ -10,6 +10,7 @@ const N: usize = 19;
 const BYTES: usize = (N * N - 1) / (std::mem::size_of::<u8>() * (8 / 2)) + 1;
 
 #[derive(Serialize, Deserialize, Clone, Hash, PartialEq, Eq)]
+#[repr(align(8))]
 pub struct BoardState {
     #[serde(with = "BigArray")]
     state: [u8; BYTES],
@@ -17,9 +18,9 @@ pub struct BoardState {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CellState {
-    Empty,
-    X,
-    O,
+    Empty = 0b00,
+    X = 0b01,
+    O = 0b10,
 }
 
 impl Default for BoardState {
@@ -36,7 +37,7 @@ impl BoardState {
     }
 
     pub fn set_inplace(&mut self, (x, y): (usize, usize), state: CellState) {
-        assert!(x < N && y < N);
+        debug_assert!(x < N && y < N);
         let idx = x * N + y;
         let chunk = idx / 4;
         let offset = idx % 4;
@@ -44,12 +45,7 @@ impl BoardState {
         let chunk = &mut self.state[chunk];
         *chunk &= !(3 << (2 * offset));
 
-        let v = match state {
-            CellState::Empty => 0,
-            CellState::X => 1,
-            CellState::O => 2,
-        };
-        *chunk |= v << (2 * offset);
+        *chunk |= (state as u8) << (2 * offset);
     }
 
     pub fn set(mut self, coord: (usize, usize), state: CellState) -> Self {
@@ -58,15 +54,11 @@ impl BoardState {
     }
 
     pub fn flip_players_inplace(&mut self) {
-        for i in 0..N {
-            for j in 0..N {
-                let other = match self[(i, j)] {
-                    CellState::Empty => CellState::Empty,
-                    CellState::X => CellState::O,
-                    CellState::O => CellState::X,
-                };
-                self.set_inplace((i, j), other);
-            }
+        const U8_MAGIC: u8 = u8::MAX / 0b11;
+        for v in &mut self.state {
+            let x = *v & U8_MAGIC;
+            let o = (*v & (U8_MAGIC << 1)) >> 1;
+            *v = (x << 1) | o;
         }
     }
 
@@ -124,8 +116,7 @@ impl Game for BoardState {
         }
 
         let moves = (0..N)
-            .map(|i| (0..N).map(move |j| (i, j)))
-            .flatten()
+            .flat_map(|i| (0..N).map(move |j| (i, j)))
             .filter(|&crd| self[crd] == CellState::Empty)
             .map(|(i, j)| TicTacToeMove(i, j))
             .collect::<Vec<_>>();
@@ -165,12 +156,15 @@ impl Index<(usize, usize)> for BoardState {
 
 #[cfg(test)]
 mod tests {
+    extern crate test;
+
     use crate::{
         alpha_zero::{Game, TerminationState},
-        tictactoe::CellState,
+        tictactoe::{CellState, TicTacToeMove},
     };
 
     use super::BoardState;
+    use test::Bencher;
 
     #[test]
     fn tic_tac_toe_win() {
@@ -254,5 +248,17 @@ mod tests {
         }
 
         assert_eq!(board.get_state(), TerminationState::Terminal(0.0));
+    }
+
+    #[bench]
+    fn make_move(b: &mut Bencher) {
+        let mut board = BoardState::new();
+
+        b.iter(|| {
+            for _ in 0..65536 {
+                board = core::hint::black_box(board.make_move(&TicTacToeMove(0, 0)));
+            }
+            board.clone()
+        });
     }
 }
