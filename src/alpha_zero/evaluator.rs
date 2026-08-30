@@ -72,23 +72,21 @@ where
     Net: AlphaZeroNet,
     Codec: PositionCodec<TGame>,
 {
-    fn evaluate<'a>(
+    async fn evaluate<'a>(
         &'a self,
         state: &'a TGame,
         moves: &'a [TGame::Move],
-    ) -> impl Future<Output = Result<PositionEvaluation>> + Send + 'a {
-        async move {
-            let (value, policy) = self.executor.execute(Codec::encode_position(state)).await?;
-            let value = f32::try_from(value).context("converting network value to f32")?;
-            let legal_policy = Codec::decode_policy(&policy, moves)?;
+    ) -> Result<PositionEvaluation> {
+        let (value, policy) = self.executor.execute(Codec::encode_position(state)).await?;
+        let value = f32::try_from(value).context("converting network value to f32")?;
+        let legal_policy = Codec::decode_policy(&policy, moves)?;
 
-            let evaluation = PositionEvaluation {
-                value,
-                legal_policy,
-            };
-            evaluation.validate_for(moves.len())?;
-            Ok(evaluation)
-        }
+        let evaluation = PositionEvaluation {
+            value,
+            legal_policy,
+        };
+        evaluation.validate_for(moves.len())?;
+        Ok(evaluation)
     }
 }
 
