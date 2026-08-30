@@ -7,7 +7,10 @@ use tokio::{
     task::JoinHandle,
 };
 
-use super::{AlphaZeroNet, BatcherCommand, NetworkBatchedExecutor, NetworkBatchedExecutorHandle};
+use super::{
+    AlphaZeroNet, BatcherCommand, NetworkBatchStats, NetworkBatchedExecutor,
+    NetworkBatchedExecutorHandle,
+};
 
 struct BatchSizeManager {
     current_batch_size: usize,
@@ -68,7 +71,7 @@ pub struct ExecutorScope<T, TNet: AlphaZeroNet> {
     batch_size_manager: BatchSizeManager,
     executor_cmd: Sender<BatcherCommand>,
     executor_handle: NetworkBatchedExecutorHandle<TNet>,
-    executor: JoinHandle<TNet>,
+    executor: JoinHandle<(TNet, NetworkBatchStats)>,
 }
 
 impl<T, TNet: AlphaZeroNet + Send + 'static> ExecutorScope<T, TNet> {
@@ -164,6 +167,10 @@ impl<T, TNet: AlphaZeroNet + Send + 'static> ExecutorScope<T, TNet> {
     }
 
     pub async fn join(self) -> TNet {
+        self.join_with_stats().await.0
+    }
+
+    pub async fn join_with_stats(self) -> (TNet, NetworkBatchStats) {
         assert_eq!(self.len(), 0);
 
         let Self {

@@ -1,22 +1,23 @@
 use anyhow::Result;
-use rand::{rngs::SmallRng, SeedableRng};
+use rand::Rng;
 
 use super::{run_match, Game, MatchRecord, MctsAgent, PositionEvaluator, RootNoise, Shared};
 
-pub async fn generate_self_played_game<TGame, Evaluator, Temperature>(
+pub async fn generate_self_played_game<TGame, Evaluator, Temperature, Random>(
     start: TGame,
     simulations: usize,
     c_puct: f32,
     temperature: Temperature,
     evaluator: Evaluator,
+    random: Random,
 ) -> Result<MatchRecord<TGame>>
 where
     TGame: Game + Clone + PartialEq + Send + Sync,
     TGame::Move: Clone + PartialEq + Send + Sync,
     Evaluator: PositionEvaluator<TGame> + Send + Sync,
     Temperature: Fn(usize) -> f32 + Send,
+    Random: Rng + Send,
 {
-    let random = SmallRng::from_rng(&mut rand::rng());
     let agent = MctsAgent::new(
         start.clone(),
         evaluator,

@@ -107,11 +107,8 @@ where
     TGame::Move: Sync,
     OneAgent: Agent<TGame> + Send,
 {
-    fn select_move<'a>(
-        &'a mut self,
-        turn: Turn<'a, TGame>,
-    ) -> impl Future<Output = Result<MoveDecision>> + Send + 'a {
-        async move { self.agent.select_move(turn).await }
+    async fn select_move<'a>(&'a mut self, turn: Turn<'a, TGame>) -> Result<MoveDecision> {
+        self.agent.select_move(turn).await
     }
 
     fn observe_move(&mut self, applied: &AppliedMove<'_, TGame>) -> Result<()> {
@@ -149,15 +146,10 @@ where
     FirstAgent: Agent<TGame> + Send,
     SecondAgent: Agent<TGame> + Send,
 {
-    fn select_move<'a>(
-        &'a mut self,
-        turn: Turn<'a, TGame>,
-    ) -> impl Future<Output = Result<MoveDecision>> + Send + 'a {
-        async move {
-            match turn.seat {
-                Seat::First => self.first.select_move(turn).await,
-                Seat::Second => self.second.select_move(turn).await,
-            }
+    async fn select_move<'a>(&'a mut self, turn: Turn<'a, TGame>) -> Result<MoveDecision> {
+        match turn.seat {
+            Seat::First => self.first.select_move(turn).await,
+            Seat::Second => self.second.select_move(turn).await,
         }
     }
 

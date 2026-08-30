@@ -1,16 +1,75 @@
-use std::{marker::PhantomData, time::Duration};
+use std::{
+    collections::BTreeMap,
+    marker::PhantomData,
+    time::{Duration, Instant},
+};
 
 use anyhow::{anyhow, Context, Result};
+use serde::Serialize;
 use tch::{Device, Kind, Tensor};
 use tokio::sync::{mpsc, oneshot};
-
-use crate::util::Timer;
 
 use super::AlphaZeroNet;
 
 struct InferenceRequest {
     input: Tensor,
     response: oneshot::Sender<(Tensor, Tensor)>,
+    submitted_at: Instant,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct NetworkBatchStats {
+    pub invocations: u64,
+    pub requests: u64,
+    pub full_batches: u64,
+    pub cancelled_requests: u64,
+    pub batch_size_histogram: BTreeMap<usize, u64>,
+    pub queue_wait_us_total: u64,
+    pub queue_wait_us_max: u64,
+    pub request_latency_us_total: u64,
+    pub request_latency_us_max: u64,
+    pub input_construction_us_total: u64,
+    pub forward_submission_us_total: u64,
+    pub output_sync_us_total: u64,
+    pub service_us_total: u64,
+}
+
+impl NetworkBatchStats {
+    pub fn average_batch_size(&self) -> f64 {
+        if self.invocations == 0 {
+            0.0
+        } else {
+            self.requests as f64 / self.invocations as f64
+        }
+    }
+
+    pub fn average_queue_wait_us(&self) -> f64 {
+        if self.invocations == 0 {
+            0.0
+        } else {
+            self.queue_wait_us_total as f64 / self.invocations as f64
+        }
+    }
+
+    pub fn average_request_latency_us(&self) -> f64 {
+        if self.requests == 0 {
+            0.0
+        } else {
+            self.request_latency_us_total as f64 / self.requests as f64
+        }
+    }
+
+    pub fn average_service_us(&self) -> f64 {
+        if self.invocations == 0 {
+            0.0
+        } else {
+            self.service_us_total as f64 / self.invocations as f64
+        }
+    }
+}
+
+fn elapsed_us(start: Instant) -> u64 {
+    start.elapsed().as_micros().min(u64::MAX as u128) as u64
 }
 
 pub struct NetworkBatchedExecutor<Net: AlphaZeroNet> {
@@ -37,7 +96,11 @@ impl<Net: AlphaZeroNet> NetworkBatchedExecutorHandle<Net> {
     pub async fn execute(&self, input: Tensor) -> Result<(Tensor, Tensor)> {
         let (response, result) = oneshot::channel();
         self.task_sender
-            .send(InferenceRequest { input, response })
+            .send(InferenceRequest {
+                input,
+                response,
+                submitted_at: Instant::now(),
+            })
             .await
             .map_err(|_| anyhow!("network evaluator stopped before accepting the request"))?;
         result.await.context("network evaluator stopped")
@@ -72,7 +135,7 @@ impl<Net: AlphaZeroNet> NetworkBatchedExecutor<Net> {
         batch_acc_time: Duration,
         mut command_receiver: mpsc::Receiver<BatcherCommand>,
         (kind, device): (Kind, Device),
-    ) -> Net {
+    ) -> (Net, NetworkBatchStats) {
         let NetworkBatchedExecutor {
             mut receiver,
             nn,
@@ -84,8 +147,7 @@ impl<Net: AlphaZeroNet> NetworkBatchedExecutor<Net> {
         let mut pending = Vec::with_capacity(max_batch);
         let mut input_closed = false;
         let mut commands_open = true;
-        let mut invocations = 0;
-        let mut total_tensors = 0;
+        let mut stats = NetworkBatchStats::default();
 
         loop {
             while pending.is_empty() && !input_closed {
@@ -133,43 +195,68 @@ impl<Net: AlphaZeroNet> NetworkBatchedExecutor<Net> {
                 }
             }
 
+            let before_retain = pending.len();
             pending.retain(|request| !request.response.is_closed());
+            stats.cancelled_requests += (before_retain - pending.len()) as u64;
             if pending.is_empty() {
                 continue;
             }
             let batch_len = pending.len().min(max_batch);
-            if batch_len != max_batch {
-                println!("Batch of size {batch_len} (max_batch = {max_batch})");
+            let requests = pending.drain(..batch_len).collect::<Vec<_>>();
+            let queue_wait_us = requests
+                .first()
+                .map_or(0, |request| elapsed_us(request.submitted_at));
+            let mut inputs = Vec::with_capacity(batch_len);
+            let mut responses = Vec::with_capacity(batch_len);
+            let mut submitted_at = Vec::with_capacity(batch_len);
+            for request in requests {
+                inputs.push(request.input);
+                responses.push(request.response);
+                submitted_at.push(request.submitted_at);
             }
 
-            let (inputs, responses): (Vec<_>, Vec<_>) = pending
-                .drain(..batch_len)
-                .map(|request| (request.input, request.response))
-                .unzip();
-
-            let timer = Timer::new();
+            let service_started = Instant::now();
+            let phase_started = Instant::now();
             let input = Tensor::stack(&inputs, 0).totype(kind).to(device);
-            timer.print_if_greater(Duration::from_secs(1), "Input construction took {t}");
+            let input_construction_us = elapsed_us(phase_started);
+            let phase_started = Instant::now();
             let (values, policies) = tch::no_grad(|| nn.forward_t(&input, false));
-            timer.print_if_greater(Duration::from_secs(1), "Input evaluation took {t}");
+            let forward_submission_us = elapsed_us(phase_started);
+            let phase_started = Instant::now();
             let values = values.to(Device::Cpu);
             let policies = policies.to(Device::Cpu);
-            timer.print_if_greater(Duration::from_secs(1), "CPU conversion took {t}");
+            let output_sync_us = elapsed_us(phase_started);
+            let service_us = elapsed_us(service_started);
 
-            for (index, response) in responses.into_iter().enumerate() {
+            for (index, (response, submitted_at)) in
+                responses.into_iter().zip(submitted_at).enumerate()
+            {
                 let value = values.get(index as i64);
                 let policy = policies.get(index as i64);
                 let _ = response.send((value, policy));
+                let latency_us = elapsed_us(submitted_at);
+                stats.request_latency_us_total =
+                    stats.request_latency_us_total.saturating_add(latency_us);
+                stats.request_latency_us_max = stats.request_latency_us_max.max(latency_us);
             }
 
-            invocations += 1;
-            total_tensors += inputs.len();
-            if invocations % 1000 == 0 {
-                println!("Invocations: {invocations}, total tensors: {total_tensors}");
-            }
+            stats.invocations += 1;
+            stats.requests += batch_len as u64;
+            stats.full_batches += u64::from(batch_len == max_batch);
+            *stats.batch_size_histogram.entry(batch_len).or_default() += 1;
+            stats.queue_wait_us_total = stats.queue_wait_us_total.saturating_add(queue_wait_us);
+            stats.queue_wait_us_max = stats.queue_wait_us_max.max(queue_wait_us);
+            stats.input_construction_us_total = stats
+                .input_construction_us_total
+                .saturating_add(input_construction_us);
+            stats.forward_submission_us_total = stats
+                .forward_submission_us_total
+                .saturating_add(forward_submission_us);
+            stats.output_sync_us_total = stats.output_sync_us_total.saturating_add(output_sync_us);
+            stats.service_us_total = stats.service_us_total.saturating_add(service_us);
         }
 
-        nn
+        (nn, stats)
     }
 }
 
