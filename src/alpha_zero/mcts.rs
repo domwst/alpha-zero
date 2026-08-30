@@ -376,6 +376,11 @@ where
         action: &TGame::Move,
         next_state: TGame,
     ) -> Result<()> {
+        ensure!(
+            self.root_game_state.make_move(action) == next_state,
+            "MCTS successor does not match the authoritative game state"
+        );
+
         let next_root = if let Some(state) = self.root.node_state.get_mut() {
             ensure!(
                 move_id < state.children.len(),
@@ -394,11 +399,6 @@ where
         } else {
             None
         };
-
-        ensure!(
-            self.root_game_state.make_move(action) == next_state,
-            "MCTS successor does not match the authoritative game state"
-        );
 
         self.root_game_state = next_state;
         self.root = next_root.unwrap_or_else(|| MonteCarloNode::new());
