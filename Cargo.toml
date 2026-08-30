@@ -15,6 +15,7 @@ serde = { version = "1", features = ["derive"] }
 serde-big-array = "0.5.1"
 serde_json = "1.0"
 tch = { git = "https://github.com/domwst/tch-rs", rev = "fb7bfda737de9d6657de5750456ec01492892ed1" }
+time = { version = "0.3", features = ["formatting", "macros"] }
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "time"] }
