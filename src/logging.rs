@@ -9,6 +9,7 @@ pub fn init() {
         .with_env_filter(filter)
         .with_timer(UtcTime::rfc_3339())
         .with_file(true)
+        .with_target(false)
         .with_line_number(true)
         .with_ansi(io::stdout().is_terminal())
         .with_writer(io::stdout)
