@@ -8,7 +8,7 @@ use tch::{
     },
 };
 
-use crate::alpha_zero::{AlphaZeroNet, NetworkOutput};
+use crate::engine::{AlphaZeroNet, NetworkOutput};
 
 const CHANNELS: i64 = 32;
 
@@ -112,7 +112,7 @@ fn policy_head<'a, P: Borrow<Path<'a>>>(path: P) -> SequentialT {
 }
 
 #[derive(Debug)]
-pub struct TicTacToeResNet {
+pub struct GomokuResNet {
     conv1: Conv2D,
     bn1: BatchNorm,
     blocks: SequentialT,
@@ -120,7 +120,7 @@ pub struct TicTacToeResNet {
     policy_head: SequentialT,
 }
 
-impl TicTacToeResNet {
+impl GomokuResNet {
     pub fn new<'a, P: Borrow<Path<'a>>>(path: P) -> Self {
         const BLOCKS: usize = 10;
         let path = path.borrow();
@@ -148,7 +148,7 @@ impl TicTacToeResNet {
     }
 }
 
-impl AlphaZeroNet for TicTacToeResNet {
+impl AlphaZeroNet for GomokuResNet {
     fn forward_t(&self, xs: &tch::Tensor, train: bool) -> NetworkOutput {
         let out = self.conv1.forward_t(xs, train);
         let out = self.bn1.forward_t(&out, train).relu();
@@ -165,14 +165,14 @@ impl AlphaZeroNet for TicTacToeResNet {
 mod tests {
     use tch::{Device, Kind, Tensor, nn};
 
-    use crate::alpha_zero::AlphaZeroNet;
+    use crate::engine::AlphaZeroNet;
 
-    use super::TicTacToeResNet;
+    use super::GomokuResNet;
 
     #[test]
     fn resnet_preserves_alpha_zero_output_shapes() {
         let var_store = nn::VarStore::new(Device::Cpu);
-        let network = TicTacToeResNet::new(var_store.root());
+        let network = GomokuResNet::new(var_store.root());
         let input = Tensor::zeros([2, 2, 19, 19], (Kind::Float, Device::Cpu));
 
         let output = network.forward_t(&input, true);

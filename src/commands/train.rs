@@ -6,12 +6,12 @@ use std::{
 };
 
 use alz::{
-    alpha_zero::{
+    engine::{
         AlphaZeroNet, ExecutorScope, NetworkBatchStats, NetworkPositionEvaluator, PositionCodec,
         Seat, TrainingCodec, extract_training_game, generate_self_played_game,
         policy_log_probabilities,
     },
-    tictactoe::{BoardState, TicTacToeCodec, TicTacToeResNet, generate_game_image},
+    gomoku::{BoardState, GomokuCodec, GomokuResNet, generate_game_image},
 };
 use anyhow::{Context, Result, ensure};
 use rand::{
@@ -121,7 +121,7 @@ pub async fn run(args: TrainArgs) -> Result<()> {
     tch::manual_seed((args.seed & i64::MAX as u64) as i64);
     let device = resolve_device(&args.model.device)?;
     let mut var_store = nn::VarStore::new(device);
-    let mut network = TicTacToeResNet::new(var_store.root());
+    let mut network = GomokuResNet::new(var_store.root());
     let learning_rate = args.learning_rate.unwrap_or(DEFAULT_LEARNING_RATE);
     let weight_decay = args.weight_decay.unwrap_or(DEFAULT_WEIGHT_DECAY);
     let mut optimizer = nn::Adam::default()
@@ -316,10 +316,10 @@ pub async fn run(args: TrainArgs) -> Result<()> {
 }
 
 pub(super) async fn collect_epoch_games(
-    network: TicTacToeResNet,
+    network: GomokuResNet,
     settings: SelfPlaySettings,
     device: tch::Device,
-) -> Result<(TicTacToeResNet, EpochGames)> {
+) -> Result<(GomokuResNet, EpochGames)> {
     ensure!(settings.games > 0, "games must be greater than zero");
     ensure!(
         settings.simulations > 0,
@@ -349,7 +349,7 @@ pub(super) async fn collect_epoch_games(
         let game_seed = derive_seed(settings.seed, game_index as u64);
         std::mem::drop(executor.spawn(move |handle| async move {
             let evaluator =
-                NetworkPositionEvaluator::<TicTacToeResNet, TicTacToeCodec>::new(handle);
+                NetworkPositionEvaluator::<GomokuResNet, GomokuCodec>::new(handle);
             generate_self_played_game(
                 BoardState::new(),
                 simulations,
@@ -404,7 +404,7 @@ pub(super) async fn collect_epoch_games(
         let record = record?;
         total_score += record.value_for(Seat::First);
         total_length += record.plies.len();
-        games.push(extract_training_game::<_, TicTacToeCodec>(record)?);
+        games.push(extract_training_game::<_, GomokuCodec>(record)?);
         if settings.progress_every_games > 0
             && (games.len() % settings.progress_every_games == 0 || games.len() == settings.games)
         {
@@ -440,7 +440,7 @@ pub(super) async fn collect_epoch_games(
 }
 
 fn train_epoch(
-    network: &TicTacToeResNet,
+    network: &GomokuResNet,
     optimizer: &mut Optimizer,
     replay: &ReplayBuffer,
     batch_size: usize,
@@ -448,7 +448,7 @@ fn train_epoch(
     seed: u64,
 ) -> Result<TrainingStats> {
     let started = Instant::now();
-    let augmentation_count = TicTacToeCodec::augmentation_count();
+    let augmentation_count = GomokuCodec::augmentation_count();
     let mut training_samples = replay
         .iter()
         .flatten()
@@ -464,9 +464,9 @@ fn train_epoch(
         let mut policies = Vec::with_capacity(chunk.len());
         let mut values = Vec::with_capacity(chunk.len());
         for &(sample, augmentation) in chunk {
-            let state = TicTacToeCodec::encode_position(&sample.state);
-            let policy = TicTacToeCodec::policy_to_tensor(&sample.policy);
-            let (state, policy) = TicTacToeCodec::augment(&state, &policy, augmentation);
+            let state = GomokuCodec::encode_position(&sample.state);
+            let policy = GomokuCodec::policy_to_tensor(&sample.policy);
+            let (state, policy) = GomokuCodec::augment(&state, &policy, augmentation);
             states.push(state);
             policies.push(policy);
             values.push(sample.value);

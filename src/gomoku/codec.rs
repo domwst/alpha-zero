@@ -4,21 +4,21 @@ use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use tch::Tensor;
 
-use crate::alpha_zero::{Game, PositionCodec, TerminationState, TrainingCodec};
+use crate::engine::{Game, PositionCodec, TerminationState, TrainingCodec};
 
-use super::{BoardState, CellState, TicTacToeMove};
+use super::{BoardState, CellState, GomokuMove};
 
 pub const ACTION_SCHEMA: &str = "board19-row-major-v1";
 
-pub struct TicTacToeCodec;
+pub struct GomokuCodec;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct TicTacToePolicy {
+pub struct GomokuPolicy {
     values: [[f32; BoardState::N]; BoardState::N],
 }
 
-impl TicTacToePolicy {
-    pub fn one_hot(r#move: TicTacToeMove) -> Self {
+impl GomokuPolicy {
+    pub fn one_hot(r#move: GomokuMove) -> Self {
         let (row, column) = r#move.to_xy();
         let mut values = [[0.0; BoardState::N]; BoardState::N];
         values[row][column] = 1.0;
@@ -62,7 +62,7 @@ impl TicTacToePolicy {
     }
 }
 
-impl Index<(usize, usize)> for TicTacToePolicy {
+impl Index<(usize, usize)> for GomokuPolicy {
     type Output = f32;
 
     fn index(&self, (row, column): (usize, usize)) -> &Self::Output {
@@ -89,7 +89,7 @@ fn game_to_nn_input(state: &BoardState) -> Tensor {
     ])
 }
 
-fn legal_policy_mask(state: &BoardState, moves: &[TicTacToeMove]) -> Result<Tensor> {
+fn legal_policy_mask(state: &BoardState, moves: &[GomokuMove]) -> Result<Tensor> {
     ensure!(
         !moves.is_empty(),
         "cannot encode an empty legal policy mask"
@@ -110,7 +110,7 @@ fn legal_policy_mask(state: &BoardState, moves: &[TicTacToeMove]) -> Result<Tens
     Ok(Tensor::from_slice(mask.as_flattened()).view([BoardState::N as i64, BoardState::N as i64]))
 }
 
-fn decoded_policy(policy: &Tensor, moves: &[TicTacToeMove]) -> Result<Vec<f32>> {
+fn decoded_policy(policy: &Tensor, moves: &[GomokuMove]) -> Result<Vec<f32>> {
     let policy = <Vec<f32>>::try_from(policy.view([-1]))
         .context("converting canonical network policy to host values")?;
     ensure!(
@@ -144,7 +144,7 @@ fn decoded_policy(policy: &Tensor, moves: &[TicTacToeMove]) -> Result<Vec<f32>> 
     Ok(result)
 }
 
-fn canonical_policy(policy: &[f32], moves: &[TicTacToeMove]) -> Result<TicTacToePolicy> {
+fn canonical_policy(policy: &[f32], moves: &[GomokuMove]) -> Result<GomokuPolicy> {
     ensure!(
         policy.len() == moves.len(),
         "policy has {} entries for {} legal moves",
@@ -167,7 +167,7 @@ fn canonical_policy(policy: &[f32], moves: &[TicTacToeMove]) -> Result<TicTacToe
         let (row, column) = r#move.to_xy();
         values[row][column] = probability;
     }
-    let policy = TicTacToePolicy { values };
+    let policy = GomokuPolicy { values };
     Ok(policy)
 }
 
@@ -186,22 +186,22 @@ fn augment(state: &Tensor, policy: &Tensor, augmentation: usize) -> (Tensor, Ten
     (transform(state, 1), transform(policy, 0))
 }
 
-impl PositionCodec<BoardState> for TicTacToeCodec {
+impl PositionCodec<BoardState> for GomokuCodec {
     fn encode_position(state: &BoardState) -> Tensor {
         game_to_nn_input(state)
     }
 
-    fn encode_policy_mask(state: &BoardState, moves: &[TicTacToeMove]) -> Result<Tensor> {
+    fn encode_policy_mask(state: &BoardState, moves: &[GomokuMove]) -> Result<Tensor> {
         legal_policy_mask(state, moves)
     }
 
-    fn decode_policy(policy: &Tensor, moves: &[TicTacToeMove]) -> Result<Vec<f32>> {
+    fn decode_policy(policy: &Tensor, moves: &[GomokuMove]) -> Result<Vec<f32>> {
         decoded_policy(policy, moves)
     }
 }
 
-impl TrainingCodec<BoardState> for TicTacToeCodec {
-    type Policy = TicTacToePolicy;
+impl TrainingCodec<BoardState> for GomokuCodec {
+    type Policy = GomokuPolicy;
 
     fn encode_policy_target(state: &BoardState, policy: &[f32]) -> Result<Self::Policy> {
         let moves = match state.get_state() {
@@ -228,8 +228,8 @@ impl TrainingCodec<BoardState> for TicTacToeCodec {
 mod tests {
     use tch::{Device, IndexOp, Kind, Tensor};
 
-    use crate::tictactoe::{
-        BoardState, CellState, TicTacToeMove,
+    use crate::gomoku::{
+        BoardState, CellState, GomokuMove,
         codec::{canonical_policy, decoded_policy, game_to_nn_input, legal_policy_mask},
     };
 
@@ -261,7 +261,7 @@ mod tests {
         let _ = policy.i((0, 2)).fill_(0.75);
         let policy = decoded_policy(
             &policy,
-            &[TicTacToeMove::from_xy(0, 1), TicTacToeMove::from_xy(0, 2)],
+            &[GomokuMove::from_xy(0, 1), GomokuMove::from_xy(0, 2)],
         )
         .unwrap();
 
@@ -271,7 +271,7 @@ mod tests {
     #[test]
     fn policy_mask_marks_exact_legal_moves() {
         let board = BoardState::new().set((0, 0), CellState::X);
-        let moves = [TicTacToeMove::from_xy(0, 1), TicTacToeMove::from_xy(10, 12)];
+        let moves = [GomokuMove::from_xy(0, 1), GomokuMove::from_xy(10, 12)];
 
         let mask = legal_policy_mask(&board, &moves).unwrap();
 
@@ -287,7 +287,7 @@ mod tests {
     fn canonical_policy_uses_fixed_action_indices() {
         let policy = canonical_policy(
             &[0.25, 0.75],
-            &[TicTacToeMove::from_xy(2, 3), TicTacToeMove::from_xy(10, 12)],
+            &[GomokuMove::from_xy(2, 3), GomokuMove::from_xy(10, 12)],
         )
         .unwrap();
 

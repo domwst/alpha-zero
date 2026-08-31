@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use alz::tictactoe::TicTacToeResNet;
+use alz::gomoku::GomokuResNet;
 use anyhow::{Context, Result, ensure};
 use tch::{Cuda, Device, nn};
 
@@ -36,9 +36,9 @@ pub fn resolve_device(args: &DeviceArgs) -> Result<Device> {
 pub fn load_network(
     snapshot_or_run_dir: &Path,
     device: Device,
-) -> Result<(nn::VarStore, TicTacToeResNet, usize)> {
+) -> Result<(nn::VarStore, GomokuResNet, usize)> {
     let mut var_store = nn::VarStore::new(device);
-    let network = TicTacToeResNet::new(var_store.root());
+    let network = GomokuResNet::new(var_store.root());
     let snapshot = resolve_snapshot(snapshot_or_run_dir)?.with_context(|| {
         format!(
             "no complete training snapshot found in {}",

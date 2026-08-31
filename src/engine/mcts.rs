@@ -4,7 +4,7 @@ use anyhow::{Result, ensure};
 use rand::Rng;
 use rand_distr::{Distribution, multi::Dirichlet};
 
-use crate::alpha_zero::TerminationState;
+use crate::engine::TerminationState;
 
 use super::{Game, MoveParameters, PositionEvaluation, PositionEvaluator, TurnChange};
 
@@ -421,7 +421,7 @@ mod tests {
 
     use rand::{SeedableRng, rngs::SmallRng};
 
-    use crate::alpha_zero::{Game, MoveParameters, PositionEvaluation, PositionEvaluator};
+    use crate::engine::{Game, MoveParameters, PositionEvaluation, PositionEvaluator};
 
     use super::{MonteCarloTree, RootNoise, TerminationState, TurnChange};
 

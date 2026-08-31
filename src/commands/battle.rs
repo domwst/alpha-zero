@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use alz::{
-    alpha_zero::{ExecutorScope, NetworkPositionEvaluator, Seat, do_battle},
-    tictactoe::{BoardState, TicTacToeCodec, TicTacToeResNet},
+    engine::{ExecutorScope, NetworkPositionEvaluator, Seat, do_battle},
+    gomoku::{BoardState, GomokuCodec, GomokuResNet},
 };
 use anyhow::{Result, ensure};
 use tch::Kind;
@@ -45,10 +45,10 @@ pub async fn run(args: BattleArgs) -> Result<()> {
         Duration::from_millis(1),
         (Kind::Float, second_var_store.device()),
     );
-    let first_evaluator = NetworkPositionEvaluator::<TicTacToeResNet, TicTacToeCodec>::new(
+    let first_evaluator = NetworkPositionEvaluator::<GomokuResNet, GomokuCodec>::new(
         first_executor.evaluator_handle(),
     );
-    let second_evaluator = NetworkPositionEvaluator::<TicTacToeResNet, TicTacToeCodec>::new(
+    let second_evaluator = NetworkPositionEvaluator::<GomokuResNet, GomokuCodec>::new(
         second_executor.evaluator_handle(),
     );
 

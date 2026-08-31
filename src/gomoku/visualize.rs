@@ -1,11 +1,11 @@
 use image::{ImageBuffer, Pixel, Rgb, math::Rect};
 
-use crate::{alpha_zero::TrainingSample, tictactoe::CellState};
+use crate::{engine::TrainingSample, gomoku::CellState};
 
-use super::{BoardState, TicTacToePolicy};
+use super::{BoardState, GomokuPolicy};
 
 pub fn generate_game_image(
-    history: &[TrainingSample<BoardState, TicTacToePolicy>],
+    history: &[TrainingSample<BoardState, GomokuPolicy>],
 ) -> ImageBuffer<Rgb<u8>, Vec<u8>> {
     if history.is_empty() {
         return image::RgbImage::new(1, 1);

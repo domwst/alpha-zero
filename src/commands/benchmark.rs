@@ -1,10 +1,10 @@
 use std::{fs, path::Path, time::Instant};
 
 use alz::{
-    alpha_zero::{
+    engine::{
         AlphaZeroNet, NetworkBatchStats, masked_policy_probabilities, policy_log_probabilities,
     },
-    tictactoe::TicTacToeResNet,
+    gomoku::GomokuResNet,
 };
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
@@ -92,7 +92,7 @@ fn run_inference(args: InferenceBenchmarkArgs) -> Result<()> {
     tch::manual_seed((args.seed & i64::MAX as u64) as i64);
     let device = resolve_device(&args.device)?;
     let var_store = nn::VarStore::new(device);
-    let network = TicTacToeResNet::new(var_store.root());
+    let network = GomokuResNet::new(var_store.root());
     let input = Tensor::zeros(
         [args.batch_size as i64, 2, 19, 19],
         (Kind::Float, Device::Cpu),
@@ -124,7 +124,7 @@ fn run_inference(args: InferenceBenchmarkArgs) -> Result<()> {
 }
 
 fn inference_iteration(
-    network: &TicTacToeResNet,
+    network: &GomokuResNet,
     cpu_input: &Tensor,
     cpu_policy_mask: &Tensor,
     device: Device,
@@ -150,7 +150,7 @@ fn run_training(args: TrainingBenchmarkArgs) -> Result<()> {
     tch::manual_seed((args.seed & i64::MAX as u64) as i64);
     let device = resolve_device(&args.device)?;
     let var_store = nn::VarStore::new(device);
-    let network = TicTacToeResNet::new(var_store.root());
+    let network = GomokuResNet::new(var_store.root());
     let mut optimizer = nn::Adam::default().build(&var_store, 1e-3)?;
     let states = Tensor::zeros(
         [args.batch_size as i64, 2, 19, 19],
@@ -199,7 +199,7 @@ fn run_training(args: TrainingBenchmarkArgs) -> Result<()> {
 }
 
 fn training_iteration(
-    network: &TicTacToeResNet,
+    network: &GomokuResNet,
     optimizer: &mut Optimizer,
     cpu_states: &Tensor,
     cpu_policies: &Tensor,
@@ -240,7 +240,7 @@ async fn run_self_play(args: SelfPlayBenchmarkArgs) -> Result<()> {
     tch::manual_seed((args.seed & i64::MAX as u64) as i64);
     let device = resolve_device(&args.device)?;
     let var_store = nn::VarStore::new(device);
-    let network = TicTacToeResNet::new(var_store.root());
+    let network = GomokuResNet::new(var_store.root());
 
     if args.warmup_batches > 0 {
         let input = Tensor::zeros(

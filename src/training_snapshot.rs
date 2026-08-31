@@ -8,8 +8,8 @@ use std::{
 };
 
 use alz::{
-    alpha_zero::TrainingSample,
-    tictactoe::{ACTION_SCHEMA, BoardState, TicTacToePolicy},
+    engine::TrainingSample,
+    gomoku::{ACTION_SCHEMA, BoardState, GomokuPolicy},
 };
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -21,7 +21,7 @@ const OPTIMIZER_FILE: &str = "optimizer.ot";
 const REPLAY_FILE: &str = "replay.bin.zst";
 const METADATA_FILE: &str = "metadata.json";
 
-pub type ReplayPosition = TrainingSample<BoardState, TicTacToePolicy>;
+pub type ReplayPosition = TrainingSample<BoardState, GomokuPolicy>;
 pub type ReplayGame = Vec<ReplayPosition>;
 pub type ReplayBuffer = VecDeque<ReplayGame>;
 
@@ -310,7 +310,7 @@ mod tests {
         nn::{self, Module, OptimizerConfig},
     };
 
-    use alz::tictactoe::TicTacToeMove;
+    use alz::gomoku::GomokuMove;
 
     use super::*;
 
@@ -392,7 +392,7 @@ mod tests {
         let root = temp_dir();
         let replay = VecDeque::from([vec![TrainingSample {
             state: BoardState::new(),
-            policy: TicTacToePolicy::one_hot(TicTacToeMove::from_xy(0, 0)),
+            policy: GomokuPolicy::one_hot(GomokuMove::from_xy(0, 0)),
             value: -1.0,
         }]]);
 

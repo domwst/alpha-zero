@@ -3,7 +3,7 @@ use std::ops::{Index, Range};
 use serde::{Deserialize, Serialize};
 use serde_big_array::BigArray;
 
-use crate::alpha_zero::{Game, MoveParameters, TerminationState, TurnChange};
+use crate::engine::{Game, MoveParameters, TerminationState, TurnChange};
 
 const N: usize = 19;
 
@@ -97,12 +97,12 @@ impl BoardState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TicTacToeMove {
+pub struct GomokuMove {
     x: u8,
     y: u8,
 }
 
-impl TicTacToeMove {
+impl GomokuMove {
     pub fn from_xy(x: usize, y: usize) -> Self {
         assert!(x < N && y < N);
         Self {
@@ -116,14 +116,14 @@ impl TicTacToeMove {
     }
 }
 
-impl MoveParameters for TicTacToeMove {
+impl MoveParameters for GomokuMove {
     fn turn_change(&self) -> TurnChange {
         TurnChange::SwitchPlayer
     }
 }
 
 impl Game for BoardState {
-    type Move = TicTacToeMove;
+    type Move = GomokuMove;
 
     fn get_state(&self) -> TerminationState<Self::Move> {
         match self.is_win() {
@@ -135,7 +135,7 @@ impl Game for BoardState {
         let moves = (0..N)
             .flat_map(|i| (0..N).map(move |j| (i, j)))
             .filter(|&crd| self[crd] == CellState::Empty)
-            .map(|(i, j)| TicTacToeMove::from_xy(i, j))
+            .map(|(i, j)| GomokuMove::from_xy(i, j))
             .collect::<Vec<_>>();
 
         if moves.is_empty() {
@@ -176,15 +176,15 @@ mod tests {
     extern crate test;
 
     use crate::{
-        alpha_zero::{Game, TerminationState},
-        tictactoe::{CellState, TicTacToeMove},
+        engine::{Game, TerminationState},
+        gomoku::{CellState, GomokuMove},
     };
 
     use super::BoardState;
     use test::Bencher;
 
     #[test]
-    fn tic_tac_toe_win() {
+    fn gomoku_win() {
         struct BoardWrapper(BoardState, usize, usize);
 
         impl BoardWrapper {
@@ -251,7 +251,7 @@ mod tests {
     }
 
     #[test]
-    fn tic_tac_toe_draw() {
+    fn gomoku_draw() {
         let mut board = BoardState::new();
         for i in 0..19 {
             for j in 0..19 {
@@ -272,7 +272,7 @@ mod tests {
         let mut board = BoardState::new();
 
         b.iter(|| {
-            let cell = TicTacToeMove::from_xy(0, 0);
+            let cell = GomokuMove::from_xy(0, 0);
             for _ in 0..65536 {
                 board = core::hint::black_box(board.make_move(&cell));
             }

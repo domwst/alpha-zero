@@ -6,11 +6,11 @@ use std::{
 };
 
 use alz::{
-    alpha_zero::{
+    engine::{
         Agent, ExecutorScope, MctsAgent, MoveDecision, NetworkPositionEvaluator, PolicyAgent,
         RootNoise, Seat, Shared, Turn, Versus, run_match,
     },
-    tictactoe::{BoardState, CellState, TicTacToeCodec, TicTacToeMove, TicTacToeResNet},
+    gomoku::{BoardState, CellState, GomokuCodec, GomokuMove, GomokuResNet},
 };
 use anyhow::{Result, ensure};
 use rand::{SeedableRng, rngs::SmallRng};
@@ -45,7 +45,7 @@ impl Agent<BoardState> for HumanAgent {
                     .map_err(|_| anyhow::anyhow!("expected a row and column"))?;
                 ensure!(row > 0 && column > 0, "row and column are one-based");
 
-                let selected = TicTacToeMove::from_xy(row - 1, column - 1);
+                let selected = GomokuMove::from_xy(row - 1, column - 1);
                 let move_index = legal_moves
                     .iter()
                     .position(|&candidate| candidate == selected)
@@ -77,7 +77,7 @@ pub async fn run_human(args: HumanArgs) -> Result<()> {
         Duration::from_millis(1),
         (Kind::Float, var_store.device()),
     );
-    let evaluator = NetworkPositionEvaluator::<TicTacToeResNet, TicTacToeCodec>::new(
+    let evaluator = NetworkPositionEvaluator::<GomokuResNet, GomokuCodec>::new(
         executor.evaluator_handle(),
     );
     let start = BoardState::new();
@@ -129,7 +129,7 @@ pub async fn run_policy(args: PolicyArgs) -> Result<()> {
         Duration::from_millis(1),
         (Kind::Float, var_store.device()),
     );
-    let evaluator = NetworkPositionEvaluator::<TicTacToeResNet, TicTacToeCodec>::new(
+    let evaluator = NetworkPositionEvaluator::<GomokuResNet, GomokuCodec>::new(
         executor.evaluator_handle(),
     );
     let agent = PolicyAgent::<BoardState, _, _, _>::new(

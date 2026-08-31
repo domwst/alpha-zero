@@ -46,8 +46,8 @@ where
 #[cfg(test)]
 mod tests {
     use crate::{
-        alpha_zero::{Game, MatchPly, MoveDecision, Seat, TrainingSample, TurnChange},
-        tictactoe::{BoardState, TicTacToeCodec, TicTacToeMove},
+        engine::{Game, MatchPly, MoveDecision, Seat, TrainingSample, TurnChange},
+        gomoku::{BoardState, GomokuCodec, GomokuMove},
     };
 
     use super::{MatchRecord, extract_training_game};
@@ -55,7 +55,7 @@ mod tests {
     #[test]
     fn extraction_expands_policy_and_uses_actor_perspective() {
         let state = BoardState::new();
-        let action = TicTacToeMove::from_xy(0, 0);
+        let action = GomokuMove::from_xy(0, 0);
         let mut legal_policy = vec![0.0; BoardState::N * BoardState::N];
         legal_policy[0] = 1.0;
         let terminal_state = state.make_move(&action);
@@ -76,7 +76,7 @@ mod tests {
             terminal_value: -1.0,
         };
 
-        let samples = extract_training_game::<_, TicTacToeCodec>(record).unwrap();
+        let samples = extract_training_game::<_, GomokuCodec>(record).unwrap();
         let [TrainingSample { policy, value, .. }] = samples.as_slice() else {
             panic!("expected one training sample");
         };
