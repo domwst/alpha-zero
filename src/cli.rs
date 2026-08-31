@@ -295,18 +295,34 @@ pub struct PolicyArgs {
     pub temperature: f32,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Serialize)]
 pub struct BattleArgs {
-    /// Snapshot or run directory for the first seat.
+    /// Snapshot or run directory for the first checkpoint identity.
     #[arg(long)]
     pub first_checkpoint_dir: PathBuf,
 
-    /// Snapshot or run directory for the second seat.
+    /// Snapshot or run directory for the second checkpoint identity.
     #[arg(long)]
     pub second_checkpoint_dir: PathBuf,
 
     #[command(flatten)]
     pub device: DeviceArgs,
+
+    /// Number of games. Checkpoint seat assignments alternate between games.
+    #[arg(long, default_value_t = 20)]
+    pub games: usize,
+
+    /// Maximum number of games evaluated concurrently.
+    #[arg(long, default_value_t = 16)]
+    pub games_parallelism: usize,
+
+    /// Maximum inference batch size for each checkpoint.
+    #[arg(long, default_value_t = 16)]
+    pub inference_batch_size: usize,
+
+    /// Maximum wait after the first request before dispatching a partial batch.
+    #[arg(long, default_value_t = 1_000)]
+    pub batch_timeout_us: u64,
 
     #[arg(long, default_value_t = 2048)]
     pub simulations: usize,
@@ -314,9 +330,33 @@ pub struct BattleArgs {
     #[arg(long, default_value_t = 1.0)]
     pub c_puct: f32,
 
-    /// Move-selection temperature. Zero selects the most visited move.
+    /// Default move-selection temperature for both checkpoints.
     #[arg(long, default_value_t = 0.0)]
     pub temperature: f32,
+
+    /// Override move-selection temperature for the first checkpoint.
+    #[arg(long)]
+    pub first_temperature: Option<f32>,
+
+    /// Override move-selection temperature for the second checkpoint.
+    #[arg(long)]
+    pub second_temperature: Option<f32>,
+
+    /// Base seed used to derive independent deterministic streams for every game and model.
+    #[arg(long, default_value_t = 0)]
+    pub seed: u64,
+
+    /// Print progress at this interval while games are running. Zero disables heartbeats.
+    #[arg(long, default_value_t = 60)]
+    pub heartbeat_seconds: u64,
+
+    /// Suppress per-move logs. Per-game summaries are always printed.
+    #[arg(long)]
+    pub no_move_logs: bool,
+
+    /// Optional JSON path for the complete aggregate report and game records.
+    #[arg(long)]
+    pub output: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]

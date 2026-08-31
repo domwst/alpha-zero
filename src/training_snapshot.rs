@@ -70,6 +70,16 @@ pub struct MigrationSummary {
     pub migrated: usize,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct SnapshotDescriptor {
+    pub path: PathBuf,
+    pub format_version: u32,
+    pub epoch: usize,
+    pub model: ModelSpec,
+    pub model_sha256: String,
+    pub tensor_schema_sha256: String,
+}
+
 #[derive(Clone, Debug)]
 pub struct TrainingSnapshot {
     path: PathBuf,
@@ -83,6 +93,17 @@ impl TrainingSnapshot {
 
     pub fn model_spec(&self) -> &ModelSpec {
         &self.metadata.model
+    }
+
+    pub fn descriptor(&self) -> SnapshotDescriptor {
+        SnapshotDescriptor {
+            path: self.path.clone(),
+            format_version: self.metadata.format_version,
+            epoch: self.metadata.epoch,
+            model: self.metadata.model.clone(),
+            model_sha256: self.metadata.model_sha256.clone(),
+            tensor_schema_sha256: self.metadata.tensor_schema_sha256.clone(),
+        }
     }
 
     pub fn load_model(&self, var_store: &mut VarStore) -> Result<()> {
