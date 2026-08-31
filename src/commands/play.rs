@@ -10,7 +10,7 @@ use alz::{
         Agent, ExecutorScope, MctsAgent, MoveDecision, NetworkPositionEvaluator, PolicyAgent,
         RootNoise, Seat, Shared, Turn, Versus, run_match,
     },
-    gomoku::{BoardState, CellState, GomokuCodec, GomokuMove, GomokuResNet},
+    gomoku::{BoardState, CellState, GomokuCodec, GomokuModel, GomokuMove},
 };
 use anyhow::{Result, ensure};
 use rand::{SeedableRng, rngs::SmallRng};
@@ -69,7 +69,8 @@ pub async fn run_human(args: HumanArgs) -> Result<()> {
     validate_temperature(args.temperature)?;
 
     let device = resolve_device(&args.model.device)?;
-    let (var_store, network, _) = load_network(&args.model.checkpoint_dir, device)?;
+    let (var_store, network, _) =
+        load_network(&args.model.checkpoint_dir, args.model.architecture, device)?;
     let executor = ExecutorScope::<(), _>::new(
         network,
         1,
@@ -77,9 +78,8 @@ pub async fn run_human(args: HumanArgs) -> Result<()> {
         Duration::from_millis(1),
         (Kind::Float, var_store.device()),
     );
-    let evaluator = NetworkPositionEvaluator::<GomokuResNet, GomokuCodec>::new(
-        executor.evaluator_handle(),
-    );
+    let evaluator =
+        NetworkPositionEvaluator::<GomokuModel, GomokuCodec>::new(executor.evaluator_handle());
     let start = BoardState::new();
     let network_agent = MctsAgent::new(
         start.clone(),
@@ -121,7 +121,8 @@ pub async fn run_policy(args: PolicyArgs) -> Result<()> {
     validate_temperature(args.temperature)?;
 
     let device = resolve_device(&args.model.device)?;
-    let (var_store, network, _) = load_network(&args.model.checkpoint_dir, device)?;
+    let (var_store, network, _) =
+        load_network(&args.model.checkpoint_dir, args.model.architecture, device)?;
     let executor = ExecutorScope::<(), _>::new(
         network,
         1,
@@ -129,9 +130,8 @@ pub async fn run_policy(args: PolicyArgs) -> Result<()> {
         Duration::from_millis(1),
         (Kind::Float, var_store.device()),
     );
-    let evaluator = NetworkPositionEvaluator::<GomokuResNet, GomokuCodec>::new(
-        executor.evaluator_handle(),
-    );
+    let evaluator =
+        NetworkPositionEvaluator::<GomokuModel, GomokuCodec>::new(executor.evaluator_handle());
     let agent = PolicyAgent::<BoardState, _, _, _>::new(
         evaluator,
         SmallRng::from_rng(&mut rand::rng()),

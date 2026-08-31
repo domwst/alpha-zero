@@ -11,7 +11,7 @@ use alz::{
         Seat, TrainingCodec, extract_training_game, generate_self_played_game,
         policy_log_probabilities,
     },
-    gomoku::{BoardState, GomokuCodec, GomokuResNet, generate_game_image},
+    gomoku::{BoardState, GomokuCodec, GomokuModel, ModelSpec, generate_game_image},
 };
 use anyhow::{Context, Result, ensure};
 use rand::{
@@ -33,11 +33,11 @@ use crate::{
     },
 };
 
-use super::common::resolve_device;
+use super::common::{resolve_device, validate_requested_architecture};
 
 const DEFAULT_LEARNING_RATE: f64 = 1e-3;
 const DEFAULT_WEIGHT_DECAY: f64 = 1e-4;
-const METRICS_SCHEMA_VERSION: u32 = 3;
+const METRICS_SCHEMA_VERSION: u32 = 4;
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct SelfPlaySettings {
@@ -75,6 +75,7 @@ struct TrainingStats {
 struct EpochStats<'a> {
     schema_version: u32,
     epoch: usize,
+    model: &'a ModelSpec,
     config: &'a TrainArgs,
     games: usize,
     total_score: f32,
@@ -116,12 +117,22 @@ pub async fn run(args: TrainArgs) -> Result<()> {
         .with_context(|| format!("creating {}", args.games_dir.display()))?;
     fs::create_dir_all(&args.stats_dir)
         .with_context(|| format!("creating {}", args.stats_dir.display()))?;
-    write_invocation_config(&args.stats_dir, &args)?;
+    let snapshot = find_latest_snapshot(&args.model.checkpoint_dir)?;
+    let model_spec = if let Some(snapshot) = &snapshot {
+        validate_requested_architecture(args.model.architecture, snapshot.model_spec())?;
+        snapshot.model_spec().clone()
+    } else {
+        args.model
+            .architecture
+            .map(ModelSpec::from)
+            .unwrap_or_default()
+    };
+    write_invocation_config(&args.stats_dir, &args, &model_spec)?;
 
     tch::manual_seed((args.seed & i64::MAX as u64) as i64);
     let device = resolve_device(&args.model.device)?;
     let mut var_store = nn::VarStore::new(device);
-    let mut network = GomokuResNet::new(var_store.root());
+    let mut network = GomokuModel::new(var_store.root(), &model_spec);
     let learning_rate = args.learning_rate.unwrap_or(DEFAULT_LEARNING_RATE);
     let weight_decay = args.weight_decay.unwrap_or(DEFAULT_WEIGHT_DECAY);
     let mut optimizer = nn::Adam::default()
@@ -130,7 +141,7 @@ pub async fn run(args: TrainArgs) -> Result<()> {
 
     let mut replay = ReplayBuffer::new();
     let mut start_epoch = 0;
-    if let Some(snapshot) = find_latest_snapshot(&args.model.checkpoint_dir)? {
+    if let Some(snapshot) = snapshot {
         let epoch = snapshot.epoch();
         tracing::info!(
             snapshot_epoch = epoch,
@@ -249,6 +260,7 @@ pub async fn run(args: TrainArgs) -> Result<()> {
         save_training_snapshot(
             &args.model.checkpoint_dir,
             epoch,
+            &model_spec,
             &var_store,
             &optimizer,
             &replay,
@@ -264,6 +276,7 @@ pub async fn run(args: TrainArgs) -> Result<()> {
         let stats = EpochStats {
             schema_version: METRICS_SCHEMA_VERSION,
             epoch,
+            model: &model_spec,
             config: &args,
             games: games_in_epoch,
             total_score,
@@ -316,10 +329,10 @@ pub async fn run(args: TrainArgs) -> Result<()> {
 }
 
 pub(super) async fn collect_epoch_games(
-    network: GomokuResNet,
+    network: GomokuModel,
     settings: SelfPlaySettings,
     device: tch::Device,
-) -> Result<(GomokuResNet, EpochGames)> {
+) -> Result<(GomokuModel, EpochGames)> {
     ensure!(settings.games > 0, "games must be greater than zero");
     ensure!(
         settings.simulations > 0,
@@ -348,8 +361,7 @@ pub(super) async fn collect_epoch_games(
         let c_puct = settings.c_puct;
         let game_seed = derive_seed(settings.seed, game_index as u64);
         std::mem::drop(executor.spawn(move |handle| async move {
-            let evaluator =
-                NetworkPositionEvaluator::<GomokuResNet, GomokuCodec>::new(handle);
+            let evaluator = NetworkPositionEvaluator::<GomokuModel, GomokuCodec>::new(handle);
             generate_self_played_game(
                 BoardState::new(),
                 simulations,
@@ -440,7 +452,7 @@ pub(super) async fn collect_epoch_games(
 }
 
 fn train_epoch(
-    network: &GomokuResNet,
+    network: &GomokuModel,
     optimizer: &mut Optimizer,
     replay: &ReplayBuffer,
     batch_size: usize,
@@ -513,7 +525,11 @@ fn render_sample_games(games_dir: &Path, epoch: usize, games: Vec<ReplayGame>) -
     Ok(())
 }
 
-fn write_invocation_config(stats_dir: &Path, args: &TrainArgs) -> Result<()> {
+fn write_invocation_config(
+    stats_dir: &Path,
+    args: &TrainArgs,
+    model_spec: &ModelSpec,
+) -> Result<()> {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -524,7 +540,22 @@ fn write_invocation_config(stats_dir: &Path, args: &TrainArgs) -> Result<()> {
     ));
     let mut file = fs::File::create(&path)
         .with_context(|| format!("creating invocation config {}", path.display()))?;
-    serde_json::to_writer_pretty(&mut file, args)?;
+
+    #[derive(Serialize)]
+    struct InvocationConfig<'a> {
+        schema_version: u32,
+        model: &'a ModelSpec,
+        config: &'a TrainArgs,
+    }
+
+    serde_json::to_writer_pretty(
+        &mut file,
+        &InvocationConfig {
+            schema_version: METRICS_SCHEMA_VERSION,
+            model: model_spec,
+            config: args,
+        },
+    )?;
     writeln!(file)?;
     Ok(())
 }

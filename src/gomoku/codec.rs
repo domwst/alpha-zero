@@ -8,7 +8,11 @@ use crate::engine::{Game, PositionCodec, TerminationState, TrainingCodec};
 
 use super::{BoardState, CellState, GomokuMove};
 
+pub const GAME_SCHEMA: &str = "gomoku-19-five-v1";
+pub const POSITION_SCHEMA: &str = "gomoku-current-player-two-plane-v1";
 pub const ACTION_SCHEMA: &str = "board19-row-major-v1";
+pub const VALUE_SCHEMA: &str = "gomoku-current-player-outcome-v1";
+pub const REPLAY_SCHEMA: &str = "gomoku-training-sample-bincode-v1";
 
 pub struct GomokuCodec;
 

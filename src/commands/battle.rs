@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use alz::{
     engine::{ExecutorScope, NetworkPositionEvaluator, Seat, do_battle},
-    gomoku::{BoardState, GomokuCodec, GomokuResNet},
+    gomoku::{BoardState, GomokuCodec, GomokuModel},
 };
 use anyhow::{Result, ensure};
 use tch::Kind;
@@ -26,10 +26,10 @@ pub async fn run(args: BattleArgs) -> Result<()> {
     );
 
     let device = resolve_device(&args.device)?;
-    let (first_var_store, first_network, first_epoch) =
-        load_network(&args.first_checkpoint_dir, device)?;
-    let (second_var_store, second_network, second_epoch) =
-        load_network(&args.second_checkpoint_dir, device)?;
+    let (first_var_store, first_network, first_snapshot) =
+        load_network(&args.first_checkpoint_dir, None, device)?;
+    let (second_var_store, second_network, second_snapshot) =
+        load_network(&args.second_checkpoint_dir, None, device)?;
 
     let first_executor = ExecutorScope::<(), _>::new(
         first_network,
@@ -45,10 +45,10 @@ pub async fn run(args: BattleArgs) -> Result<()> {
         Duration::from_millis(1),
         (Kind::Float, second_var_store.device()),
     );
-    let first_evaluator = NetworkPositionEvaluator::<GomokuResNet, GomokuCodec>::new(
+    let first_evaluator = NetworkPositionEvaluator::<GomokuModel, GomokuCodec>::new(
         first_executor.evaluator_handle(),
     );
-    let second_evaluator = NetworkPositionEvaluator::<GomokuResNet, GomokuCodec>::new(
+    let second_evaluator = NetworkPositionEvaluator::<GomokuModel, GomokuCodec>::new(
         second_executor.evaluator_handle(),
     );
 
@@ -65,7 +65,11 @@ pub async fn run(args: BattleArgs) -> Result<()> {
         tokio::join!(first_executor.join(), second_executor.join());
     let record = result?;
 
-    tracing::info!(first_epoch, second_epoch, "battle snapshots loaded");
+    tracing::info!(
+        first_epoch = first_snapshot.epoch(),
+        second_epoch = second_snapshot.epoch(),
+        "battle snapshots loaded"
+    );
     for (ply, turn) in record.plies.iter().enumerate() {
         let (row, column) = turn.action.to_xy();
         tracing::info!(

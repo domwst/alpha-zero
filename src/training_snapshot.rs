@@ -2,20 +2,27 @@ use std::{
     cmp::Reverse,
     collections::VecDeque,
     fs::{self, File},
-    io::{BufReader, BufWriter, Write},
+    io::{BufReader, BufWriter, Read, Write},
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use alz::{
     engine::TrainingSample,
-    gomoku::{ACTION_SCHEMA, BoardState, GomokuPolicy},
+    gomoku::{
+        ACTION_SCHEMA, BoardState, GAME_SCHEMA, GomokuPolicy, ModelSpec, POSITION_SCHEMA,
+        REPLAY_SCHEMA, VALUE_SCHEMA,
+    },
 };
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
-use tch::nn::{Optimizer, VarStore};
+use sha2::{Digest, Sha256};
+use tch::{
+    Tensor,
+    nn::{Optimizer, VarStore},
+};
 
-const FORMAT_VERSION: u32 = 1;
+const FORMAT_VERSION: u32 = 2;
 const MODEL_FILE: &str = "model.safetensors";
 const OPTIMIZER_FILE: &str = "optimizer.ot";
 const REPLAY_FILE: &str = "replay.bin.zst";
@@ -29,7 +36,15 @@ pub type ReplayBuffer = VecDeque<ReplayGame>;
 #[serde(deny_unknown_fields)]
 struct SnapshotMetadata {
     format_version: u32,
+    model: ModelSpec,
+    model_sha256: String,
+    tensor_schema_sha256: String,
+    game_schema: String,
+    position_schema: String,
     action_schema: String,
+    value_schema: String,
+    replay_schema: String,
+    optimizer_schema: String,
     epoch: usize,
     replay_games: usize,
     replay_positions: usize,
@@ -46,12 +61,95 @@ impl TrainingSnapshot {
         self.metadata.epoch
     }
 
+    pub fn model_spec(&self) -> &ModelSpec {
+        &self.metadata.model
+    }
+
     pub fn load_model(&self, var_store: &mut VarStore) -> Result<()> {
         let path = self.path.join(MODEL_FILE);
+        let stored_model_sha256 = file_sha256(&path)?;
+        ensure!(
+            stored_model_sha256 == self.metadata.model_sha256,
+            "model digest {} does not match metadata digest {} in {}",
+            stored_model_sha256,
+            self.metadata.model_sha256,
+            path.display()
+        );
+        let constructed_schema = var_store_tensor_schema_sha256(var_store);
+        ensure!(
+            constructed_schema == self.metadata.tensor_schema_sha256,
+            "constructed {} model tensor schema {} does not match checkpoint schema {}",
+            self.metadata.model.architecture_id(),
+            constructed_schema,
+            self.metadata.tensor_schema_sha256
+        );
+        let stored_schema = model_file_tensor_schema_sha256(&path)?;
+        ensure!(
+            stored_schema == self.metadata.tensor_schema_sha256,
+            "model tensor schema {} does not match metadata schema {} in {}",
+            stored_schema,
+            self.metadata.tensor_schema_sha256,
+            path.display()
+        );
         var_store
             .load(&path)
             .with_context(|| format!("loading {}", path.display()))
     }
+}
+
+fn tensor_schema_sha256<'a>(tensors: impl IntoIterator<Item = (&'a str, &'a Tensor)>) -> String {
+    let mut tensors = tensors.into_iter().collect::<Vec<_>>();
+    tensors.sort_unstable_by_key(|(name, _)| *name);
+
+    let mut hash = Sha256::new();
+    for (name, tensor) in tensors {
+        hash.update((name.len() as u64).to_le_bytes());
+        hash.update(name.as_bytes());
+        let dimensions = tensor.size();
+        hash.update((dimensions.len() as u64).to_le_bytes());
+        for dimension in dimensions {
+            hash.update(dimension.to_le_bytes());
+        }
+        let kind = format!("{:?}", tensor.kind());
+        hash.update((kind.len() as u64).to_le_bytes());
+        hash.update(kind.as_bytes());
+    }
+    format!("{:x}", hash.finalize())
+}
+
+fn var_store_tensor_schema_sha256(var_store: &VarStore) -> String {
+    let variables = var_store.variables();
+    tensor_schema_sha256(
+        variables
+            .iter()
+            .map(|(name, tensor)| (name.as_str(), tensor)),
+    )
+}
+
+fn model_file_tensor_schema_sha256(path: &Path) -> Result<String> {
+    let tensors = Tensor::read_safetensors(path)
+        .with_context(|| format!("reading tensor schema from {}", path.display()))?;
+    Ok(tensor_schema_sha256(
+        tensors.iter().map(|(name, tensor)| (name.as_str(), tensor)),
+    ))
+}
+
+fn file_sha256(path: &Path) -> Result<String> {
+    let mut reader = BufReader::new(
+        File::open(path).with_context(|| format!("opening {} for hashing", path.display()))?,
+    );
+    let mut hash = Sha256::new();
+    let mut buffer = [0; 64 * 1024];
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .with_context(|| format!("hashing {}", path.display()))?;
+        if read == 0 {
+            break;
+        }
+        hash.update(&buffer[..read]);
+    }
+    Ok(format!("{:x}", hash.finalize()))
 }
 
 fn snapshot_dir(root: &Path, epoch: usize) -> PathBuf {
@@ -59,10 +157,20 @@ fn snapshot_dir(root: &Path, epoch: usize) -> PathBuf {
 }
 
 fn read_metadata(path: &Path) -> Result<SnapshotMetadata> {
-    serde_json::from_reader(BufReader::new(
+    let value: serde_json::Value = serde_json::from_reader(BufReader::new(
         File::open(path).with_context(|| format!("opening {}", path.display()))?,
     ))
-    .with_context(|| format!("reading {}", path.display()))
+    .with_context(|| format!("reading {}", path.display()))?;
+    let version = value
+        .get("format_version")
+        .and_then(serde_json::Value::as_u64)
+        .with_context(|| format!("missing format_version in {}", path.display()))?;
+    ensure!(
+        version == FORMAT_VERSION as u64,
+        "unsupported snapshot metadata version {version} in {}",
+        path.display()
+    );
+    serde_json::from_value(value).with_context(|| format!("reading {}", path.display()))
 }
 
 fn is_complete_snapshot(path: &Path) -> bool {
@@ -71,7 +179,21 @@ fn is_complete_snapshot(path: &Path) -> bool {
         .all(|name| path.join(name).is_file())
 }
 
+fn is_model_checkpoint(path: &Path) -> bool {
+    [MODEL_FILE, METADATA_FILE]
+        .into_iter()
+        .all(|name| path.join(name).is_file())
+}
+
 pub fn find_latest_snapshot(root: &Path) -> Result<Option<TrainingSnapshot>> {
+    find_latest(root, is_complete_snapshot)
+}
+
+pub fn find_latest_model_checkpoint(root: &Path) -> Result<Option<TrainingSnapshot>> {
+    find_latest(root, is_model_checkpoint)
+}
+
+fn find_latest(root: &Path, is_usable: impl Fn(&Path) -> bool) -> Result<Option<TrainingSnapshot>> {
     if !root.exists() {
         return Ok(None);
     }
@@ -91,22 +213,40 @@ pub fn find_latest_snapshot(root: &Path) -> Result<Option<TrainingSnapshot>> {
         };
 
         let path = entry.path();
-        if !is_complete_snapshot(&path) {
+        if !is_usable(&path) {
             continue;
         }
         candidates.push((epoch, path));
     }
 
     candidates.sort_unstable_by_key(|(epoch, _)| Reverse(*epoch));
-    if let Some((epoch, path)) = candidates.into_iter().next() {
-        return read_snapshot(path, epoch).map(Some);
+    let mut candidates = candidates.into_iter();
+    let Some((latest_epoch, latest_path)) = candidates.next() else {
+        return Ok(None);
+    };
+    let latest = read_snapshot(latest_path, latest_epoch)?;
+
+    for (epoch, path) in candidates {
+        let snapshot = read_snapshot(path, epoch)?;
+        ensure!(
+            snapshot.metadata.model == latest.metadata.model
+                && snapshot.metadata.tensor_schema_sha256 == latest.metadata.tensor_schema_sha256,
+            "checkpoint directory {} mixes model schemas: epoch {} is {} ({}) while epoch {} is {} ({})",
+            root.display(),
+            snapshot.epoch(),
+            snapshot.model_spec().architecture_id(),
+            snapshot.metadata.tensor_schema_sha256,
+            latest.epoch(),
+            latest.model_spec().architecture_id(),
+            latest.metadata.tensor_schema_sha256,
+        );
     }
-    Ok(None)
+    Ok(Some(latest))
 }
 
-pub fn resolve_snapshot(path: &Path) -> Result<Option<TrainingSnapshot>> {
-    if !is_complete_snapshot(path) {
-        return find_latest_snapshot(path);
+pub fn resolve_model_checkpoint(path: &Path) -> Result<Option<TrainingSnapshot>> {
+    if !is_model_checkpoint(path) {
+        return find_latest_model_checkpoint(path);
     }
 
     let epoch = path
@@ -126,10 +266,45 @@ fn read_snapshot(path: PathBuf, epoch: usize) -> Result<TrainingSnapshot> {
             path.display()
         );
     }
+    if metadata.game_schema != GAME_SCHEMA {
+        bail!(
+            "unsupported game schema {} in {}",
+            metadata.game_schema,
+            path.display()
+        );
+    }
+    if metadata.position_schema != POSITION_SCHEMA {
+        bail!(
+            "unsupported position schema {} in {}",
+            metadata.position_schema,
+            path.display()
+        );
+    }
     if metadata.action_schema != ACTION_SCHEMA {
         bail!(
             "unsupported action schema {} in {}",
             metadata.action_schema,
+            path.display()
+        );
+    }
+    if metadata.value_schema != VALUE_SCHEMA {
+        bail!(
+            "unsupported value schema {} in {}",
+            metadata.value_schema,
+            path.display()
+        );
+    }
+    if metadata.replay_schema != REPLAY_SCHEMA {
+        bail!(
+            "unsupported replay schema {} in {}",
+            metadata.replay_schema,
+            path.display()
+        );
+    }
+    if metadata.optimizer_schema != "adam-v1" {
+        bail!(
+            "unsupported optimizer schema {} in {}",
+            metadata.optimizer_schema,
             path.display()
         );
     }
@@ -212,6 +387,7 @@ fn sync_directory(_path: &Path) -> Result<()> {
 pub fn save_training_snapshot(
     root: &Path,
     epoch: usize,
+    model_spec: &ModelSpec,
     var_store: &VarStore,
     optimizer: &Optimizer,
     replay: &ReplayBuffer,
@@ -247,7 +423,15 @@ pub fn save_training_snapshot(
         save_replay(&pending_path.join(REPLAY_FILE), replay)?;
         let metadata = SnapshotMetadata {
             format_version: FORMAT_VERSION,
+            model: model_spec.clone(),
+            model_sha256: file_sha256(&model_path)?,
+            tensor_schema_sha256: var_store_tensor_schema_sha256(var_store),
+            game_schema: GAME_SCHEMA.to_owned(),
+            position_schema: POSITION_SCHEMA.to_owned(),
             action_schema: ACTION_SCHEMA.to_owned(),
+            value_schema: VALUE_SCHEMA.to_owned(),
+            replay_schema: REPLAY_SCHEMA.to_owned(),
+            optimizer_schema: "adam-v1".to_owned(),
             epoch,
             replay_games: replay.len(),
             replay_positions: replay.iter().map(Vec::len).sum(),
@@ -306,11 +490,14 @@ mod tests {
     };
 
     use tch::{
-        Device, Kind, Tensor,
-        nn::{self, Module, OptimizerConfig},
+        Device, Tensor,
+        nn::{self, OptimizerConfig},
     };
 
-    use alz::gomoku::GomokuMove;
+    use alz::{
+        engine::AlphaZeroNet,
+        gomoku::{GomokuModel, GomokuMove},
+    };
 
     use super::*;
 
@@ -329,6 +516,15 @@ mod tests {
     }
 
     fn write_fake_snapshot(root: &Path, epoch: usize, complete: bool) {
+        write_fake_snapshot_with_schema(root, epoch, complete, "fake-schema");
+    }
+
+    fn write_fake_snapshot_with_schema(
+        root: &Path,
+        epoch: usize,
+        complete: bool,
+        tensor_schema: &str,
+    ) {
         let path = snapshot_dir(root, epoch);
         fs::create_dir_all(&path).unwrap();
         for name in [MODEL_FILE, REPLAY_FILE, METADATA_FILE] {
@@ -341,7 +537,15 @@ mod tests {
             &path.join(METADATA_FILE),
             &SnapshotMetadata {
                 format_version: FORMAT_VERSION,
+                model: ModelSpec::LegacyResNetV1,
+                model_sha256: "fake-model-digest".to_owned(),
+                tensor_schema_sha256: tensor_schema.to_owned(),
+                game_schema: GAME_SCHEMA.to_owned(),
+                position_schema: POSITION_SCHEMA.to_owned(),
                 action_schema: ACTION_SCHEMA.to_owned(),
+                value_schema: VALUE_SCHEMA.to_owned(),
+                replay_schema: REPLAY_SCHEMA.to_owned(),
+                optimizer_schema: "adam-v1".to_owned(),
                 epoch,
                 replay_games: 0,
                 replay_positions: 0,
@@ -371,19 +575,34 @@ mod tests {
         write_fake_snapshot(&root, 1, true);
         write_fake_snapshot(&root, 7, true);
 
-        let latest = resolve_snapshot(&root).unwrap().unwrap();
+        let latest = resolve_model_checkpoint(&root).unwrap().unwrap();
         assert_eq!(latest.epoch(), 7);
-        let snapshot = resolve_snapshot(&snapshot_dir(&root, 1)).unwrap().unwrap();
+        let snapshot = resolve_model_checkpoint(&snapshot_dir(&root, 1))
+            .unwrap()
+            .unwrap();
         assert_eq!(snapshot.epoch(), 1);
 
         fs::remove_dir_all(root).unwrap();
     }
 
-    fn training_step(model: &nn::Linear, optimizer: &mut nn::Optimizer, device: Device) {
-        let input = Tensor::from_slice(&[1.0f32, -2.0])
-            .view([1, 2])
-            .to_device(device);
-        let loss = model.forward(&input).square().mean(Kind::Float);
+    #[test]
+    fn run_directory_rejects_mixed_tensor_schemas() {
+        let root = temp_dir();
+        fs::create_dir(&root).unwrap();
+        write_fake_snapshot_with_schema(&root, 1, true, "first-schema");
+        write_fake_snapshot_with_schema(&root, 2, true, "second-schema");
+
+        let error = find_latest_snapshot(&root).unwrap_err();
+        assert!(error.to_string().contains("mixes model schemas"));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn training_step(model: &GomokuModel, optimizer: &mut nn::Optimizer, device: Device) {
+        let input = Tensor::zeros([1, 2, 19, 19], (tch::Kind::Float, device));
+        let output = model.forward_t(&input, true);
+        let loss = output.values.square().mean(tch::Kind::Float)
+            + output.policy_logits.square().mean(tch::Kind::Float);
         optimizer.backward_step(&loss);
     }
 
@@ -397,10 +616,18 @@ mod tests {
         }]]);
 
         let vs = VarStore::new(device);
-        let model = nn::linear(vs.root(), 2, 1, Default::default());
+        let model = GomokuModel::new(vs.root(), &ModelSpec::LegacyResNetV1);
         let mut optimizer = nn::Adam::default().build(&vs, 1e-3).unwrap();
         training_step(&model, &mut optimizer, device);
-        save_training_snapshot(&root, 3, &vs, &optimizer, &replay).unwrap();
+        save_training_snapshot(
+            &root,
+            3,
+            &ModelSpec::LegacyResNetV1,
+            &vs,
+            &optimizer,
+            &replay,
+        )
+        .unwrap();
 
         training_step(&model, &mut optimizer, device);
         let expected = vs
@@ -410,7 +637,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         let mut restored_vs = VarStore::new(device);
-        let restored_model = nn::linear(restored_vs.root(), 2, 1, Default::default());
+        let restored_model = GomokuModel::new(restored_vs.root(), &ModelSpec::LegacyResNetV1);
         let mut restored_optimizer = nn::Adam::default().build(&restored_vs, 1e-3).unwrap();
         let snapshot = find_latest_snapshot(&root).unwrap().unwrap();
         let restored_replay =

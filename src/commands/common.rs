@@ -1,13 +1,29 @@
 use std::path::Path;
 
-use alz::gomoku::GomokuResNet;
+use alz::gomoku::{GomokuModel, ModelSpec};
 use anyhow::{Context, Result, ensure};
 use tch::{Cuda, Device, nn};
 
 use crate::{
-    cli::{DeviceArgs, DeviceChoice},
-    training_snapshot::resolve_snapshot,
+    cli::{ArchitectureChoice, DeviceArgs, DeviceChoice},
+    training_snapshot::{TrainingSnapshot, resolve_model_checkpoint},
 };
+
+pub fn validate_requested_architecture(
+    requested: Option<ArchitectureChoice>,
+    actual: &ModelSpec,
+) -> Result<()> {
+    if let Some(requested) = requested {
+        let requested = ModelSpec::from(requested);
+        ensure!(
+            requested == *actual,
+            "requested architecture {} does not match checkpoint architecture {}",
+            requested.architecture_id(),
+            actual.architecture_id()
+        );
+    }
+    Ok(())
+}
 
 pub fn resolve_device(args: &DeviceArgs) -> Result<Device> {
     let device = match args.device {
@@ -35,22 +51,24 @@ pub fn resolve_device(args: &DeviceArgs) -> Result<Device> {
 
 pub fn load_network(
     snapshot_or_run_dir: &Path,
+    requested_architecture: Option<ArchitectureChoice>,
     device: Device,
-) -> Result<(nn::VarStore, GomokuResNet, usize)> {
-    let mut var_store = nn::VarStore::new(device);
-    let network = GomokuResNet::new(var_store.root());
-    let snapshot = resolve_snapshot(snapshot_or_run_dir)?.with_context(|| {
+) -> Result<(nn::VarStore, GomokuModel, TrainingSnapshot)> {
+    let snapshot = resolve_model_checkpoint(snapshot_or_run_dir)?.with_context(|| {
         format!(
-            "no complete training snapshot found in {}",
+            "no model checkpoint found in {}",
             snapshot_or_run_dir.display()
         )
     })?;
-    let epoch = snapshot.epoch();
+    validate_requested_architecture(requested_architecture, snapshot.model_spec())?;
+    let mut var_store = nn::VarStore::new(device);
+    let network = GomokuModel::new(var_store.root(), snapshot.model_spec());
     snapshot.load_model(&mut var_store)?;
     tracing::info!(
-        snapshot_epoch = epoch,
+        snapshot_epoch = snapshot.epoch(),
+        architecture = snapshot.model_spec().architecture_id(),
         path = %snapshot_or_run_dir.display(),
         "loaded snapshot"
     );
-    Ok((var_store, network, epoch))
+    Ok((var_store, network, snapshot))
 }
