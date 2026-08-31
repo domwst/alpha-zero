@@ -89,7 +89,28 @@ fn game_to_nn_input(state: &BoardState) -> Tensor {
     ])
 }
 
-fn estimated_policy(policy: &Tensor, moves: &[TicTacToeMove]) -> Result<Vec<f32>> {
+fn legal_policy_mask(state: &BoardState, moves: &[TicTacToeMove]) -> Result<Tensor> {
+    ensure!(
+        !moves.is_empty(),
+        "cannot encode an empty legal policy mask"
+    );
+    let mut mask = [[false; BoardState::N]; BoardState::N];
+    for r#move in moves {
+        let (row, column) = r#move.to_xy();
+        ensure!(
+            state[(row, column)] == CellState::Empty,
+            "legal policy mask contains an occupied cell"
+        );
+        ensure!(
+            !mask[row][column],
+            "legal policy mask contains a duplicate move"
+        );
+        mask[row][column] = true;
+    }
+    Ok(Tensor::from_slice(mask.as_flattened()).view([BoardState::N as i64, BoardState::N as i64]))
+}
+
+fn decoded_policy(policy: &Tensor, moves: &[TicTacToeMove]) -> Result<Vec<f32>> {
     let policy = <Vec<f32>>::try_from(policy.view([-1]))
         .context("converting canonical network policy to host values")?;
     ensure!(
@@ -112,25 +133,13 @@ fn estimated_policy(policy: &Tensor, moves: &[TicTacToeMove]) -> Result<Vec<f32>
     ensure!(
         result
             .iter()
-            .all(|value| !value.is_nan() && *value != f32::INFINITY),
-        "network returned an invalid policy score"
+            .all(|value| value.is_finite() && (0.0..=1.0).contains(value)),
+        "network returned an invalid policy probability"
     );
-    let max = result.iter().copied().fold(f32::NEG_INFINITY, f32::max);
     ensure!(
-        max.is_finite(),
-        "all legal moves have zero network probability"
+        (result.iter().sum::<f32>() - 1.0).abs() < 1e-4,
+        "network legal policy is not normalized"
     );
-    for value in &mut result {
-        *value = (*value - max).exp();
-    }
-    let sum = result.iter().sum::<f32>();
-    ensure!(
-        sum.is_finite() && sum > 0.0,
-        "legal policy cannot be normalized"
-    );
-    for value in &mut result {
-        *value /= sum;
-    }
 
     Ok(result)
 }
@@ -182,8 +191,12 @@ impl PositionCodec<BoardState> for TicTacToeCodec {
         game_to_nn_input(state)
     }
 
+    fn encode_policy_mask(state: &BoardState, moves: &[TicTacToeMove]) -> Result<Tensor> {
+        legal_policy_mask(state, moves)
+    }
+
     fn decode_policy(policy: &Tensor, moves: &[TicTacToeMove]) -> Result<Vec<f32>> {
-        estimated_policy(policy, moves)
+        decoded_policy(policy, moves)
     }
 }
 
@@ -217,7 +230,7 @@ mod tests {
 
     use crate::tictactoe::{
         BoardState, CellState, TicTacToeMove,
-        codec::{canonical_policy, estimated_policy, game_to_nn_input},
+        codec::{canonical_policy, decoded_policy, game_to_nn_input, legal_policy_mask},
     };
 
     #[test]
@@ -242,17 +255,32 @@ mod tests {
     }
 
     #[test]
-    fn legal_policy_normalization_is_stable() {
-        let policy = Tensor::full([19, 19], -1000.0, (Kind::Float, Device::Cpu));
-        let _ = policy.i((0, 0)).fill_(0.0);
-        let policy = estimated_policy(
+    fn policy_decoder_selects_pre_normalized_legal_probabilities() {
+        let policy = Tensor::zeros([19, 19], (Kind::Float, Device::Cpu));
+        let _ = policy.i((0, 1)).fill_(0.25);
+        let _ = policy.i((0, 2)).fill_(0.75);
+        let policy = decoded_policy(
             &policy,
             &[TicTacToeMove::from_xy(0, 1), TicTacToeMove::from_xy(0, 2)],
         )
         .unwrap();
 
-        assert!((policy[0] - 0.5).abs() < 1e-6);
-        assert!((policy[1] - 0.5).abs() < 1e-6);
+        assert_eq!(policy, [0.25, 0.75]);
+    }
+
+    #[test]
+    fn policy_mask_marks_exact_legal_moves() {
+        let board = BoardState::new().set((0, 0), CellState::X);
+        let moves = [TicTacToeMove::from_xy(0, 1), TicTacToeMove::from_xy(10, 12)];
+
+        let mask = legal_policy_mask(&board, &moves).unwrap();
+
+        assert_eq!(mask.kind(), Kind::Bool);
+        assert_eq!(mask.size(), [19, 19]);
+        assert!(bool::try_from(mask.i((0, 1))).unwrap());
+        assert!(bool::try_from(mask.i((10, 12))).unwrap());
+        assert!(!bool::try_from(mask.i((0, 0))).unwrap());
+        assert_eq!(i64::try_from(mask.sum(Kind::Int64)).unwrap(), 2);
     }
 
     #[test]

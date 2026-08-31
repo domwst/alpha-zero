@@ -5,6 +5,11 @@ use super::Game;
 
 pub trait PositionCodec<TGame: Game> {
     fn encode_position(state: &TGame) -> Tensor;
+
+    /// Encodes a CPU Boolean mask with the same unbatched shape as the policy logits.
+    fn encode_policy_mask(state: &TGame, moves: &[TGame::Move]) -> Result<Tensor>;
+
+    /// Selects normalized policy probabilities in the supplied legal-move order.
     fn decode_policy(policy: &Tensor, moves: &[TGame::Move]) -> Result<Vec<f32>>;
 }
 

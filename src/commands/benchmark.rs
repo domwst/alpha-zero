@@ -1,7 +1,9 @@
 use std::{fs, path::Path, time::Instant};
 
 use alz::{
-    alpha_zero::{AlphaZeroNet, NetworkBatchStats},
+    alpha_zero::{
+        AlphaZeroNet, NetworkBatchStats, masked_policy_probabilities, policy_log_probabilities,
+    },
     tictactoe::TicTacToeResNet,
 };
 use anyhow::{Context, Result, ensure};
@@ -20,7 +22,7 @@ use super::{
     train::{SelfPlaySettings, collect_epoch_games},
 };
 
-const BENCHMARK_SCHEMA_VERSION: u32 = 2;
+const BENCHMARK_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Serialize)]
 struct InferenceResult<'a> {
@@ -68,6 +70,11 @@ struct SelfPlayResult<'a> {
     average_queue_wait_us: f64,
     average_request_latency_us: f64,
     average_service_us: f64,
+    average_policy_mask_construction_us: f64,
+    average_policy_mask_batch_construction_us: f64,
+    average_policy_mask_transfer_submission_us: f64,
+    average_policy_postprocess_submission_us: f64,
+    average_policy_decode_us: f64,
     network: &'a NetworkBatchStats,
 }
 
@@ -90,14 +97,15 @@ fn run_inference(args: InferenceBenchmarkArgs) -> Result<()> {
         [args.batch_size as i64, 2, 19, 19],
         (Kind::Float, Device::Cpu),
     );
+    let policy_mask = Tensor::ones([args.batch_size as i64, 19, 19], (Kind::Bool, Device::Cpu));
 
     let mut checksum = 0.0;
     for _ in 0..args.warmup_iterations {
-        checksum += inference_iteration(&network, &input, device)?;
+        checksum += inference_iteration(&network, &input, &policy_mask, device)?;
     }
     let started = Instant::now();
     for _ in 0..args.iterations {
-        checksum += inference_iteration(&network, &input, device)?;
+        checksum += inference_iteration(&network, &input, &policy_mask, device)?;
     }
     let duration = started.elapsed();
     let examples = args.batch_size * args.iterations;
@@ -118,11 +126,18 @@ fn run_inference(args: InferenceBenchmarkArgs) -> Result<()> {
 fn inference_iteration(
     network: &TicTacToeResNet,
     cpu_input: &Tensor,
+    cpu_policy_mask: &Tensor,
     device: Device,
 ) -> Result<f64> {
     let input = cpu_input.to_device(device);
-    let (values, policies) = tch::no_grad(|| network.forward_t(&input, false));
-    let values = values.to(Device::Cpu);
+    let output = tch::no_grad(|| network.forward_t(&input, false));
+    let policy_mask = if matches!(device, Device::Cuda(_)) {
+        cpu_policy_mask.to_device_(device, Kind::Bool, true, false)
+    } else {
+        cpu_policy_mask.to_device(device)
+    };
+    let policies = masked_policy_probabilities(&output.policy_logits, &policy_mask);
+    let values = output.values.to(Device::Cpu);
     let policies = policies.to(Device::Cpu);
     let checksum = f32::try_from(&values.sum(None)).context("reading inference values")?
         + f32::try_from(&policies.sum(None)).context("reading inference policies")?;
@@ -194,9 +209,11 @@ fn training_iteration(
     let states = cpu_states.to_device(device);
     let policies = cpu_policies.to_device(device);
     let values = cpu_values.to_device(device);
-    let (expected_values, expected_policies) = network.forward_t(&states, true);
-    let value_loss = expected_values.mse_loss(&values, Reduction::Mean);
-    let policy_loss = -(policies * expected_policies).sum(None) / cpu_states.size()[0] as f64;
+    let output = network.forward_t(&states, true);
+    let predicted_policy_log_probabilities = policy_log_probabilities(&output.policy_logits);
+    let value_loss = output.values.mse_loss(&values, Reduction::Mean);
+    let policy_loss =
+        -(policies * predicted_policy_log_probabilities).sum(None) / cpu_states.size()[0] as f64;
     let loss = &value_loss + &policy_loss;
     optimizer.backward_step(&loss);
     Ok(f32::try_from(&loss).context("reading training loss")? as f64)
@@ -230,8 +247,12 @@ async fn run_self_play(args: SelfPlayBenchmarkArgs) -> Result<()> {
             [args.inference_batch_size as i64, 2, 19, 19],
             (Kind::Float, Device::Cpu),
         );
+        let policy_mask = Tensor::ones(
+            [args.inference_batch_size as i64, 19, 19],
+            (Kind::Bool, Device::Cpu),
+        );
         for _ in 0..args.warmup_batches {
-            let _ = inference_iteration(&network, &input, device)?;
+            let _ = inference_iteration(&network, &input, &policy_mask, device)?;
         }
     }
 
@@ -269,6 +290,19 @@ async fn run_self_play(args: SelfPlayBenchmarkArgs) -> Result<()> {
         average_queue_wait_us: games.batch_stats.average_queue_wait_us(),
         average_request_latency_us: games.batch_stats.average_request_latency_us(),
         average_service_us: games.batch_stats.average_service_us(),
+        average_policy_mask_construction_us: games
+            .batch_stats
+            .average_policy_mask_construction_us(),
+        average_policy_mask_batch_construction_us: games
+            .batch_stats
+            .average_policy_mask_batch_construction_us(),
+        average_policy_mask_transfer_submission_us: games
+            .batch_stats
+            .average_policy_mask_transfer_submission_us(),
+        average_policy_postprocess_submission_us: games
+            .batch_stats
+            .average_policy_postprocess_submission_us(),
+        average_policy_decode_us: games.batch_stats.average_policy_decode_us(),
         network: &games.batch_stats,
     };
     emit_result(&result, args.output.as_deref())

@@ -8,7 +8,10 @@ use tch::{
     },
 };
 
-use crate::{alpha_zero::AlphaZeroNet, util::ResBlock};
+use crate::{
+    alpha_zero::{AlphaZeroNet, NetworkOutput},
+    util::ResBlock,
+};
 
 const CHANNELS: i64 = 32;
 
@@ -57,7 +60,6 @@ fn policy_head<'a, P: Borrow<Path<'a>>>(path: P) -> SequentialT {
             19 * 19,
             Default::default(),
         ))
-        .add_fn(|t| t.log_softmax(1, None))
         .add_fn(|t| t.view([t.size()[0], 19, 19]))
 }
 
@@ -99,15 +101,15 @@ impl TicTacToeResNet {
 }
 
 impl AlphaZeroNet for TicTacToeResNet {
-    fn forward_t(&self, xs: &tch::Tensor, train: bool) -> (Tensor, Tensor) {
+    fn forward_t(&self, xs: &tch::Tensor, train: bool) -> NetworkOutput {
         let out = self.conv1.forward_t(xs, train);
         let out = self.bn1.forward_t(&out, train).relu();
         let out = self.blocks.forward_t(&out, train);
 
-        (
-            self.value_head.forward_t(&out, train),
-            self.policy_head.forward_t(&out, train),
-        )
+        NetworkOutput {
+            values: self.value_head.forward_t(&out, train),
+            policy_logits: self.policy_head.forward_t(&out, train),
+        }
     }
 }
 
@@ -125,9 +127,9 @@ mod tests {
         let network = TicTacToeResNet::new(var_store.root());
         let input = Tensor::zeros([2, 2, 19, 19], (Kind::Float, Device::Cpu));
 
-        let (values, policies) = network.forward_t(&input, true);
+        let output = network.forward_t(&input, true);
 
-        assert_eq!(values.size(), [2]);
-        assert_eq!(policies.size(), [2, 19, 19]);
+        assert_eq!(output.values.size(), [2]);
+        assert_eq!(output.policy_logits.size(), [2, 19, 19]);
     }
 }

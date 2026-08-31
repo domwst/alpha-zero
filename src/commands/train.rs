@@ -9,6 +9,7 @@ use alz::{
     alpha_zero::{
         AlphaZeroNet, ExecutorScope, NetworkBatchStats, NetworkPositionEvaluator, PositionCodec,
         Seat, TrainingCodec, extract_training_game, generate_self_played_game,
+        policy_log_probabilities,
     },
     tictactoe::{BoardState, TicTacToeCodec, TicTacToeResNet, generate_game_image},
 };
@@ -36,7 +37,7 @@ use super::common::resolve_device;
 
 const DEFAULT_LEARNING_RATE: f64 = 1e-3;
 const DEFAULT_WEIGHT_DECAY: f64 = 1e-4;
-const METRICS_SCHEMA_VERSION: u32 = 2;
+const METRICS_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct SelfPlaySettings {
@@ -91,6 +92,11 @@ struct EpochStats<'a> {
     network_average_queue_wait_us: f64,
     network_average_request_latency_us: f64,
     network_average_service_us: f64,
+    network_average_policy_mask_construction_us: f64,
+    network_average_policy_mask_batch_construction_us: f64,
+    network_average_policy_mask_transfer_submission_us: f64,
+    network_average_policy_postprocess_submission_us: f64,
+    network_average_policy_decode_us: f64,
     training: &'a TrainingStats,
     checkpoint_seconds: f64,
     rendering_seconds: f64,
@@ -186,6 +192,19 @@ pub async fn run(args: TrainArgs) -> Result<()> {
             moves_per_second,
             evaluations_per_second,
             average_batch_size = epoch_games.batch_stats.average_batch_size(),
+            average_policy_mask_construction_us = epoch_games
+                .batch_stats
+                .average_policy_mask_construction_us(),
+            average_policy_mask_batch_construction_us = epoch_games
+                .batch_stats
+                .average_policy_mask_batch_construction_us(),
+            average_policy_mask_transfer_submission_us = epoch_games
+                .batch_stats
+                .average_policy_mask_transfer_submission_us(),
+            average_policy_decode_us = epoch_games.batch_stats.average_policy_decode_us(),
+            average_policy_postprocess_submission_us = epoch_games
+                .batch_stats
+                .average_policy_postprocess_submission_us(),
             "self-play complete"
         );
 
@@ -264,6 +283,19 @@ pub async fn run(args: TrainArgs) -> Result<()> {
                 .batch_stats
                 .average_request_latency_us(),
             network_average_service_us: epoch_games.batch_stats.average_service_us(),
+            network_average_policy_mask_construction_us: epoch_games
+                .batch_stats
+                .average_policy_mask_construction_us(),
+            network_average_policy_mask_batch_construction_us: epoch_games
+                .batch_stats
+                .average_policy_mask_batch_construction_us(),
+            network_average_policy_mask_transfer_submission_us: epoch_games
+                .batch_stats
+                .average_policy_mask_transfer_submission_us(),
+            network_average_policy_postprocess_submission_us: epoch_games
+                .batch_stats
+                .average_policy_postprocess_submission_us(),
+            network_average_policy_decode_us: epoch_games.batch_stats.average_policy_decode_us(),
             training: &training_stats,
             checkpoint_seconds: checkpoint_duration.as_secs_f64(),
             rendering_seconds: rendering_duration.as_secs_f64(),
@@ -444,9 +476,11 @@ fn train_epoch(
         let policies = Tensor::stack(&policies, 0).to_kind(Kind::Float).to(device);
         let values = Tensor::from_slice(&values).to_kind(Kind::Float).to(device);
 
-        let (expected_values, expected_policies) = network.forward_t(&states, true);
-        let value_loss = expected_values.mse_loss(&values, Reduction::Mean);
-        let policy_loss = -(policies * expected_policies).sum(None) / chunk.len() as f64;
+        let output = network.forward_t(&states, true);
+        let predicted_policy_log_probabilities = policy_log_probabilities(&output.policy_logits);
+        let value_loss = output.values.mse_loss(&values, Reduction::Mean);
+        let policy_loss =
+            -(policies * predicted_policy_log_probabilities).sum(None) / chunk.len() as f64;
         optimizer.backward_step(&(&value_loss + &policy_loss));
 
         let chunk_len = chunk.len() as f64;

@@ -1,4 +1,4 @@
-use std::{future::Future, marker::PhantomData};
+use std::{future::Future, marker::PhantomData, time::Instant};
 
 use anyhow::{Context, Result, ensure};
 
@@ -77,9 +77,21 @@ where
         state: &'a TGame,
         moves: &'a [TGame::Move],
     ) -> Result<PositionEvaluation> {
-        let (value, policy) = self.executor.execute(Codec::encode_position(state)).await?;
+        let phase_started = Instant::now();
+        let policy_mask = Codec::encode_policy_mask(state, moves);
+        self.executor
+            .record_policy_mask_construction(phase_started.elapsed());
+        let policy_mask = policy_mask?;
+
+        let (value, policy) = self
+            .executor
+            .execute(Codec::encode_position(state), policy_mask)
+            .await?;
         let value = f32::try_from(value).context("converting network value to f32")?;
-        let legal_policy = Codec::decode_policy(&policy, moves)?;
+        let phase_started = Instant::now();
+        let legal_policy = Codec::decode_policy(&policy, moves);
+        self.executor.record_policy_decode(phase_started.elapsed());
+        let legal_policy = legal_policy?;
 
         let evaluation = PositionEvaluation {
             value,
