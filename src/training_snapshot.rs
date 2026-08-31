@@ -10,15 +10,15 @@ use std::{
 use alz::{
     engine::TrainingSample,
     gomoku::{
-        ACTION_SCHEMA, BoardState, GAME_SCHEMA, GomokuPolicy, ModelSpec, POSITION_SCHEMA,
-        REPLAY_SCHEMA, VALUE_SCHEMA,
+        ACTION_SCHEMA, BoardState, GAME_SCHEMA, GomokuModel, GomokuPolicy, ModelSpec,
+        POSITION_SCHEMA, REPLAY_SCHEMA, VALUE_SCHEMA,
     },
 };
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tch::{
-    Tensor,
+    Device, Tensor,
     nn::{Optimizer, VarStore},
 };
 
@@ -48,6 +48,26 @@ struct SnapshotMetadata {
     epoch: usize,
     replay_games: usize,
     replay_positions: usize,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SnapshotMetadataV1 {
+    format_version: u32,
+    action_schema: String,
+    epoch: usize,
+    replay_games: usize,
+    replay_positions: usize,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct MigrationSummary {
+    pub root: PathBuf,
+    pub apply: bool,
+    pub snapshots_found: usize,
+    pub legacy_snapshots: usize,
+    pub already_current: usize,
+    pub migrated: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -167,7 +187,7 @@ fn read_metadata(path: &Path) -> Result<SnapshotMetadata> {
         .with_context(|| format!("missing format_version in {}", path.display()))?;
     ensure!(
         version == FORMAT_VERSION as u64,
-        "unsupported snapshot metadata version {version} in {}",
+        "unsupported snapshot metadata version {version} in {}; version 1 runs must first be copied and migrated with `alz checkpoint migrate-v1 --checkpoint-dir <copy> --apply`",
         path.display()
     );
     serde_json::from_value(value).with_context(|| format!("reading {}", path.display()))
@@ -255,6 +275,136 @@ pub fn resolve_model_checkpoint(path: &Path) -> Result<Option<TrainingSnapshot>>
         .and_then(|name| name.parse::<usize>().ok())
         .with_context(|| format!("snapshot directory {} has no numeric epoch", path.display()))?;
     read_snapshot(path.to_owned(), epoch).map(Some)
+}
+
+pub fn migrate_v1_snapshots(root: &Path, apply: bool) -> Result<MigrationSummary> {
+    ensure!(root.is_dir(), "{} is not a directory", root.display());
+
+    let expected_spec = ModelSpec::LegacyResNetV1;
+    let mut expected_var_store = VarStore::new(Device::Cpu);
+    let _expected_model = GomokuModel::new(expected_var_store.root(), &expected_spec);
+    let expected_tensor_schema = var_store_tensor_schema_sha256(&expected_var_store);
+
+    let mut candidates = Vec::new();
+    for entry in fs::read_dir(root).with_context(|| format!("reading {}", root.display()))? {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let Some(epoch) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<usize>().ok())
+        else {
+            continue;
+        };
+        let path = entry.path();
+        let has_model = path.join(MODEL_FILE).is_file();
+        let has_metadata = path.join(METADATA_FILE).is_file();
+        ensure!(
+            has_model && has_metadata,
+            "numeric checkpoint directory {} must contain {} and {}",
+            path.display(),
+            MODEL_FILE,
+            METADATA_FILE
+        );
+        candidates.push((epoch, path));
+    }
+    candidates.sort_unstable_by_key(|(epoch, _)| *epoch);
+
+    let mut summary = MigrationSummary {
+        root: root.to_owned(),
+        apply,
+        snapshots_found: candidates.len(),
+        legacy_snapshots: 0,
+        already_current: 0,
+        migrated: 0,
+    };
+    let mut pending = Vec::new();
+    for (epoch, path) in candidates {
+        let metadata_path = path.join(METADATA_FILE);
+        let value: serde_json::Value = serde_json::from_reader(BufReader::new(
+            File::open(&metadata_path)
+                .with_context(|| format!("opening {}", metadata_path.display()))?,
+        ))
+        .with_context(|| format!("reading {}", metadata_path.display()))?;
+        let version = value
+            .get("format_version")
+            .and_then(serde_json::Value::as_u64)
+            .with_context(|| format!("missing format_version in {}", metadata_path.display()))?;
+        match version {
+            1 => {
+                let old: SnapshotMetadataV1 = serde_json::from_value(value)
+                    .with_context(|| format!("reading v1 metadata in {}", path.display()))?;
+                ensure!(old.format_version == 1, "invalid v1 metadata version");
+                ensure!(
+                    old.action_schema == ACTION_SCHEMA,
+                    "unsupported action schema {} in {}",
+                    old.action_schema,
+                    path.display()
+                );
+                ensure!(
+                    old.epoch == epoch,
+                    "snapshot directory epoch {epoch} does not match metadata epoch {}",
+                    old.epoch
+                );
+                let stored_tensor_schema = model_file_tensor_schema_sha256(&path.join(MODEL_FILE))?;
+                ensure!(
+                    stored_tensor_schema == expected_tensor_schema,
+                    "legacy model tensor schema {} does not match expected schema {} in {}",
+                    stored_tensor_schema,
+                    expected_tensor_schema,
+                    path.display()
+                );
+                let model_sha256 = file_sha256(&path.join(MODEL_FILE))?;
+                summary.legacy_snapshots += 1;
+                pending.push((
+                    path,
+                    SnapshotMetadata {
+                        format_version: FORMAT_VERSION,
+                        model: expected_spec.clone(),
+                        model_sha256,
+                        tensor_schema_sha256: expected_tensor_schema.clone(),
+                        game_schema: GAME_SCHEMA.to_owned(),
+                        position_schema: POSITION_SCHEMA.to_owned(),
+                        action_schema: ACTION_SCHEMA.to_owned(),
+                        value_schema: VALUE_SCHEMA.to_owned(),
+                        replay_schema: REPLAY_SCHEMA.to_owned(),
+                        optimizer_schema: "adam-v1".to_owned(),
+                        epoch,
+                        replay_games: old.replay_games,
+                        replay_positions: old.replay_positions,
+                    },
+                ));
+            }
+            version if version == FORMAT_VERSION as u64 => {
+                let snapshot = read_snapshot(path, epoch)?;
+                ensure!(
+                    snapshot.model_spec() == &expected_spec,
+                    "migration only accepts legacy_resnet_v1 snapshots"
+                );
+                ensure!(
+                    snapshot.metadata.tensor_schema_sha256 == expected_tensor_schema,
+                    "current legacy metadata has an unexpected tensor schema"
+                );
+                snapshot.load_model(&mut expected_var_store)?;
+                summary.already_current += 1;
+            }
+            version => bail!(
+                "unsupported snapshot version {version} in {}",
+                path.display()
+            ),
+        }
+    }
+
+    if apply {
+        for (path, metadata) in pending {
+            write_metadata_atomic(&path.join(METADATA_FILE), &metadata)?;
+            read_snapshot(path, metadata.epoch)?;
+            summary.migrated += 1;
+        }
+    }
+    Ok(summary)
 }
 
 fn read_snapshot(path: PathBuf, epoch: usize) -> Result<TrainingSnapshot> {
@@ -362,6 +512,36 @@ fn write_metadata(path: &Path, metadata: &SnapshotMetadata) -> Result<()> {
     writer.flush()?;
     writer.get_ref().sync_all()?;
     Ok(())
+}
+
+fn write_metadata_atomic(path: &Path, metadata: &SnapshotMetadata) -> Result<()> {
+    let parent = path
+        .parent()
+        .with_context(|| format!("{} has no parent directory", path.display()))?;
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let pending_path = parent.join(format!(
+        ".{METADATA_FILE}.tmp-{}-{unique}",
+        std::process::id()
+    ));
+
+    if let Err(error) = write_metadata(&pending_path, metadata) {
+        let _ = fs::remove_file(&pending_path);
+        return Err(error);
+    }
+    if let Err(error) = fs::rename(&pending_path, path) {
+        let _ = fs::remove_file(&pending_path);
+        return Err(error).with_context(|| {
+            format!(
+                "publishing metadata {} as {}",
+                pending_path.display(),
+                path.display()
+            )
+        });
+    }
+    sync_directory(parent)
 }
 
 fn sync_file(path: &Path) -> Result<()> {
@@ -658,6 +838,65 @@ mod tests {
     #[test]
     fn snapshot_restores_model_optimizer_and_replay() {
         assert_snapshot_restores_training(Device::Cpu);
+    }
+
+    #[test]
+    fn migration_is_validated_and_dry_run_by_default() {
+        let root = temp_dir();
+        let replay = ReplayBuffer::new();
+        let vs = VarStore::new(Device::Cpu);
+        let _model = GomokuModel::new(vs.root(), &ModelSpec::LegacyResNetV1);
+        let optimizer = nn::Adam::default().build(&vs, 1e-3).unwrap();
+        save_training_snapshot(
+            &root,
+            4,
+            &ModelSpec::LegacyResNetV1,
+            &vs,
+            &optimizer,
+            &replay,
+        )
+        .unwrap();
+
+        let metadata_path = snapshot_dir(&root, 4).join(METADATA_FILE);
+        let legacy_metadata = SnapshotMetadataV1 {
+            format_version: 1,
+            action_schema: ACTION_SCHEMA.to_owned(),
+            epoch: 4,
+            replay_games: 0,
+            replay_positions: 0,
+        };
+        let mut writer = BufWriter::new(File::create(&metadata_path).unwrap());
+        serde_json::to_writer_pretty(&mut writer, &legacy_metadata).unwrap();
+        writeln!(writer).unwrap();
+        writer.flush().unwrap();
+        drop(writer);
+        let original_metadata = fs::read(&metadata_path).unwrap();
+
+        let dry_run = migrate_v1_snapshots(&root, false).unwrap();
+        assert_eq!(dry_run.legacy_snapshots, 1);
+        assert_eq!(dry_run.migrated, 0);
+        assert_eq!(fs::read(&metadata_path).unwrap(), original_metadata);
+
+        let applied = migrate_v1_snapshots(&root, true).unwrap();
+        assert_eq!(applied.migrated, 1);
+        let snapshot = resolve_model_checkpoint(&root).unwrap().unwrap();
+        assert_eq!(snapshot.model_spec(), &ModelSpec::LegacyResNetV1);
+        let mut restored_vs = VarStore::new(Device::Cpu);
+        let _restored_model = GomokuModel::new(restored_vs.root(), &ModelSpec::LegacyResNetV1);
+        snapshot.load_model(&mut restored_vs).unwrap();
+
+        let second_run = migrate_v1_snapshots(&root, false).unwrap();
+        assert_eq!(second_run.already_current, 1);
+        assert_eq!(second_run.legacy_snapshots, 0);
+
+        let model_path = snapshot_dir(&root, 4).join(MODEL_FILE);
+        let mut bytes = fs::read(&model_path).unwrap();
+        *bytes.last_mut().unwrap() ^= 1;
+        fs::write(&model_path, bytes).unwrap();
+        let error = snapshot.load_model(&mut restored_vs).unwrap_err();
+        assert!(error.to_string().contains("model digest"));
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

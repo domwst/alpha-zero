@@ -1,5 +1,6 @@
 mod battle;
 mod benchmark;
+mod checkpoint;
 mod common;
 mod play;
 mod train;
@@ -17,5 +18,6 @@ pub async fn run(command: Command) -> Result<()> {
         },
         Command::Battle(args) => battle::run(args).await,
         Command::Benchmark(args) => benchmark::run(args.mode).await,
+        Command::Checkpoint(args) => checkpoint::run(args),
     }
 }
