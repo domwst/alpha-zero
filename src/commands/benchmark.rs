@@ -4,7 +4,7 @@ use alz::{
     engine::{
         AlphaZeroNet, NetworkBatchStats, masked_policy_probabilities, policy_log_probabilities,
     },
-    gomoku::GomokuResNet,
+    gomoku::{GomokuModel, ModelSpec},
 };
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
@@ -22,7 +22,7 @@ use super::{
     train::{SelfPlaySettings, collect_epoch_games},
 };
 
-const BENCHMARK_SCHEMA_VERSION: u32 = 3;
+const BENCHMARK_SCHEMA_VERSION: u32 = 4;
 
 #[derive(Serialize)]
 struct InferenceResult<'a> {
@@ -92,7 +92,8 @@ fn run_inference(args: InferenceBenchmarkArgs) -> Result<()> {
     tch::manual_seed((args.seed & i64::MAX as u64) as i64);
     let device = resolve_device(&args.device)?;
     let var_store = nn::VarStore::new(device);
-    let network = GomokuResNet::new(var_store.root());
+    let model_spec = ModelSpec::from(args.architecture);
+    let network = GomokuModel::new(var_store.root(), &model_spec);
     let input = Tensor::zeros(
         [args.batch_size as i64, 2, 19, 19],
         (Kind::Float, Device::Cpu),
@@ -124,7 +125,7 @@ fn run_inference(args: InferenceBenchmarkArgs) -> Result<()> {
 }
 
 fn inference_iteration(
-    network: &GomokuResNet,
+    network: &GomokuModel,
     cpu_input: &Tensor,
     cpu_policy_mask: &Tensor,
     device: Device,
@@ -150,7 +151,8 @@ fn run_training(args: TrainingBenchmarkArgs) -> Result<()> {
     tch::manual_seed((args.seed & i64::MAX as u64) as i64);
     let device = resolve_device(&args.device)?;
     let var_store = nn::VarStore::new(device);
-    let network = GomokuResNet::new(var_store.root());
+    let model_spec = ModelSpec::from(args.architecture);
+    let network = GomokuModel::new(var_store.root(), &model_spec);
     let mut optimizer = nn::Adam::default().build(&var_store, 1e-3)?;
     let states = Tensor::zeros(
         [args.batch_size as i64, 2, 19, 19],
@@ -199,7 +201,7 @@ fn run_training(args: TrainingBenchmarkArgs) -> Result<()> {
 }
 
 fn training_iteration(
-    network: &GomokuResNet,
+    network: &GomokuModel,
     optimizer: &mut Optimizer,
     cpu_states: &Tensor,
     cpu_policies: &Tensor,
@@ -240,7 +242,8 @@ async fn run_self_play(args: SelfPlayBenchmarkArgs) -> Result<()> {
     tch::manual_seed((args.seed & i64::MAX as u64) as i64);
     let device = resolve_device(&args.device)?;
     let var_store = nn::VarStore::new(device);
-    let network = GomokuResNet::new(var_store.root());
+    let model_spec = ModelSpec::from(args.architecture);
+    let network = GomokuModel::new(var_store.root(), &model_spec);
 
     if args.warmup_batches > 0 {
         let input = Tensor::zeros(

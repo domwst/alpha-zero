@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use alz::gomoku::ModelSpec;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 
@@ -46,11 +47,31 @@ pub struct DeviceArgs {
     pub cuda_index: usize,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum ArchitectureChoice {
+    #[value(name = "legacy-resnet-v1")]
+    #[serde(rename = "legacy_resnet_v1")]
+    LegacyResNetV1,
+}
+
+impl From<ArchitectureChoice> for ModelSpec {
+    fn from(value: ArchitectureChoice) -> Self {
+        match value {
+            ArchitectureChoice::LegacyResNetV1 => Self::LegacyResNetV1,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Args, Serialize)]
 pub struct ModelArgs {
     /// Directory used to select or store checkpoints.
     #[arg(long, default_value = "checkpoints")]
     pub checkpoint_dir: PathBuf,
+
+    /// Expected architecture. Existing snapshots infer it when this is omitted.
+    #[arg(long, value_enum)]
+    pub architecture: Option<ArchitectureChoice>,
 
     #[command(flatten)]
     pub device: DeviceArgs,
@@ -144,6 +165,9 @@ pub struct InferenceBenchmarkArgs {
     #[command(flatten)]
     pub device: DeviceArgs,
 
+    #[arg(long, value_enum, default_value = "legacy-resnet-v1")]
+    pub architecture: ArchitectureChoice,
+
     #[arg(long, default_value_t = 128)]
     pub batch_size: usize,
 
@@ -166,6 +190,9 @@ pub struct TrainingBenchmarkArgs {
     #[command(flatten)]
     pub device: DeviceArgs,
 
+    #[arg(long, value_enum, default_value = "legacy-resnet-v1")]
+    pub architecture: ArchitectureChoice,
+
     #[arg(long, default_value_t = 1024)]
     pub batch_size: usize,
 
@@ -186,6 +213,9 @@ pub struct TrainingBenchmarkArgs {
 pub struct SelfPlayBenchmarkArgs {
     #[command(flatten)]
     pub device: DeviceArgs,
+
+    #[arg(long, value_enum, default_value = "legacy-resnet-v1")]
+    pub architecture: ArchitectureChoice,
 
     #[arg(long, default_value_t = 32)]
     pub games: usize,
