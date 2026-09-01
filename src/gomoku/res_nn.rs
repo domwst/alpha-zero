@@ -13,7 +13,7 @@ use crate::engine::{AlphaZeroNet, NetworkOutput};
 const CHANNELS: i64 = 32;
 
 #[derive(Debug)]
-pub struct ResBlock {
+struct ResBlock {
     conv1: Conv2D,
     bn1: BatchNorm,
     conv2: Conv2D,
