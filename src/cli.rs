@@ -25,8 +25,6 @@ pub enum Command {
     Battle(BattleArgs),
     /// Measure inference, training, or self-play throughput without creating checkpoints.
     Benchmark(BenchmarkArgs),
-    /// Inspect or migrate checkpoint metadata.
-    Checkpoint(CheckpointArgs),
 }
 
 #[derive(Clone, Copy, Debug, Serialize, ValueEnum)]
@@ -363,38 +361,11 @@ pub struct BattleArgs {
     pub output: Option<PathBuf>,
 }
 
-#[derive(Debug, Args)]
-pub struct CheckpointArgs {
-    #[command(subcommand)]
-    pub mode: CheckpointMode,
-}
-
-#[derive(Debug, Subcommand)]
-pub enum CheckpointMode {
-    /// Add architecture and tensor-schema metadata to version-1 checkpoints.
-    MigrateV1(MigrateV1Args),
-}
-
-#[derive(Debug, Args)]
-pub struct MigrateV1Args {
-    /// Run directory containing numeric checkpoint directories.
-    #[arg(long, default_value = "checkpoints")]
-    pub checkpoint_dir: PathBuf,
-
-    /// Replace metadata files after validating every checkpoint. Without this flag, only inspect.
-    #[arg(long)]
-    pub apply: bool,
-}
-
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use clap::Parser;
 
-    use super::{
-        ArchitectureChoice, BenchmarkMode, CheckpointMode, Cli, Command, HumanSeat, PlayMode,
-    };
+    use super::{ArchitectureChoice, BenchmarkMode, Cli, Command, HumanSeat, PlayMode};
 
     #[test]
     fn parses_train_defaults() {
@@ -479,23 +450,5 @@ mod tests {
             panic!("expected inference benchmark");
         };
         assert_eq!(args.batch_size, 256);
-    }
-
-    #[test]
-    fn checkpoint_migration_is_dry_run_by_default() {
-        let cli = Cli::try_parse_from([
-            "alz",
-            "checkpoint",
-            "migrate-v1",
-            "--checkpoint-dir",
-            "copied-checkpoints",
-        ])
-        .unwrap();
-        let Command::Checkpoint(args) = cli.command else {
-            panic!("expected checkpoint command");
-        };
-        let CheckpointMode::MigrateV1(args) = args.mode;
-        assert_eq!(args.checkpoint_dir, PathBuf::from("copied-checkpoints"));
-        assert!(!args.apply);
     }
 }
