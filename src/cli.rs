@@ -55,12 +55,16 @@ pub enum ArchitectureChoice {
     #[value(name = "legacy-resnet-v1")]
     #[serde(rename = "legacy_resnet_v1")]
     LegacyResNetV1,
+    #[value(name = "kata-v1")]
+    #[serde(rename = "kata_v1")]
+    KataV1,
 }
 
 impl From<ArchitectureChoice> for ModelSpec {
     fn from(value: ArchitectureChoice) -> Self {
         match value {
             ArchitectureChoice::LegacyResNetV1 => Self::LegacyResNetV1,
+            ArchitectureChoice::KataV1 => Self::KataV1,
         }
     }
 }
@@ -388,7 +392,9 @@ mod tests {
 
     use clap::Parser;
 
-    use super::{BenchmarkMode, CheckpointMode, Cli, Command, HumanSeat, PlayMode};
+    use super::{
+        ArchitectureChoice, BenchmarkMode, CheckpointMode, Cli, Command, HumanSeat, PlayMode,
+    };
 
     #[test]
     fn parses_train_defaults() {
@@ -405,6 +411,15 @@ mod tests {
         assert_eq!(args.batch_timeout_us, 100_000);
         assert_eq!(args.training_batch_size, 256);
         assert_eq!(args.heartbeat_seconds, 60);
+    }
+
+    #[test]
+    fn parses_kata_architecture_for_new_training_run() {
+        let cli = Cli::try_parse_from(["alz", "train", "--architecture", "kata-v1"]).unwrap();
+        let Command::Train(args) = cli.command else {
+            panic!("expected train command");
+        };
+        assert_eq!(args.model.architecture, Some(ArchitectureChoice::KataV1));
     }
 
     #[test]

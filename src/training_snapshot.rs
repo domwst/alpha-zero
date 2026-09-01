@@ -807,7 +807,7 @@ mod tests {
         optimizer.backward_step(&loss);
     }
 
-    fn assert_snapshot_restores_training(device: Device) {
+    fn assert_snapshot_restores_training(device: Device, model_spec: ModelSpec) {
         tch::manual_seed(1);
         let root = temp_dir();
         let replay = VecDeque::from([vec![TrainingSample {
@@ -817,18 +817,10 @@ mod tests {
         }]]);
 
         let vs = VarStore::new(device);
-        let model = GomokuModel::new(vs.root(), &ModelSpec::LegacyResNetV1);
+        let model = GomokuModel::new(vs.root(), &model_spec);
         let mut optimizer = nn::Adam::default().build(&vs, 1e-3).unwrap();
         training_step(&model, &mut optimizer, device);
-        save_training_snapshot(
-            &root,
-            3,
-            &ModelSpec::LegacyResNetV1,
-            &vs,
-            &optimizer,
-            &replay,
-        )
-        .unwrap();
+        save_training_snapshot(&root, 3, &model_spec, &vs, &optimizer, &replay).unwrap();
 
         training_step(&model, &mut optimizer, device);
         let expected = vs
@@ -838,9 +830,10 @@ mod tests {
             .collect::<Vec<_>>();
 
         let mut restored_vs = VarStore::new(device);
-        let restored_model = GomokuModel::new(restored_vs.root(), &ModelSpec::LegacyResNetV1);
+        let restored_model = GomokuModel::new(restored_vs.root(), &model_spec);
         let mut restored_optimizer = nn::Adam::default().build(&restored_vs, 1e-3).unwrap();
         let snapshot = find_latest_snapshot(&root).unwrap().unwrap();
+        assert_eq!(snapshot.model_spec(), &model_spec);
         let restored_replay =
             load_training_snapshot(&snapshot, &mut restored_vs, &mut restored_optimizer).unwrap();
         assert!(restored_replay == replay);
@@ -858,7 +851,12 @@ mod tests {
 
     #[test]
     fn snapshot_restores_model_optimizer_and_replay() {
-        assert_snapshot_restores_training(Device::Cpu);
+        assert_snapshot_restores_training(Device::Cpu, ModelSpec::LegacyResNetV1);
+    }
+
+    #[test]
+    fn kata_snapshot_restores_model_optimizer_and_replay() {
+        assert_snapshot_restores_training(Device::Cpu, ModelSpec::KataV1);
     }
 
     #[test]
@@ -923,7 +921,7 @@ mod tests {
     #[test]
     fn snapshot_restores_mps_optimizer() {
         if tch::utils::has_mps() {
-            assert_snapshot_restores_training(Device::Mps);
+            assert_snapshot_restores_training(Device::Mps, ModelSpec::LegacyResNetV1);
         }
     }
 }
