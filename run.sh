@@ -34,6 +34,7 @@ for nvidia_lib in "$nvidia_root"/*/lib; do
 done
 cuda_driver=
 system_zlib=
+cuda_compat_dir=${CUDA_COMPAT_DIR:-}
 if command -v c++ >/dev/null 2>&1 && command -v nix-store >/dev/null 2>&1; then
     cxx_binary=$(readlink -f "$(command -v c++)" 2>/dev/null || true)
     case "$cxx_binary" in
@@ -50,6 +51,14 @@ if command -v c++ >/dev/null 2>&1 && command -v nix-store >/dev/null 2>&1; then
             fi
             ;;
     esac
+fi
+if [ -n "$cuda_compat_dir" ]; then
+    if [ ! -f "$cuda_compat_dir/libcuda.so.1" ]; then
+        printf 'CUDA_COMPAT_DIR does not contain libcuda.so.1: %s\n' "$cuda_compat_dir" >&2
+        exit 1
+    fi
+    cuda_driver="$cuda_compat_dir/libcuda.so.1"
+    runtime_libs="$cuda_compat_dir:$runtime_libs"
 fi
 export LIBTORCH_USE_PYTORCH=1
 export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-C link-arg=-Wl,-rpath,$torch_lib"
