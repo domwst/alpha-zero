@@ -29,6 +29,7 @@ struct InferenceRequest {
 
 #[derive(Default)]
 struct NetworkRequestStats {
+    position_encoding_us_total: AtomicU64,
     policy_mask_construction_us_total: AtomicU64,
     policy_decode_us_total: AtomicU64,
 }
@@ -51,6 +52,7 @@ pub struct NetworkBatchStats {
     pub policy_postprocess_submission_us_total: u64,
     pub output_sync_us_total: u64,
     pub service_us_total: u64,
+    pub position_encoding_us_total: u64,
     pub policy_mask_construction_us_total: u64,
     pub policy_decode_us_total: u64,
 }
@@ -90,6 +92,10 @@ impl NetworkBatchStats {
 
     pub fn average_policy_mask_construction_us(&self) -> f64 {
         self.average_request_phase_us(self.policy_mask_construction_us_total)
+    }
+
+    pub fn average_position_encoding_us(&self) -> f64 {
+        self.average_request_phase_us(self.position_encoding_us_total)
     }
 
     pub fn average_policy_decode_us(&self) -> f64 {
@@ -163,6 +169,10 @@ impl<Net: AlphaZeroNet> Clone for NetworkBatchedExecutorHandle<Net> {
 
 impl<Net: AlphaZeroNet> Drop for NetworkBatchedExecutorHandle<Net> {
     fn drop(&mut self) {
+        let position_encoding_us = self
+            .local_request_stats
+            .position_encoding_us_total
+            .load(Ordering::Relaxed);
         let mask_construction_us = self
             .local_request_stats
             .policy_mask_construction_us_total
@@ -173,6 +183,11 @@ impl<Net: AlphaZeroNet> Drop for NetworkBatchedExecutorHandle<Net> {
             .load(Ordering::Relaxed);
 
         // Handles can finish concurrently, so aggregation still requires an RMW.
+        if position_encoding_us != 0 {
+            self.aggregate_request_stats
+                .position_encoding_us_total
+                .fetch_add(position_encoding_us, Ordering::Relaxed);
+        }
         if mask_construction_us != 0 {
             self.aggregate_request_stats
                 .policy_mask_construction_us_total
@@ -215,6 +230,12 @@ impl<Net: AlphaZeroNet> NetworkBatchedExecutorHandle<Net> {
             .await
             .map_err(|_| anyhow!("network evaluator stopped before accepting the request"))?;
         result.await.context("network evaluator stopped")
+    }
+
+    pub(super) fn record_position_encoding(&self, duration: Duration) {
+        self.local_request_stats
+            .position_encoding_us_total
+            .add_single_writer(duration_us(duration));
     }
 
     pub(super) fn record_policy_mask_construction(&self, duration: Duration) {
@@ -425,6 +446,9 @@ impl<Net: AlphaZeroNet> NetworkBatchedExecutor<Net> {
 
         // Handle drop flushes local stats before its task sender closes. Reaching
         // this point therefore guarantees that every shard has been aggregated.
+        stats.position_encoding_us_total = aggregate_request_stats
+            .position_encoding_us_total
+            .load(Ordering::Relaxed);
         stats.policy_mask_construction_us_total = aggregate_request_stats
             .policy_mask_construction_us_total
             .load(Ordering::Relaxed);
@@ -540,6 +564,7 @@ mod tests {
             command_receiver,
             (Kind::Float, Device::Cpu),
         ));
+        handle.record_position_encoding(Duration::from_micros(2));
         handle.record_policy_mask_construction(Duration::from_micros(3));
 
         let (_, policy) = handle
@@ -559,6 +584,7 @@ mod tests {
         drop((handle, command_sender));
         let (_, stats) = server.await.unwrap();
         assert_eq!(stats.requests, 1);
+        assert_eq!(stats.position_encoding_us_total, 2);
         assert_eq!(stats.policy_mask_construction_us_total, 3);
         assert_eq!(stats.policy_decode_us_total, 5);
     }
@@ -576,6 +602,9 @@ mod tests {
             (Kind::Float, Device::Cpu),
         ));
 
+        first.record_position_encoding(Duration::from_micros(2));
+        first.record_position_encoding(Duration::from_micros(3));
+        second.record_position_encoding(Duration::from_micros(5));
         first.record_policy_mask_construction(Duration::from_micros(3));
         first.record_policy_mask_construction(Duration::from_micros(5));
         first.record_policy_decode(Duration::from_micros(7));
@@ -584,6 +613,7 @@ mod tests {
 
         drop((first, second, command_sender));
         let (_, stats) = server.await.unwrap();
+        assert_eq!(stats.position_encoding_us_total, 10);
         assert_eq!(stats.policy_mask_construction_us_total, 19);
         assert_eq!(stats.policy_decode_us_total, 20);
     }

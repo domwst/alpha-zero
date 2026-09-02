@@ -11,6 +11,37 @@ pub trait PositionCodec<TGame: Game> {
 
     /// Selects normalized policy probabilities in the supplied legal-move order.
     fn decode_policy(policy: &Tensor, moves: &[TGame::Move]) -> Result<Vec<f32>>;
+
+    /// Number of spatial symmetries supported during inference. Symmetry zero must
+    /// be the canonical, untransformed representation.
+    fn inference_symmetry_count() -> usize {
+        1
+    }
+
+    fn encode_position_with_symmetry(state: &TGame, symmetry: usize) -> Tensor {
+        assert_eq!(symmetry, 0);
+        Self::encode_position(state)
+    }
+
+    /// Encodes the legal moves in the same transformed coordinates as the input.
+    fn encode_policy_mask_with_symmetry(
+        state: &TGame,
+        moves: &[TGame::Move],
+        symmetry: usize,
+    ) -> Result<Tensor> {
+        assert_eq!(symmetry, 0);
+        Self::encode_policy_mask(state, moves)
+    }
+
+    /// Reads a transformed network policy back in the original legal-move order.
+    fn decode_policy_with_symmetry(
+        policy: &Tensor,
+        moves: &[TGame::Move],
+        symmetry: usize,
+    ) -> Result<Vec<f32>> {
+        assert_eq!(symmetry, 0);
+        Self::decode_policy(policy, moves)
+    }
 }
 
 pub trait TrainingCodec<TGame: Game>: PositionCodec<TGame> {

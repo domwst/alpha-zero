@@ -27,7 +27,7 @@ use tch::{
 };
 
 use crate::{
-    cli::TrainArgs,
+    cli::{InferenceSymmetryChoice, TrainArgs},
     training_snapshot::{
         ReplayBuffer, ReplayGame, find_latest_snapshot, load_training_snapshot,
         save_training_snapshot,
@@ -38,8 +38,9 @@ use super::common::{resolve_device, validate_requested_architecture};
 
 const DEFAULT_LEARNING_RATE: f64 = 1e-3;
 const DEFAULT_WEIGHT_DECAY: f64 = 1e-4;
-const METRICS_SCHEMA_VERSION: u32 = 4;
-const REPLAY_SHUFFLE_STREAM: u64 = 0x0052_4550_4c41_59;
+const METRICS_SCHEMA_VERSION: u32 = 5;
+const REPLAY_SHUFFLE_STREAM: u64 = 0x0000_5245_504c_4159;
+const INFERENCE_SYMMETRY_STREAM: u64 = 0x5359_4d4d_4554_5259;
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct SelfPlaySettings {
@@ -47,6 +48,7 @@ pub(super) struct SelfPlaySettings {
     pub simulations: usize,
     pub c_puct: f32,
     pub inference_batch_size: usize,
+    pub inference_symmetry: InferenceSymmetryChoice,
     pub games_parallelism: usize,
     pub batch_timeout: Duration,
     pub seed: u64,
@@ -95,6 +97,7 @@ struct EpochStats<'a> {
     network_average_queue_wait_us: f64,
     network_average_request_latency_us: f64,
     network_average_service_us: f64,
+    network_average_position_encoding_us: f64,
     network_average_policy_mask_construction_us: f64,
     network_average_policy_mask_batch_construction_us: f64,
     network_average_policy_mask_transfer_submission_us: f64,
@@ -174,6 +177,7 @@ pub async fn run(args: TrainArgs) -> Result<()> {
             simulations: args.simulations,
             c_puct: args.c_puct,
             inference_batch_size: args.inference_batch_size,
+            inference_symmetry: args.inference_symmetry,
             games_parallelism: args.games_parallelism,
             batch_timeout: Duration::from_micros(args.batch_timeout_us),
             seed: derive_seed(args.seed, epoch as u64),
@@ -205,6 +209,7 @@ pub async fn run(args: TrainArgs) -> Result<()> {
             moves_per_second,
             evaluations_per_second,
             average_batch_size = epoch_games.batch_stats.average_batch_size(),
+            average_position_encoding_us = epoch_games.batch_stats.average_position_encoding_us(),
             average_policy_mask_construction_us = epoch_games
                 .batch_stats
                 .average_policy_mask_construction_us(),
@@ -300,6 +305,9 @@ pub async fn run(args: TrainArgs) -> Result<()> {
                 .batch_stats
                 .average_request_latency_us(),
             network_average_service_us: epoch_games.batch_stats.average_service_us(),
+            network_average_position_encoding_us: epoch_games
+                .batch_stats
+                .average_position_encoding_us(),
             network_average_policy_mask_construction_us: epoch_games
                 .batch_stats
                 .average_policy_mask_construction_us(),
@@ -363,9 +371,20 @@ pub(super) async fn collect_epoch_games(
     for game_index in 0..settings.games {
         let simulations = settings.simulations;
         let c_puct = settings.c_puct;
+        let inference_symmetry = settings.inference_symmetry;
         let game_seed = derive_seed(settings.seed, game_index as u64);
         std::mem::drop(executor.spawn(move |handle| async move {
-            let evaluator = NetworkPositionEvaluator::<GomokuModel, GomokuCodec>::new(handle);
+            let evaluator = match inference_symmetry {
+                InferenceSymmetryChoice::None => {
+                    NetworkPositionEvaluator::<GomokuModel, GomokuCodec>::new(handle)
+                }
+                InferenceSymmetryChoice::Random => {
+                    NetworkPositionEvaluator::<GomokuModel, GomokuCodec>::with_random_symmetry(
+                        handle,
+                        derive_seed(game_seed, INFERENCE_SYMMETRY_STREAM),
+                    )
+                }
+            };
             generate_self_played_game(
                 BoardState::new(),
                 simulations,

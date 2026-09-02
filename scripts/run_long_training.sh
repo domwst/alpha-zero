@@ -6,6 +6,7 @@ repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 architecture=${ARCHITECTURE:-kata-v1}
 epochs=${EPOCHS:-50}
 inference_batch_size=${INFERENCE_BATCH_SIZE:-256}
+inference_symmetry=${INFERENCE_SYMMETRY:-random}
 games_parallelism=${GAMES_PARALLELISM:-500}
 batch_timeout_us=${BATCH_TIMEOUT_US:-1000}
 training_batch_size=${TRAINING_BATCH_SIZE:-256}
@@ -32,6 +33,7 @@ exec "$repo_dir/scripts/run_profiled.sh" "$segment_dir" \
     --games-per-epoch 700 \
     --simulations 2000 \
     --inference-batch-size "$inference_batch_size" \
+    --inference-symmetry "$inference_symmetry" \
     --games-parallelism "$games_parallelism" \
     --batch-timeout-us "$batch_timeout_us" \
     --training-batch-size "$training_batch_size" \

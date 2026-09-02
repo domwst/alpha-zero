@@ -22,7 +22,7 @@ use super::{
     train::{SelfPlaySettings, collect_epoch_games},
 };
 
-const BENCHMARK_SCHEMA_VERSION: u32 = 4;
+const BENCHMARK_SCHEMA_VERSION: u32 = 5;
 
 #[derive(Serialize)]
 struct InferenceResult<'a> {
@@ -70,6 +70,7 @@ struct SelfPlayResult<'a> {
     average_queue_wait_us: f64,
     average_request_latency_us: f64,
     average_service_us: f64,
+    average_position_encoding_us: f64,
     average_policy_mask_construction_us: f64,
     average_policy_mask_batch_construction_us: f64,
     average_policy_mask_transfer_submission_us: f64,
@@ -264,6 +265,7 @@ async fn run_self_play(args: SelfPlayBenchmarkArgs) -> Result<()> {
         simulations: args.simulations,
         c_puct: args.c_puct,
         inference_batch_size: args.inference_batch_size,
+        inference_symmetry: args.inference_symmetry,
         games_parallelism: args.games_parallelism,
         batch_timeout: std::time::Duration::from_micros(args.batch_timeout_us),
         seed: args.seed,
@@ -293,6 +295,7 @@ async fn run_self_play(args: SelfPlayBenchmarkArgs) -> Result<()> {
         average_queue_wait_us: games.batch_stats.average_queue_wait_us(),
         average_request_latency_us: games.batch_stats.average_request_latency_us(),
         average_service_us: games.batch_stats.average_service_us(),
+        average_position_encoding_us: games.batch_stats.average_position_encoding_us(),
         average_policy_mask_construction_us: games
             .batch_stats
             .average_policy_mask_construction_us(),

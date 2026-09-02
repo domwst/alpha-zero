@@ -13,6 +13,7 @@ pub const POSITION_SCHEMA: &str = "gomoku-current-player-two-plane-v1";
 pub const ACTION_SCHEMA: &str = "board19-row-major-v1";
 pub const VALUE_SCHEMA: &str = "gomoku-current-player-outcome-v1";
 pub const REPLAY_SCHEMA: &str = "gomoku-training-sample-bincode-v1";
+const D4_SYMMETRY_COUNT: usize = 8;
 
 pub struct GomokuCodec;
 
@@ -74,7 +75,24 @@ impl Index<(usize, usize)> for GomokuPolicy {
     }
 }
 
-fn game_to_nn_input(state: &BoardState) -> Tensor {
+fn transform_coordinates(row: usize, column: usize, symmetry: usize) -> (usize, usize) {
+    debug_assert!(symmetry < D4_SYMMETRY_COUNT);
+    let end = BoardState::N - 1;
+    match symmetry {
+        0 => (row, column),
+        1 => (end - column, row),
+        2 => (end - row, end - column),
+        3 => (column, end - row),
+        4 => (end - row, column),
+        5 => (end - column, end - row),
+        6 => (row, end - column),
+        7 => (column, row),
+        _ => unreachable!(),
+    }
+}
+
+fn game_to_nn_input_with_symmetry(state: &BoardState, symmetry: usize) -> Tensor {
+    assert!(symmetry < D4_SYMMETRY_COUNT);
     let mut field = [[[0; BoardState::N]; BoardState::N]; 2];
     for row in 0..BoardState::N {
         for column in 0..BoardState::N {
@@ -83,6 +101,7 @@ fn game_to_nn_input(state: &BoardState) -> Tensor {
                 CellState::O => 1,
                 CellState::Empty => continue,
             };
+            let (row, column) = transform_coordinates(row, column, symmetry);
             field[plane][row][column] = 1;
         }
     }
@@ -93,7 +112,16 @@ fn game_to_nn_input(state: &BoardState) -> Tensor {
     ])
 }
 
-fn legal_policy_mask(state: &BoardState, moves: &[GomokuMove]) -> Result<Tensor> {
+fn game_to_nn_input(state: &BoardState) -> Tensor {
+    game_to_nn_input_with_symmetry(state, 0)
+}
+
+fn legal_policy_mask_with_symmetry(
+    state: &BoardState,
+    moves: &[GomokuMove],
+    symmetry: usize,
+) -> Result<Tensor> {
+    assert!(symmetry < D4_SYMMETRY_COUNT);
     ensure!(
         !moves.is_empty(),
         "cannot encode an empty legal policy mask"
@@ -105,6 +133,7 @@ fn legal_policy_mask(state: &BoardState, moves: &[GomokuMove]) -> Result<Tensor>
             state[(row, column)] == CellState::Empty,
             "legal policy mask contains an occupied cell"
         );
+        let (row, column) = transform_coordinates(row, column, symmetry);
         ensure!(
             !mask[row][column],
             "legal policy mask contains a duplicate move"
@@ -114,9 +143,18 @@ fn legal_policy_mask(state: &BoardState, moves: &[GomokuMove]) -> Result<Tensor>
     Ok(Tensor::from_slice(mask.as_flattened()).view([BoardState::N as i64, BoardState::N as i64]))
 }
 
-fn decoded_policy(policy: &Tensor, moves: &[GomokuMove]) -> Result<Vec<f32>> {
-    let policy = <Vec<f32>>::try_from(policy.view([-1]))
-        .context("converting canonical network policy to host values")?;
+fn legal_policy_mask(state: &BoardState, moves: &[GomokuMove]) -> Result<Tensor> {
+    legal_policy_mask_with_symmetry(state, moves, 0)
+}
+
+fn decoded_policy_with_symmetry(
+    policy: &Tensor,
+    moves: &[GomokuMove],
+    symmetry: usize,
+) -> Result<Vec<f32>> {
+    assert!(symmetry < D4_SYMMETRY_COUNT);
+    let policy = <Vec<f32>>::try_from(policy.reshape([-1]))
+        .context("converting network policy to host values")?;
     ensure!(
         policy.len() == BoardState::N * BoardState::N,
         "expected {} policy values, got {}",
@@ -131,6 +169,7 @@ fn decoded_policy(policy: &Tensor, moves: &[GomokuMove]) -> Result<Vec<f32>> {
     let mut result = Vec::with_capacity(moves.len());
     for r#move in moves {
         let (row, column) = r#move.to_xy();
+        let (row, column) = transform_coordinates(row, column, symmetry);
         result.push(policy[row * BoardState::N + column]);
     }
 
@@ -146,6 +185,10 @@ fn decoded_policy(policy: &Tensor, moves: &[GomokuMove]) -> Result<Vec<f32>> {
     );
 
     Ok(result)
+}
+
+fn decoded_policy(policy: &Tensor, moves: &[GomokuMove]) -> Result<Vec<f32>> {
+    decoded_policy_with_symmetry(policy, moves, 0)
 }
 
 fn canonical_policy(policy: &[f32], moves: &[GomokuMove]) -> Result<GomokuPolicy> {
@@ -176,7 +219,7 @@ fn canonical_policy(policy: &[f32], moves: &[GomokuMove]) -> Result<GomokuPolicy
 }
 
 fn augment(state: &Tensor, policy: &Tensor, augmentation: usize) -> (Tensor, Tensor) {
-    assert!(augmentation < 8);
+    assert!(augmentation < D4_SYMMETRY_COUNT);
     let reflect = augmentation >= 4;
     let rotations = (augmentation % 4) as i64;
     let transform = |input: &Tensor, dimension: i64| {
@@ -202,6 +245,30 @@ impl PositionCodec<BoardState> for GomokuCodec {
     fn decode_policy(policy: &Tensor, moves: &[GomokuMove]) -> Result<Vec<f32>> {
         decoded_policy(policy, moves)
     }
+
+    fn inference_symmetry_count() -> usize {
+        D4_SYMMETRY_COUNT
+    }
+
+    fn encode_position_with_symmetry(state: &BoardState, symmetry: usize) -> Tensor {
+        game_to_nn_input_with_symmetry(state, symmetry)
+    }
+
+    fn encode_policy_mask_with_symmetry(
+        state: &BoardState,
+        moves: &[GomokuMove],
+        symmetry: usize,
+    ) -> Result<Tensor> {
+        legal_policy_mask_with_symmetry(state, moves, symmetry)
+    }
+
+    fn decode_policy_with_symmetry(
+        policy: &Tensor,
+        moves: &[GomokuMove],
+        symmetry: usize,
+    ) -> Result<Vec<f32>> {
+        decoded_policy_with_symmetry(policy, moves, symmetry)
+    }
 }
 
 impl TrainingCodec<BoardState> for GomokuCodec {
@@ -220,7 +287,7 @@ impl TrainingCodec<BoardState> for GomokuCodec {
     }
 
     fn augmentation_count() -> usize {
-        8
+        D4_SYMMETRY_COUNT
     }
 
     fn augment(state: &Tensor, policy: &Tensor, augmentation: usize) -> (Tensor, Tensor) {
@@ -234,7 +301,10 @@ mod tests {
 
     use crate::gomoku::{
         BoardState, CellState, GomokuMove,
-        codec::{canonical_policy, decoded_policy, game_to_nn_input, legal_policy_mask},
+        codec::{
+            canonical_policy, decoded_policy, decoded_policy_with_symmetry, game_to_nn_input,
+            game_to_nn_input_with_symmetry, legal_policy_mask, legal_policy_mask_with_symmetry,
+        },
     };
 
     #[test]
@@ -311,6 +381,47 @@ mod tests {
         for augmentation in 0..8 {
             let (state, policy) = super::augment(&state, &policy, augmentation);
             assert!(state.i(0).equal(&policy));
+        }
+    }
+
+    #[test]
+    fn inference_symmetries_match_training_augmentations_and_decode_back() {
+        let board = BoardState::new()
+            .set((2, 3), CellState::X)
+            .set((7, 15), CellState::O)
+            .set((18, 4), CellState::X);
+        let moves = [
+            GomokuMove::from_xy(0, 1),
+            GomokuMove::from_xy(10, 12),
+            GomokuMove::from_xy(17, 6),
+        ];
+        let probabilities = [0.2f32, 0.3, 0.5];
+        let canonical_state = game_to_nn_input(&board);
+        let canonical_mask = legal_policy_mask(&board, &moves).unwrap();
+        let canonical_policy = Tensor::zeros([19, 19], (Kind::Float, Device::Cpu));
+        for (r#move, probability) in moves.iter().zip(probabilities) {
+            let (row, column) = r#move.to_xy();
+            let _ = canonical_policy
+                .i((row as i64, column as i64))
+                .fill_(probability as f64);
+        }
+
+        for symmetry in 0..8 {
+            let (expected_state, expected_mask) =
+                super::augment(&canonical_state, &canonical_mask, symmetry);
+            let (_, transformed_policy) =
+                super::augment(&canonical_state, &canonical_policy, symmetry);
+
+            assert!(game_to_nn_input_with_symmetry(&board, symmetry).equal(&expected_state));
+            assert!(
+                legal_policy_mask_with_symmetry(&board, &moves, symmetry)
+                    .unwrap()
+                    .equal(&expected_mask)
+            );
+            assert_eq!(
+                decoded_policy_with_symmetry(&transformed_policy, &moves, symmetry).unwrap(),
+                probabilities
+            );
         }
     }
 }

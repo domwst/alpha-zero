@@ -67,6 +67,15 @@ impl From<ArchitectureChoice> for ModelSpec {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum InferenceSymmetryChoice {
+    /// Use the canonical board orientation for every network evaluation.
+    None,
+    /// Independently sample one of the eight rotations/reflections per evaluation.
+    Random,
+}
+
 #[derive(Clone, Debug, Args, Serialize)]
 pub struct ModelArgs {
     /// Directory used to select or store checkpoints.
@@ -112,6 +121,10 @@ pub struct TrainArgs {
 
     #[arg(long, default_value_t = 128)]
     pub inference_batch_size: usize,
+
+    /// Spatial symmetry applied before self-play network inference.
+    #[arg(long, value_enum, default_value = "random")]
+    pub inference_symmetry: InferenceSymmetryChoice,
 
     /// Maximum number of games that may perform self-play concurrently.
     #[arg(long, default_value_t = 160)]
@@ -236,6 +249,10 @@ pub struct SelfPlayBenchmarkArgs {
 
     #[arg(long, default_value_t = 128)]
     pub inference_batch_size: usize,
+
+    /// Spatial symmetry applied before self-play network inference.
+    #[arg(long, value_enum, default_value = "random")]
+    pub inference_symmetry: InferenceSymmetryChoice,
 
     #[arg(long, default_value_t = 160)]
     pub games_parallelism: usize,
@@ -365,7 +382,10 @@ pub struct BattleArgs {
 mod tests {
     use clap::Parser;
 
-    use super::{ArchitectureChoice, BenchmarkMode, Cli, Command, HumanSeat, PlayMode};
+    use super::{
+        ArchitectureChoice, BenchmarkMode, Cli, Command, HumanSeat, InferenceSymmetryChoice,
+        PlayMode,
+    };
 
     #[test]
     fn parses_train_defaults() {
@@ -378,6 +398,7 @@ mod tests {
         assert_eq!(args.epochs, None);
         assert_eq!(args.learning_rate, None);
         assert_eq!(args.weight_decay, None);
+        assert_eq!(args.inference_symmetry, InferenceSymmetryChoice::Random);
         assert_eq!(args.games_parallelism, 160);
         assert_eq!(args.batch_timeout_us, 100_000);
         assert_eq!(args.training_batch_size, 256);
@@ -386,11 +407,20 @@ mod tests {
 
     #[test]
     fn parses_kata_architecture_for_new_training_run() {
-        let cli = Cli::try_parse_from(["alz", "train", "--architecture", "kata-v1"]).unwrap();
+        let cli = Cli::try_parse_from([
+            "alz",
+            "train",
+            "--architecture",
+            "kata-v1",
+            "--inference-symmetry",
+            "random",
+        ])
+        .unwrap();
         let Command::Train(args) = cli.command else {
             panic!("expected train command");
         };
         assert_eq!(args.model.architecture, Some(ArchitectureChoice::KataV1));
+        assert_eq!(args.inference_symmetry, InferenceSymmetryChoice::Random);
     }
 
     #[test]
