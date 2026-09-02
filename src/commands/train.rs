@@ -1,4 +1,5 @@
 use std::{
+    collections::VecDeque,
     fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
@@ -38,6 +39,7 @@ use super::common::{resolve_device, validate_requested_architecture};
 const DEFAULT_LEARNING_RATE: f64 = 1e-3;
 const DEFAULT_WEIGHT_DECAY: f64 = 1e-4;
 const METRICS_SCHEMA_VERSION: u32 = 4;
+const REPLAY_SHUFFLE_STREAM: u64 = 0x0052_4550_4c41_59;
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct SelfPlaySettings {
@@ -178,7 +180,7 @@ pub async fn run(args: TrainArgs) -> Result<()> {
             progress_every_games: args.progress_every_games,
             heartbeat_interval: Duration::from_secs(args.heartbeat_seconds),
         };
-        let (returned_network, epoch_games) =
+        let (returned_network, mut epoch_games) =
             collect_epoch_games(network, settings, var_store.device()).await?;
         network = returned_network;
 
@@ -232,10 +234,12 @@ pub async fn run(args: TrainArgs) -> Result<()> {
             .cloned()
             .collect::<Vec<_>>();
 
-        replay.extend(epoch_games.games);
-        while replay.len() > args.replay_games {
-            replay.pop_front();
-        }
+        extend_replay_shuffled(
+            &mut replay,
+            std::mem::take(&mut epoch_games.games),
+            args.replay_games,
+            derive_seed(args.seed, epoch as u64 ^ REPLAY_SHUFFLE_STREAM),
+        );
 
         let training_stats = train_epoch(
             &network,
@@ -518,6 +522,21 @@ fn train_epoch(
     })
 }
 
+fn extend_replay_shuffled<T>(
+    replay: &mut VecDeque<T>,
+    mut epoch_items: Vec<T>,
+    capacity: usize,
+    seed: u64,
+) {
+    debug_assert!(capacity > 0);
+    // Games arrive in completion order. Randomize each epoch so a FIFO capacity
+    // cut retains a representative subset instead of the slowest finishers.
+    epoch_items.shuffle(&mut SmallRng::seed_from_u64(seed));
+    replay.extend(epoch_items);
+    let overflow = replay.len().saturating_sub(capacity);
+    replay.drain(..overflow);
+}
+
 fn render_sample_games(games_dir: &Path, epoch: usize, games: Vec<ReplayGame>) -> Result<()> {
     for (id, game) in games.into_iter().enumerate() {
         generate_game_image(&game).save(game_path(games_dir, epoch, id))?;
@@ -651,12 +670,49 @@ fn validate_args(args: &TrainArgs) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::derive_seed;
+    use std::collections::{BTreeMap, VecDeque};
+
+    use super::{REPLAY_SHUFFLE_STREAM, derive_seed, extend_replay_shuffled};
 
     #[test]
     fn derived_seeds_are_stable_and_stream_specific() {
         assert_eq!(derive_seed(7, 11), derive_seed(7, 11));
         assert_ne!(derive_seed(7, 11), derive_seed(7, 12));
         assert_ne!(derive_seed(7, 11), derive_seed(8, 11));
+    }
+
+    #[test]
+    fn replay_capacity_keeps_a_shuffled_subset_of_the_oldest_epoch() {
+        fn build_replay() -> VecDeque<(usize, usize)> {
+            let mut replay = VecDeque::new();
+            for epoch in 0..3 {
+                let games = (0..700)
+                    .map(|completion_rank| (epoch, completion_rank))
+                    .collect();
+                extend_replay_shuffled(
+                    &mut replay,
+                    games,
+                    1_800,
+                    derive_seed(7, epoch as u64 ^ REPLAY_SHUFFLE_STREAM),
+                );
+            }
+            replay
+        }
+
+        let replay = build_replay();
+        assert_eq!(replay, build_replay());
+
+        let mut ranks_by_epoch = BTreeMap::<_, Vec<_>>::new();
+        for (epoch, completion_rank) in replay {
+            ranks_by_epoch
+                .entry(epoch)
+                .or_default()
+                .push(completion_rank);
+        }
+        assert_eq!(ranks_by_epoch[&0].len(), 400);
+        assert_eq!(ranks_by_epoch[&1].len(), 700);
+        assert_eq!(ranks_by_epoch[&2].len(), 700);
+        assert!(ranks_by_epoch[&0].iter().any(|rank| *rank < 300));
+        assert_ne!(ranks_by_epoch[&0], (300..700).collect::<Vec<_>>());
     }
 }
