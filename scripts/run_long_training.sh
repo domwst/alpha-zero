@@ -4,7 +4,9 @@ set -euo pipefail
 run_root=${1:?usage: run_long_training.sh RUN_ROOT}
 repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 architecture=${ARCHITECTURE:-kata-v1}
-epochs=${EPOCHS:-50}
+epochs=${EPOCHS:-}
+games_per_epoch=${GAMES_PER_EPOCH:-1500}
+replay_games=${REPLAY_GAMES:-4000}
 inference_batch_size=${INFERENCE_BATCH_SIZE:-256}
 inference_symmetry=${INFERENCE_SYMMETRY:-random}
 games_parallelism=${GAMES_PARALLELISM:-500}
@@ -25,19 +27,24 @@ export TOKIO_WORKER_THREADS=${TOKIO_WORKER_THREADS:-16}
 export GPU_MONITOR_INTERVAL_MS=1000
 export ALZ_LOG_ANSI=${ALZ_LOG_ANSI:-always}
 
+epoch_args=()
+if [[ -n "$epochs" ]]; then
+  epoch_args=(--epochs "$epochs")
+fi
+
 exec "$repo_dir/scripts/run_profiled.sh" "$segment_dir" \
   "$repo_dir/target/release/alz" train \
     --architecture "$architecture" \
     --device cuda \
-    --epochs "$epochs" \
-    --games-per-epoch 700 \
+    "${epoch_args[@]}" \
+    --games-per-epoch "$games_per_epoch" \
     --simulations 2000 \
     --inference-batch-size "$inference_batch_size" \
     --inference-symmetry "$inference_symmetry" \
     --games-parallelism "$games_parallelism" \
     --batch-timeout-us "$batch_timeout_us" \
     --training-batch-size "$training_batch_size" \
-    --replay-games 1800 \
+    --replay-games "$replay_games" \
     --rendered-games 5 \
     --seed "$seed" \
     --progress-every-games 10 \
