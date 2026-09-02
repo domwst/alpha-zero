@@ -8,5 +8,6 @@
 /stats
 /runs
 /remote-results
+/deployments
 
 .DS_Store
