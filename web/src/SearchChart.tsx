@@ -312,30 +312,6 @@ export function SearchChart({
           </div>
         )}
       </div>
-      <div className="scrubber">
-        <label htmlFor="snapshot-scrubber">Inspect search snapshot</label>
-        <input
-          id="snapshot-scrubber"
-          max={snapshots.length - 1}
-          min={0}
-          onInput={(event) => {
-            const index = Number(event.currentTarget.value);
-            onSelectIndex(index === snapshots.length - 1 ? null : index);
-          }}
-          step={1}
-          type="range"
-          value={inspectedIndex}
-        />
-        <output>{inspected.searched_simulations.toLocaleString()} simulations</output>
-        <button
-          className="text-button"
-          disabled={selectedIndex === null}
-          onClick={() => onSelectIndex(null)}
-          type="button"
-        >
-          Live
-        </button>
-      </div>
       <figcaption id="search-chart-reading">
         <strong>Reading:</strong>{' '}
         {leading

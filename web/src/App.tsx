@@ -470,6 +470,17 @@ export function App(): JSX.Element {
     });
   };
 
+  const stepInspection = (delta: number) => {
+    const count = allSnapshots.length;
+    if (count === 0) return;
+    const current = inspectedIndex ?? count - 1;
+    const next = Math.min(count - 1, Math.max(0, current + delta));
+    inspectedSimulations.value =
+      next === count - 1
+        ? null
+        : (allSnapshots[next]?.searched_simulations ?? null);
+  };
+
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -888,9 +899,8 @@ export function App(): JSX.Element {
           <div className="section-heading evolution-heading">
             <div>
               <h2 id="evolution-title">How search changes its mind</h2>
-              <p>Root visit fraction as simulations accumulate. Hover for exact values, click to inspect, or use the scrubber.</p>
+              <p>Root visit fraction as simulations accumulate. Hover for exact values; click to pin a snapshot.</p>
             </div>
-            <span className="live-label"><i className="status-dot" />{inspectedSimulations.value === null ? 'Live' : 'Inspecting history'}</span>
           </div>
           {showMoveGuidance ? (
             <SearchChart
@@ -906,6 +916,57 @@ export function App(): JSX.Element {
           )}
         </section>
       </main>
+
+      {showMoveGuidance && allSnapshots.length > 0 && (
+        <div className="inspect-bar" role="group" aria-label="Search snapshot inspection">
+          <span className="live-label">
+            <i aria-hidden="true" className="status-dot" />
+            {inspectedSimulations.value === null ? 'Live' : 'Inspecting history'}
+          </span>
+          <button
+            aria-label="Previous snapshot"
+            className="step-button"
+            disabled={(inspectedIndex ?? allSnapshots.length - 1) <= 0}
+            onClick={() => stepInspection(-1)}
+            type="button"
+          >
+            ‹
+          </button>
+          <input
+            aria-label="Snapshot position in search history"
+            max={allSnapshots.length - 1}
+            min={0}
+            onInput={(event) => {
+              const index = Number(event.currentTarget.value);
+              inspectedSimulations.value =
+                index === allSnapshots.length - 1
+                  ? null
+                  : (allSnapshots[index]?.searched_simulations ?? null);
+            }}
+            step={1}
+            type="range"
+            value={inspectedIndex ?? allSnapshots.length - 1}
+          />
+          <button
+            aria-label="Next snapshot"
+            className="step-button"
+            disabled={inspectedIndex === null}
+            onClick={() => stepInspection(1)}
+            type="button"
+          >
+            ›
+          </button>
+          <output>{(displaySnapshot?.searched_simulations ?? 0).toLocaleString()} sims</output>
+          <button
+            className="text-button"
+            disabled={inspectedIndex === null}
+            onClick={() => { inspectedSimulations.value = null; }}
+            type="button"
+          >
+            Live
+          </button>
+        </div>
+      )}
 
       <footer>
         Search is bounded to {(hello.value?.max_search_simulations ?? 10_000).toLocaleString()} simulations per position. Raw network policy is fixed; visits and temperature-adjusted move probability evolve independently.
