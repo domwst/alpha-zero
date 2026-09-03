@@ -82,7 +82,7 @@ export function ThemePicker(): JSX.Element {
           <rect height="8.5" rx="1.5" width="12" x="2" y="2.5" />
           <path d="M5.5 14h5M8 11v3" />
         </svg>
-        <span>System</span>
+        <span className="visually-hidden">System</span>
       </label>
       <label title="Light theme">
         <input
@@ -96,7 +96,7 @@ export function ThemePicker(): JSX.Element {
           <circle cx="8" cy="8" r="3" />
           <path d="M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15M3.05 3.05l1.06 1.06M11.89 11.89l1.06 1.06M11.89 4.11l1.06-1.06M3.05 12.95l1.06-1.06" />
         </svg>
-        <span>Light</span>
+        <span className="visually-hidden">Light</span>
       </label>
       <label title="Dark theme">
         <input
@@ -109,7 +109,7 @@ export function ThemePicker(): JSX.Element {
         <svg aria-hidden="true" viewBox="0 0 16 16">
           <path d="M13.5 9.5A6 6 0 0 1 6.5 2.5a6 6 0 1 0 7 7Z" />
         </svg>
-        <span>Dark</span>
+        <span className="visually-hidden">Dark</span>
       </label>
     </fieldset>
   );

@@ -1531,10 +1531,12 @@ footer {
 .theme-picker label {
   position: relative;
   display: inline-flex;
-  min-block-size: 28px;
+  min-inline-size: 30px;
   align-items: center;
+  justify-content: center;
+  min-block-size: 28px;
   gap: var(--ds-space-2);
-  padding-inline: var(--ds-space-3);
+  padding-inline: var(--ds-space-2);
   border-radius: var(--ds-radius-sm);
   color: var(--ds-color-text-muted);
   cursor: pointer;
@@ -1603,14 +1605,6 @@ footer {
 
   .topbar-actions {
     justify-content: flex-start;
-  }
-
-  .theme-picker label span {
-    display: none;
-  }
-
-  .theme-picker label {
-    padding-inline: var(--ds-space-2);
   }
 
   .panel-heading {
