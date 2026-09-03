@@ -13,6 +13,10 @@ use alz::{
         policy_log_probabilities,
     },
     gomoku::{BoardState, GomokuCodec, GomokuModel, ModelSpec, generate_game_image},
+    training_snapshot::{
+        ReplayBuffer, ReplayGame, find_latest_snapshot, load_training_snapshot,
+        save_training_snapshot,
+    },
 };
 use anyhow::{Context, Result, ensure};
 use rand::{
@@ -26,13 +30,7 @@ use tch::{
     nn::{self, Optimizer, OptimizerConfig},
 };
 
-use crate::{
-    cli::{InferenceSymmetryChoice, TrainArgs},
-    training_snapshot::{
-        ReplayBuffer, ReplayGame, find_latest_snapshot, load_training_snapshot,
-        save_training_snapshot,
-    },
-};
+use crate::cli::{InferenceSymmetryChoice, TrainArgs};
 
 use super::common::{resolve_device, validate_requested_architecture};
 

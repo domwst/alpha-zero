@@ -1,7 +1,6 @@
 mod cli;
 mod commands;
 mod logging;
-mod training_snapshot;
 
 use std::process::ExitCode;
 

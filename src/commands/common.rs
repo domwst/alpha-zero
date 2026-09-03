@@ -1,13 +1,13 @@
 use std::path::Path;
 
-use alz::gomoku::{GomokuModel, ModelSpec};
+use alz::{
+    gomoku::{GomokuModel, ModelSpec},
+    training_snapshot::{TrainingSnapshot, resolve_model_checkpoint},
+};
 use anyhow::{Context, Result, ensure};
 use tch::{Cuda, Device, nn};
 
-use crate::{
-    cli::{ArchitectureChoice, DeviceArgs, DeviceChoice},
-    training_snapshot::{TrainingSnapshot, resolve_model_checkpoint},
-};
+use crate::cli::{ArchitectureChoice, DeviceArgs, DeviceChoice};
 
 pub fn validate_requested_architecture(
     requested: Option<ArchitectureChoice>,

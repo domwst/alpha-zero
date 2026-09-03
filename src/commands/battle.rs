@@ -10,13 +10,14 @@ use alz::{
         Seat, do_battle,
     },
     gomoku::{BoardState, GomokuCodec, GomokuModel},
+    training_snapshot::SnapshotDescriptor,
 };
 use anyhow::{Context, Result, ensure};
 use futures::{StreamExt, stream};
 use serde::Serialize;
 use tch::Kind;
 
-use crate::{cli::BattleArgs, training_snapshot::SnapshotDescriptor};
+use crate::cli::BattleArgs;
 
 use super::common::{load_network, resolve_device};
 

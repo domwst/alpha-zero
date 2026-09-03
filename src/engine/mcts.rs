@@ -14,6 +14,40 @@ pub struct MoveDynamicInfo {
     pub descends: u32,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct RootMoveSnapshot<Move> {
+    pub action: Move,
+    pub prior: f32,
+    pub total_score: f32,
+    pub visits: u32,
+}
+
+impl<Move> RootMoveSnapshot<Move> {
+    pub fn mean_value(&self) -> Option<f32> {
+        (self.visits != 0).then(|| self.total_score / self.visits as f32)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RootSnapshot<Move> {
+    pub network_value: f32,
+    pub is_terminal: bool,
+    pub total_visits: u32,
+    pub moves: Vec<RootMoveSnapshot<Move>>,
+}
+
+impl<Move> RootSnapshot<Move> {
+    pub fn search_value(&self) -> Option<f32> {
+        (self.total_visits != 0).then(|| {
+            self.moves
+                .iter()
+                .map(|r#move| r#move.total_score)
+                .sum::<f32>()
+                / self.total_visits as f32
+        })
+    }
+}
+
 impl MoveDynamicInfo {
     pub fn get_avg_score(&self) -> f32 {
         if self.descends != 0 {
@@ -214,6 +248,31 @@ where
         Some((child.static_info(), unsafe { *child.dyn_info.get() }))
     }
 
+    /// Returns one coherent, immutable view of the root for diagnostics and
+    /// interactive clients. The move order is the game's legal-move order.
+    pub fn root_snapshot(&self) -> Option<RootSnapshot<TGame::Move>> {
+        let state = self.root.node_state.get()?;
+        let moves = state
+            .children
+            .iter()
+            .map(|child| {
+                let dynamic = unsafe { *child.dyn_info.get() };
+                RootMoveSnapshot {
+                    action: child.action.clone(),
+                    prior: child.static_info().priority,
+                    total_score: dynamic.total_score,
+                    visits: dynamic.descends,
+                }
+            })
+            .collect::<Vec<_>>();
+        Some(RootSnapshot {
+            network_value: state.value,
+            is_terminal: state.is_terminal,
+            total_visits: moves.iter().map(|r#move| r#move.visits).sum(),
+            moves,
+        })
+    }
+
     pub fn get_total_descends(&self) -> Option<usize> {
         Some(self.root.node_state.get()?.count_total_visits())
     }
@@ -412,11 +471,12 @@ where
 #[cfg(test)]
 mod tests {
     use std::{
-        future::{Future, ready},
+        future::{Future, pending, ready},
         sync::{
             Arc,
-            atomic::{AtomicUsize, Ordering},
+            atomic::{AtomicBool, AtomicUsize, Ordering},
         },
+        time::Duration,
     };
 
     use rand::{SeedableRng, rngs::SmallRng};
@@ -428,7 +488,7 @@ mod tests {
     #[derive(Clone, PartialEq)]
     struct TestGame(Option<f32>);
 
-    #[derive(Clone, Copy, PartialEq)]
+    #[derive(Clone, Copy, Debug, PartialEq)]
     enum TestMove {
         Win,
         Lose,
@@ -476,7 +536,7 @@ mod tests {
     #[derive(Clone, PartialEq)]
     struct DepthGame(usize);
 
-    #[derive(Clone, Copy, PartialEq)]
+    #[derive(Clone, Copy, Debug, PartialEq)]
     struct Step;
 
     impl MoveParameters for Step {
@@ -518,6 +578,29 @@ mod tests {
         }
     }
 
+    #[derive(Clone)]
+    struct CancellableEvaluator {
+        evaluations: Arc<AtomicUsize>,
+        allow_deep_evaluation: Arc<AtomicBool>,
+    }
+
+    impl PositionEvaluator<DepthGame> for CancellableEvaluator {
+        async fn evaluate<'a>(
+            &'a self,
+            _state: &'a DepthGame,
+            _moves: &'a [Step],
+        ) -> anyhow::Result<PositionEvaluation> {
+            let evaluation = self.evaluations.fetch_add(1, Ordering::Relaxed);
+            if evaluation >= 2 && !self.allow_deep_evaluation.load(Ordering::Relaxed) {
+                pending::<()>().await;
+            }
+            Ok(PositionEvaluation {
+                value: 0.0,
+                legal_policy: vec![1.0],
+            })
+        }
+    }
+
     #[tokio::test]
     async fn first_search_initializes_root_and_records_every_simulation() {
         let mut tree = MonteCarloTree::new(TestGame(None), TestEvaluator, RootNoise::None);
@@ -527,6 +610,41 @@ mod tests {
         assert_eq!(tree.get_total_descends(), Some(1));
         assert_eq!(tree.get_policy(), [1.0, 0.0]);
         assert_eq!(tree.get_move_stats(0).unwrap().1.get_avg_score(), 1.0);
+
+        let snapshot = tree.root_snapshot().unwrap();
+        assert_eq!(snapshot.network_value, 0.0);
+        assert_eq!(snapshot.total_visits, 1);
+        assert_eq!(snapshot.search_value(), Some(1.0));
+        assert_eq!(snapshot.moves[0].action, TestMove::Win);
+        assert_eq!(snapshot.moves[0].prior, 0.75);
+        assert_eq!(snapshot.moves[0].visits, 1);
+        assert_eq!(snapshot.moves[0].mean_value(), Some(1.0));
+    }
+
+    #[tokio::test]
+    async fn cancelled_simulation_preserves_a_reusable_tree() {
+        let evaluations = Arc::new(AtomicUsize::new(0));
+        let allow_deep_evaluation = Arc::new(AtomicBool::new(false));
+        let evaluator = CancellableEvaluator {
+            evaluations: evaluations.clone(),
+            allow_deep_evaluation: allow_deep_evaluation.clone(),
+        };
+        let mut tree = MonteCarloTree::new(DepthGame(3), evaluator, RootNoise::None);
+        let mut rng = SmallRng::seed_from_u64(1);
+
+        tree.do_simulations(1, 1.0, &mut rng).await.unwrap();
+        let before = tree.root_snapshot().unwrap();
+        let cancelled = tokio::time::timeout(
+            Duration::from_millis(10),
+            tree.do_simulations(1, 1.0, &mut rng),
+        )
+        .await;
+        assert!(cancelled.is_err());
+        assert_eq!(tree.root_snapshot().unwrap(), before);
+
+        allow_deep_evaluation.store(true, Ordering::Relaxed);
+        tree.do_simulations(1, 1.0, &mut rng).await.unwrap();
+        assert_eq!(tree.get_total_descends(), Some(2));
     }
 
     #[tokio::test]

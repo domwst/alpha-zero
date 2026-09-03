@@ -7,7 +7,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use alz::{
+use crate::{
     engine::TrainingSample,
     gomoku::{
         ACTION_SCHEMA, BoardState, GAME_SCHEMA, GomokuPolicy, ModelSpec, POSITION_SCHEMA,
@@ -515,7 +515,7 @@ mod tests {
         nn::{self, OptimizerConfig},
     };
 
-    use alz::{
+    use crate::{
         engine::AlphaZeroNet,
         gomoku::{GomokuModel, GomokuMove},
     };

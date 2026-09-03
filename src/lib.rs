@@ -3,4 +3,5 @@
 
 pub mod engine;
 pub mod gomoku;
+pub mod training_snapshot;
 pub mod util;
