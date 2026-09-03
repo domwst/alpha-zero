@@ -3,6 +3,10 @@ name = "alz"
 version = "0.1.0"
 edition = "2024"
 
+[workspace]
+members = [".", "crates/demo-server"]
+resolver = "3"
+
 [dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
 bincode = "1.3"

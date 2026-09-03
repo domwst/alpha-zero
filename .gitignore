@@ -9,5 +9,7 @@
 /runs
 /remote-results
 /deployments
+/web/node_modules
+/web/dist
 
 .DS_Store
