@@ -680,6 +680,7 @@ h2 {
 
 .board {
   display: grid;
+  grid-area: 2 / 2;
   inline-size: 100%;
   aspect-ratio: 1;
   grid-template-columns: repeat(19, 1fr);
@@ -690,6 +691,38 @@ h2 {
 
 .board-row {
   display: contents;
+}
+
+.board-with-labels {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.board-labels {
+  display: grid;
+  color: var(--ds-color-text-subtle);
+  font-family: var(--ds-font-data);
+  font-size: var(--ds-font-size-eyebrow);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  user-select: none;
+}
+
+.board-labels-files {
+  grid-area: 1 / 2;
+  grid-template-columns: repeat(19, 1fr);
+  align-items: end;
+  justify-items: center;
+  padding-block-end: var(--ds-space-2);
+}
+
+.board-labels-ranks {
+  grid-area: 2 / 1;
+  grid-template-rows: repeat(19, 1fr);
+  align-items: center;
+  justify-items: end;
+  padding-inline-end: var(--ds-space-2);
 }
 
 .board-cell {
@@ -1675,6 +1708,10 @@ footer {
   .board-panel,
   .inspector-section {
     padding: var(--ds-space-4);
+  }
+
+  .board-labels {
+    font-size: 10px;
   }
 
   .evolution {

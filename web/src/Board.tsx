@@ -3,6 +3,7 @@ import { useRef, useState } from 'preact/hooks';
 
 import {
   BOARD_SIZE,
+  COLUMNS,
   type Cell,
   type MoveStats,
   type PositionMessage,
@@ -174,13 +175,25 @@ export function Board({
   }
 
   return (
-    <div
-      aria-label={`19 by 19 Gomoku board${showPolicy ? ' with policy overlay' : ''}`}
-      className="board"
-      ref={gridRef}
-      role="grid"
-    >
-      {rows}
+    <div className="board-with-labels">
+      <div aria-hidden="true" className="board-labels board-labels-files">
+        {COLUMNS.split('').map((file) => (
+          <span key={file}>{file}</span>
+        ))}
+      </div>
+      <div aria-hidden="true" className="board-labels board-labels-ranks">
+        {Array.from({ length: BOARD_SIZE }, (_, index) => BOARD_SIZE - index).map((rank) => (
+          <span key={rank}>{rank}</span>
+        ))}
+      </div>
+      <div
+        aria-label={`19 by 19 Gomoku board${showPolicy ? ' with policy overlay' : ''}`}
+        className="board"
+        ref={gridRef}
+        role="grid"
+      >
+        {rows}
+      </div>
     </div>
   );
 }
