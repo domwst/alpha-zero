@@ -752,7 +752,8 @@ h2 {
   cursor: pointer;
 }
 
-.board-cell[aria-disabled="false"]:hover {
+.board-cell[aria-disabled="false"]:hover,
+.board-cell[aria-disabled="false"]:focus-visible {
   background: color-mix(in srgb, var(--ds-color-accent) 12%, transparent);
 }
 
@@ -764,6 +765,12 @@ h2 {
   border-radius: var(--ds-radius-sm);
   content: "";
   pointer-events: none;
+}
+
+/* The selection ring and the hover-style tint mark the cursor; the native
+   focus outline is never drawn on the board. */
+.board-cell:focus-visible {
+  outline: none;
 }
 
 .stone {
@@ -899,9 +906,13 @@ h2 {
   font-size: var(--ds-font-size-eyebrow);
 }
 
-.board-cell:hover .cell-tooltip,
-.board-cell:focus-visible .cell-tooltip {
+.board-cell:hover .cell-tooltip {
   display: block;
+}
+
+/* The selected cell's values live in the inspector; its own tooltip is noise. */
+.board-cell.is-selected .cell-tooltip {
+  display: none;
 }
 
 .board-legend {

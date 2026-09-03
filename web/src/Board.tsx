@@ -25,6 +25,7 @@ interface BoardProps {
   temperature: number;
   selected: Cell | null;
   onSelect: (cell: Cell) => void;
+  onNavigate?: (cell: Cell) => void;
 }
 
 const ARROW_DELTAS: Record<string, [number, number]> = {
@@ -42,6 +43,7 @@ export function Board({
   temperature,
   selected,
   onSelect,
+  onNavigate,
 }: BoardProps): JSX.Element {
   const gridRef = useRef<HTMLDivElement | null>(null);
   const [activeCell, setActiveCell] = useState<Cell>({ row: 0, column: 0 });
@@ -66,20 +68,35 @@ export function Board({
   const maximum = topValue;
   const moveOwner = position?.to_move === position?.human_color ? 'you' : 'the network';
 
-  const focusCell = (cell: Cell) => {
-    setActiveCell(cell);
-    gridRef.current
-      ?.querySelector<HTMLElement>(`[data-row="${cell.row}"][data-col="${cell.column}"]`)
-      ?.focus();
+  const moveCursor = (from: Cell, rowDelta: number, columnDelta: number) => {
+    let row = from.row + rowDelta;
+    let column = from.column + columnDelta;
+    while (row >= 0 && row < BOARD_SIZE && column >= 0 && column < BOARD_SIZE) {
+      if (!stones.has(cellKey({ row, column }))) {
+        const next = { row, column };
+        setActiveCell(next);
+        onNavigate?.(next);
+        gridRef.current
+          ?.querySelector<HTMLElement>(`[data-row="${row}"][data-col="${column}"]`)
+          ?.focus();
+        return;
+      }
+      row += rowDelta;
+      column += columnDelta;
+    }
   };
 
   const handleCellKeyDown = (cell: Cell, event: KeyboardEvent) => {
     const delta = ARROW_DELTAS[event.key];
-    if (!delta) return;
-    event.preventDefault();
-    const row = Math.min(BOARD_SIZE - 1, Math.max(0, cell.row + delta[0]));
-    const column = Math.min(BOARD_SIZE - 1, Math.max(0, cell.column + delta[1]));
-    if (row !== cell.row || column !== cell.column) focusCell({ row, column });
+    if (delta) {
+      event.preventDefault();
+      moveCursor(cell, delta[0], delta[1]);
+      return;
+    }
+    if ((event.key === 'Enter' || event.key === ' ') && !event.repeat) {
+      event.preventDefault();
+      if (!stones.has(cellKey(cell))) onSelect(cell);
+    }
   };
 
   const rows: JSX.Element[] = [];
@@ -120,8 +137,10 @@ export function Board({
           data-row={row}
           key={key}
           onClick={() => {
-            setActiveCell(cell);
-            if (canInspect) onSelect(cell);
+            if (canInspect) {
+              setActiveCell(cell);
+              onSelect(cell);
+            }
           }}
           onKeyDown={(event) => handleCellKeyDown(cell, event)}
           role="gridcell"

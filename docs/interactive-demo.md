@@ -16,7 +16,10 @@ browser so the evolution chart and board can be scrubbed without stopping live s
 Move guidance can be shown always, only on the network's turn, or never. The setting applies to board
 markers and tooltips, candidate ranking, search history, and last-move policy details. Select an empty
 cell once to inspect it and activate the selected cell again to play it. No cell is selected initially,
-search never changes selection, and a submitted move clears it immediately. This works on either
+search never changes selection, and a submitted move keeps the selection as a pending marker until
+the resulting position arrives and replaces it with the played stone. Arrow keys move the selection
+(it is created on the first press), skipping occupied cells; Enter or Space activates the focused
+cell; Esc clears the selection. This works on either
 side's turn: on the network's turn the interface labels the current color and treats the move as a
 manual override, while `Let network choose` samples from MCTS normally. The evolution chart shows
 numeric axis ticks and exact vertical-slice values on hover; clicking the chart pins that snapshot. A

@@ -108,6 +108,7 @@ export function App(): JSX.Element {
   const budget = useSignal(2_000);
   const requestedBudget = useSignal(0);
   const newHumanColor = useSignal<StoneColor>('black');
+  const playInFlight = useSignal<number | null>(null);
   const error = useSignal<ErrorMessage | null>(null);
   const lastJudgment = useSignal<MoveJudgment | null>(null);
   const [connectionGeneration, setConnectionGeneration] = useState(0);
@@ -179,6 +180,7 @@ export function App(): JSX.Element {
         snapshots.value = [];
         inspectedSimulations.value = null;
         selected.value = null;
+        playInFlight.value = null;
         requestedBudget.value = 0;
         error.value = null;
 
@@ -237,6 +239,7 @@ export function App(): JSX.Element {
       }
 
       error.value = message;
+      playInFlight.value = null;
       if (awaitingRestoredPosition) ws.close();
       if (!message.recoverable) requestedBudget.value = 0;
     });
@@ -262,6 +265,7 @@ export function App(): JSX.Element {
         message: 'Could not connect to the analysis server.',
         recoverable: true,
       };
+      playInFlight.value = null;
     });
 
     return () => {
@@ -412,6 +416,7 @@ export function App(): JSX.Element {
 
   const playCell = (cell: Cell) => {
     if (!currentPosition || currentPosition.outcome !== null) return;
+    if (playInFlight.value === currentPosition.position_id) return;
     const judgingHumanMove = isHumanTurn;
     const latestMove = liveSnapshot?.moves.find(
       (move) => cellKey(move) === cellKey(cell),
@@ -430,7 +435,7 @@ export function App(): JSX.Element {
     });
     if (!sent) return;
 
-    selected.value = null;
+    playInFlight.value = currentPosition.position_id;
     if (judgingHumanMove) {
       lastJudgment.value = {
         name: moveName(cell),
@@ -610,6 +615,9 @@ export function App(): JSX.Element {
           <div className="board-frame">
             {currentPosition ? (
               <Board
+                onNavigate={(cell) => {
+                  selected.value = cell;
+                }}
                 onSelect={selectOrPlayCell}
                 overlay={overlay.value}
                 position={currentPosition}
