@@ -1041,12 +1041,13 @@ h2 {
 }
 
 .value-grid > div {
+  position: relative;
   padding: var(--ds-space-3);
   border-radius: var(--ds-radius);
   background: var(--ds-color-surface-subtle);
 }
 
-.value-grid span {
+.value-grid > div > span {
   display: block;
   color: var(--ds-color-text-muted);
   font-size: var(--ds-font-size-eyebrow);
@@ -1058,6 +1059,73 @@ h2 {
   color: var(--ds-color-text-primary);
   font-size: var(--ds-font-size-control);
   font-variant-numeric: tabular-nums;
+}
+
+.info-tip {
+  position: static;
+}
+
+.info-tip-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 15px;
+  block-size: 15px;
+  margin-inline-start: var(--ds-space-1);
+  padding: 0;
+  border: 1px solid var(--ds-color-border-strong);
+  border-radius: 50%;
+  color: var(--ds-color-text-muted);
+  background: transparent;
+  cursor: help;
+  font-size: 10px;
+  font-weight: var(--ds-font-weight-bold);
+  line-height: 1;
+  vertical-align: 1px;
+}
+
+.info-tip-trigger:hover {
+  border-color: var(--ds-color-text-subtle);
+  color: var(--ds-color-text-primary);
+}
+
+.info-tip .info-tip-popover {
+  position: absolute;
+  inset-block-start: calc(100% + var(--ds-space-2));
+  inset-inline: 0;
+  z-index: var(--ds-z-popover);
+  display: none;
+  padding: var(--ds-space-3);
+  border: 1px solid var(--ds-color-border-strong);
+  border-radius: var(--ds-radius);
+  color: var(--ds-color-text);
+  background: var(--ds-color-surface);
+  box-shadow: var(--ds-shadow-overlay);
+  font-size: var(--ds-font-size-label);
+  text-align: start;
+  pointer-events: none;
+}
+
+.info-tip:hover .info-tip-popover,
+.info-tip-trigger:focus-visible ~ .info-tip-popover {
+  display: block;
+}
+
+.info-tip .info-tip-popover strong {
+  display: block;
+  margin-block-end: var(--ds-space-1);
+  color: var(--ds-color-text-primary);
+  font-size: var(--ds-font-size-label);
+  font-weight: var(--ds-font-weight-semibold);
+}
+
+.info-tip .info-tip-live {
+  display: block;
+  margin-block-start: var(--ds-space-2);
+  padding-block-start: var(--ds-space-2);
+  border-block-start: 1px solid var(--ds-color-border);
+  color: var(--ds-color-text-muted);
+  font-size: var(--ds-font-size-label);
 }
 
 .table-wrap {

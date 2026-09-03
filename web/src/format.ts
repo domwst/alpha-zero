@@ -14,3 +14,14 @@ export function formatEta(seconds: number): string {
   if (seconds < 60) return `${Math.round(seconds)}s`;
   return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
 }
+
+/** Describes which side a root value (−1…+1, from the mover's perspective) currently favors. */
+export function favorsText(
+  value: number | null,
+  toMove: string,
+  opponent: string,
+): string {
+  if (value === null) return 'No evaluation yet.';
+  if (Math.abs(value) < 0.05) return 'Right now: close to even.';
+  return `Right now: favors ${value > 0 ? toMove : opponent}.`;
+}

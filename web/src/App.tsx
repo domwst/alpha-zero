@@ -3,8 +3,9 @@ import type { JSX } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 
 import { seriesColor, seriesColorIndexes, trackedMoves } from './chartSeries';
-import { formatEta, percent, signed } from './format';
+import { formatEta, favorsText, percent, signed } from './format';
 import { Board, type Overlay } from './Board';
+import { InfoTip } from './InfoTip';
 import { SearchChart } from './SearchChart';
 import { ThemePicker } from './ThemePicker';
 import {
@@ -334,6 +335,7 @@ export function App(): JSX.Element {
   const maximumBudget = hello.value?.max_search_simulations ?? 10_000;
   const budgetStep = maximumBudget < 100 ? 1 : 100;
   const turnColor = titleCase(currentPosition?.to_move ?? 'black');
+  const opponentColor = currentPosition?.to_move === 'white' ? 'Black' : 'White';
   const turnLabel = currentPosition
     ? outcomeText(currentPosition) ?? `${turnColor} to move`
     : 'Preparing board';
@@ -709,8 +711,44 @@ export function App(): JSX.Element {
               <span className="muted">{selected.value ? `${moveName(selected.value)} selected` : 'Select a cell'}</span>
             </div>
             <div className="value-grid">
-              <div><span>Network value V</span><strong>{signed(displaySnapshot?.network_value ?? null)}</strong></div>
-              <div><span>Search value Q</span><strong>{signed(displaySnapshot?.search_value ?? null)}</strong></div>
+              <div>
+                <span>
+                  Network value V
+                  <InfoTip
+                    id="tip-network-value"
+                    title="Network value V"
+                    triggerLabel="What network value V means"
+                  >
+                    The value head’s raw read of the position on the board, before any search.
+                    It runs from −1 to +1 and is always measured from the perspective of the side
+                    to move: positive favors the current player, negative favors the opponent —
+                    so which color that is flips with every move.
+                    <span className="info-tip-live">
+                      {favorsText(displaySnapshot?.network_value ?? null, turnColor, opponentColor)}
+                    </span>
+                  </InfoTip>
+                </span>
+                <strong>{signed(displaySnapshot?.network_value ?? null)}</strong>
+              </div>
+              <div>
+                <span>
+                  Search value Q
+                  <InfoTip
+                    id="tip-search-value"
+                    title="Search value Q"
+                    triggerLabel="What search value Q means"
+                  >
+                    The search’s estimate of the same position: a visit-weighted average over
+                    the root moves explored so far, using the same convention as V — positive
+                    favors the side to move. It sharpens toward the best line as visits
+                    accumulate.
+                    <span className="info-tip-live">
+                      {favorsText(displaySnapshot?.search_value ?? null, turnColor, opponentColor)}
+                    </span>
+                  </InfoTip>
+                </span>
+                <strong>{signed(displaySnapshot?.search_value ?? null)}</strong>
+              </div>
               <div><span>Tree visits</span><strong>{displaySnapshot?.total_visits.toLocaleString() ?? '—'}</strong></div>
               <div><span>Carried visits</span><strong>{displaySnapshot?.carried_visits.toLocaleString() ?? currentPosition?.carried_visits.toLocaleString() ?? '—'}</strong></div>
             </div>
