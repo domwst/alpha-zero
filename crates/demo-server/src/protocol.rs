@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -22,6 +22,10 @@ pub enum GameOutcome {
 pub enum ClientMessage {
     NewGame {
         human_color: StoneColor,
+    },
+    RestoreGame {
+        human_color: StoneColor,
+        moves: Vec<Cell>,
     },
     StartSearch {
         position_id: u64,
@@ -48,7 +52,7 @@ pub struct CheckpointInfo {
     pub model_digest: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Cell {
     pub row: u8,
     pub column: u8,
@@ -136,6 +140,18 @@ mod tests {
             ClientMessage::StartSearch {
                 position_id: 7,
                 simulations: 2_000,
+            }
+        );
+
+        let restore = serde_json::from_str::<ClientMessage>(
+            r#"{"type":"restore_game","human_color":"white","moves":[{"row":9,"column":9},{"row":9,"column":10}]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            restore,
+            ClientMessage::RestoreGame {
+                human_color: StoneColor::White,
+                moves: vec![Cell { row: 9, column: 9 }, Cell { row: 9, column: 10 },],
             }
         );
 

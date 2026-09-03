@@ -26,11 +26,12 @@ import {
   PROTOCOL_VERSION,
   cellKey,
   moveName,
+  restoreGameCommand,
   temperatureProbabilities,
   visitFraction,
 } from './protocol';
 
-type ConnectionState = 'connecting' | 'connected' | 'disconnected';
+type ConnectionState = 'connecting' | 'restoring' | 'connected' | 'disconnected';
 
 interface MoveJudgment {
   name: string;
@@ -113,6 +114,10 @@ export function App(): JSX.Element {
   const socket = useSignal<WebSocket | null>(null);
 
   useEffect(() => {
+    const resumePosition = position.value;
+    const restoreMessage = restoreGameCommand(resumePosition, newHumanColor.value);
+    let handshakeAccepted = false;
+    let awaitingRestoredPosition = true;
     const ws = new WebSocket(websocketUrl());
     socket.value = ws;
     connection.value = 'connecting';
@@ -122,9 +127,6 @@ export function App(): JSX.Element {
       if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message));
     };
 
-    ws.addEventListener('open', () => {
-      if (socket.value === ws) connection.value = 'connected';
-    });
     ws.addEventListener('message', (event) => {
       if (socket.value !== ws) return;
       let message: ServerMessage;
@@ -151,15 +153,27 @@ export function App(): JSX.Element {
             message: `Incompatible server protocol ${message.protocol_version} for a ${message.board_size}×${message.board_size} board.`,
             recoverable: false,
           };
+          socket.value = null;
+          connection.value = 'disconnected';
           ws.close();
           return;
         }
+        handshakeAccepted = true;
         hello.value = message;
-        budget.value = message.default_search_simulations;
+        if (!resumePosition) budget.value = message.default_search_simulations;
+        if (resumePosition) connection.value = 'restoring';
+        sendOnThisSocket(restoreMessage);
         return;
       }
 
+      if (!handshakeAccepted) return;
+
       if (message.type === 'position') {
+        if (awaitingRestoredPosition) {
+          awaitingRestoredPosition = false;
+          if (resumePosition) lastJudgment.value = null;
+        }
+        connection.value = 'connected';
         position.value = message;
         status.value = null;
         snapshots.value = [];
@@ -223,12 +237,21 @@ export function App(): JSX.Element {
       }
 
       error.value = message;
+      if (awaitingRestoredPosition) ws.close();
       if (!message.recoverable) requestedBudget.value = 0;
     });
     ws.addEventListener('close', () => {
       if (socket.value === ws) {
         socket.value = null;
         connection.value = 'disconnected';
+        if (!error.value) {
+          error.value = {
+            type: 'error',
+            code: 'connection_closed',
+            message: 'The analysis server disconnected.',
+            recoverable: true,
+          };
+        }
       }
     });
     ws.addEventListener('error', () => {
@@ -271,11 +294,13 @@ export function App(): JSX.Element {
 
   const send = (message: object): boolean => {
     const ws = socket.value;
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
+    if (connection.value !== 'connected' || !ws || ws.readyState !== WebSocket.OPEN) {
       error.value = {
         type: 'error',
         code: 'not_connected',
-        message: 'The analysis server is not connected.',
+        message: connection.value === 'restoring'
+          ? 'The game is still being restored.'
+          : 'The analysis server is not connected.',
         recoverable: true,
       };
       return false;

@@ -80,3 +80,15 @@ position are rejected and the browser ignores stale snapshots.
 WebSocket session before the inference executor is joined. This prevents Axum's graceful-shutdown
 wait from being held open by an upgraded connection. A second signal exits immediately; a five-second
 watchdog provides the same hard-stop guarantee if a native inference call does not return.
+
+## Reconnect and restart recovery
+
+Protocol version 2 initializes every WebSocket from a browser-supplied move sequence. On the first
+connection that sequence is empty. On reconnect, the browser sends the last server-confirmed moves
+and human color while continuing to display the existing board. The server validates and replays the
+moves from an empty board before publishing the restored position.
+
+Only game state is restored. The MCTS tree, root visits, search snapshots, and last-move
+analysis are discarded, and the browser starts a fresh search using its current budget. This works
+across a dropped connection or server process restart while the page remains open; reloading the page
+still starts a new game because game state is not stored in browser storage.

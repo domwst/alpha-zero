@@ -95,7 +95,6 @@ where
         },
     )
     .await?;
-    send_many(&mut socket, session.initial_messages()).await?;
 
     let mut last_snapshot_at: Option<Instant> = None;
     loop {
@@ -238,10 +237,6 @@ where
         }
     }
 
-    fn initial_messages(&self) -> Vec<ServerMessage> {
-        vec![self.position_message(), self.search_status()]
-    }
-
     fn to_move(&self) -> StoneColor {
         if self.stones.len().is_multiple_of(2) {
             StoneColor::Black
@@ -308,6 +303,10 @@ where
         match command {
             ClientMessage::NewGame { human_color } => {
                 self.start_new_game(human_color);
+                Ok(self.position_update_messages())
+            }
+            ClientMessage::RestoreGame { human_color, moves } => {
+                self.restore_game(human_color, &moves)?;
                 Ok(self.position_update_messages())
             }
             ClientMessage::StartSearch {
@@ -400,6 +399,57 @@ where
         self.carried_visits = 0;
         self.target_simulations = 0;
         self.search_elapsed = Duration::ZERO;
+    }
+
+    fn restore_game(&mut self, human_color: StoneColor, moves: &[Cell]) -> Result<()> {
+        ensure!(
+            moves.len() <= BoardState::N * BoardState::N,
+            "restore contains too many moves"
+        );
+
+        let mut state = BoardState::new();
+        let mut stones = Vec::with_capacity(moves.len());
+        for (ply, cell) in moves.iter().enumerate() {
+            ensure!(
+                (cell.row as usize) < BoardState::N && (cell.column as usize) < BoardState::N,
+                "restore move {} is outside the board",
+                ply + 1
+            );
+            let legal_moves = match state.get_state() {
+                TerminationState::Moves(legal_moves) => legal_moves,
+                TerminationState::Terminal(_) => {
+                    anyhow::bail!("restore contains moves after the game ended")
+                }
+            };
+            let action = GomokuMove::from_xy(cell.row as usize, cell.column as usize);
+            ensure!(
+                legal_moves.contains(&action),
+                "restore move {} targets an occupied cell",
+                ply + 1
+            );
+            let color = if ply.is_multiple_of(2) {
+                StoneColor::Black
+            } else {
+                StoneColor::White
+            };
+            state = state.make_move(&action);
+            stones.push(Stone {
+                row: cell.row,
+                column: cell.column,
+                color,
+            });
+        }
+
+        self.tree = MonteCarloTree::new(state.clone(), self.evaluator.clone(), RootNoise::None);
+        self.state = state;
+        self.stones = stones;
+        self.human_color = human_color;
+        self.position_id += 1;
+        self.analysis_id += 1;
+        self.carried_visits = 0;
+        self.target_simulations = 0;
+        self.search_elapsed = Duration::ZERO;
+        Ok(())
     }
 
     fn legal_moves(&self) -> Result<Box<[GomokuMove]>> {
@@ -626,6 +676,51 @@ mod tests {
         assert_eq!(session.position_id, 2);
         assert_eq!(session.searched_simulations(), 0);
         assert_eq!(session.current_total_visits(), session.carried_visits);
+    }
+
+    #[tokio::test]
+    async fn restore_replays_moves_and_discards_previous_analysis() {
+        let mut session = GameSession::new(UniformEvaluator, config(), 1);
+        session
+            .try_handle_command(ClientMessage::StartSearch {
+                position_id: 1,
+                simulations: 8,
+            })
+            .unwrap();
+        session.run_search_chunk(8).await.unwrap();
+        assert_eq!(session.current_total_visits(), 8);
+
+        session
+            .try_handle_command(ClientMessage::RestoreGame {
+                human_color: StoneColor::White,
+                moves: vec![Cell { row: 9, column: 9 }, Cell { row: 9, column: 10 }],
+            })
+            .unwrap();
+
+        assert_eq!(session.position_id, 2);
+        assert_eq!(session.human_color, StoneColor::White);
+        assert_eq!(session.stones.len(), 2);
+        assert_eq!(session.stones[0].color, StoneColor::Black);
+        assert_eq!(session.stones[1].color, StoneColor::White);
+        assert_eq!(session.to_move(), StoneColor::Black);
+        assert_eq!(session.current_total_visits(), 0);
+        assert_eq!(session.carried_visits, 0);
+        assert_eq!(session.target_simulations, 0);
+    }
+
+    #[test]
+    fn invalid_restore_does_not_partially_replace_the_session() {
+        let mut session = GameSession::new(UniformEvaluator, config(), 1);
+        let result = session.try_handle_command(ClientMessage::RestoreGame {
+            human_color: StoneColor::White,
+            moves: vec![Cell { row: 9, column: 9 }, Cell { row: 9, column: 9 }],
+        });
+
+        assert!(result.is_err());
+        assert_eq!(session.position_id, 1);
+        assert_eq!(session.human_color, StoneColor::Black);
+        assert!(session.stones.is_empty());
+        assert_eq!(session.current_total_visits(), 0);
     }
 
     #[test]

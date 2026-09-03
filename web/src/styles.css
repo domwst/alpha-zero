@@ -319,6 +319,7 @@ h2 {
 }
 
 .connection-connecting i,
+.connection-restoring i,
 .connection-disconnected i {
   background: var(--ds-color-warning);
 }

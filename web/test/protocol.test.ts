@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { cellKey, temperatureProbabilities } from '../src/protocol.ts';
+import {
+  cellKey,
+  restoreGameCommand,
+  temperatureProbabilities,
+} from '../src/protocol.ts';
 
 function move(row: number, column: number, visits: number) {
   return { row, column, prior: 0.5, visits, mean_value: null };
@@ -29,4 +33,35 @@ test('an unvisited root has zero displayed move probability', () => {
   const moves = [move(0, 0, 0), move(0, 1, 0)];
   const probabilities = temperatureProbabilities(moves, 0.7);
   assert.deepEqual([...probabilities.values()], [0, 0]);
+});
+
+test('restore command keeps move order and strips derived stone colors', () => {
+  const command = restoreGameCommand({
+    type: 'position',
+    position_id: 7,
+    ply: 2,
+    human_color: 'white',
+    to_move: 'black',
+    stones: [
+      { row: 9, column: 9, color: 'black' },
+      { row: 9, column: 10, color: 'white' },
+    ],
+    last_move: { row: 9, column: 10 },
+    outcome: null,
+    carried_visits: 12,
+  }, 'black');
+
+  assert.deepEqual(command, {
+    type: 'restore_game',
+    human_color: 'white',
+    moves: [
+      { row: 9, column: 9 },
+      { row: 9, column: 10 },
+    ],
+  });
+  assert.deepEqual(restoreGameCommand(null, 'white'), {
+    type: 'restore_game',
+    human_color: 'white',
+    moves: [],
+  });
 });

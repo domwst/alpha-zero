@@ -24,6 +24,7 @@ export interface MoveStats extends Cell {
 
 export type ClientMessage =
   | { type: 'new_game'; human_color: StoneColor }
+  | { type: 'restore_game'; human_color: StoneColor; moves: Cell[] }
   | { type: 'start_search'; position_id: number; simulations: number }
   | { type: 'stop_search'; position_id: number }
   | { type: 'play'; position_id: number; row: number; column: number }
@@ -92,9 +93,20 @@ export type ServerMessage =
   | SearchSnapshotMessage
   | ErrorMessage;
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 export const BOARD_SIZE = 19;
 export const COLUMNS = 'ABCDEFGHJKLMNOPQRST';
+
+export function restoreGameCommand(
+  position: PositionMessage | null,
+  fallbackHumanColor: StoneColor,
+): Extract<ClientMessage, { type: 'restore_game' }> {
+  return {
+    type: 'restore_game',
+    human_color: position?.human_color ?? fallbackHumanColor,
+    moves: position?.stones.map(({ row, column }) => ({ row, column })) ?? [],
+  };
+}
 
 export function cellKey(cell: Cell): string {
   return `${cell.row}:${cell.column}`;
