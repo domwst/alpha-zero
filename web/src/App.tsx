@@ -102,8 +102,8 @@ export function App(): JSX.Element {
   const inspectedSimulations = useSignal<number | null>(null);
   const selected = useSignal<Cell | null>(null);
   const overlay = useSignal<Overlay>('visits');
-  const policyVisibility = useSignal<PolicyVisibility>('always');
-  const temperature = useSignal(0.7);
+  const policyVisibility = useSignal<PolicyVisibility>('network_turn');
+  const temperature = useSignal(0.5);
   const budget = useSignal(2_000);
   const requestedBudget = useSignal(0);
   const newHumanColor = useSignal<StoneColor>('black');
