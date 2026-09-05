@@ -5,7 +5,9 @@ import {
   cellKey,
   restoreGameCommand,
   temperatureProbabilities,
+  undoMoves,
 } from '../src/protocol.ts';
+import type { PositionMessage } from '../src/protocol.ts';
 
 function move(row: number, column: number, visits: number) {
   return { row, column, prior: 0.5, visits, mean_value: null };
@@ -64,4 +66,42 @@ test('restore command keeps move order and strips derived stone colors', () => {
     human_color: 'white',
     moves: [],
   });
+});
+
+function position(
+  humanColor: 'black' | 'white',
+  toMove: 'black' | 'white',
+  moves: Array<[number, number]>,
+): PositionMessage {
+  return {
+    type: 'position',
+    position_id: 3,
+    ply: moves.length,
+    human_color: humanColor,
+    to_move: toMove,
+    stones: moves.map(([row, column], index) => ({
+      row,
+      column,
+      color: index % 2 === 0 ? 'black' : 'white',
+    })),
+    last_move: null,
+    outcome: null,
+    carried_visits: 0,
+  };
+}
+
+test('undo on the network turn takes back only the human move', () => {
+  const target = undoMoves(position('black', 'white', [[9, 9], [9, 10], [9, 11]]));
+  assert.deepEqual(target, [{ row: 9, column: 9 }, { row: 9, column: 10 }]);
+});
+
+test('undo on the human turn takes back the network reply too', () => {
+  const target = undoMoves(position('black', 'black', [[9, 9], [9, 10], [9, 11], [9, 12]]));
+  assert.deepEqual(target, [{ row: 9, column: 9 }, { row: 9, column: 10 }]);
+});
+
+test('undo reports nothing when the human has not moved yet', () => {
+  assert.equal(undoMoves(position('black', 'black', [])), null);
+  assert.equal(undoMoves(position('white', 'white', [[9, 9]])), null);
+  assert.equal(undoMoves(null), null);
 });

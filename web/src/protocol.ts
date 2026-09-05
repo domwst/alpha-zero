@@ -108,6 +108,19 @@ export function restoreGameCommand(
   };
 }
 
+/**
+ * Move list that takes back the human's last move — plus the network's reply,
+ * when one exists. Returns null when there is no human move to take back.
+ */
+export function undoMoves(position: PositionMessage | null): Cell[] | null {
+  if (!position) return null;
+  const takeBack = position.to_move === position.human_color ? 2 : 1;
+  if (position.stones.length < takeBack) return null;
+  return position.stones
+    .slice(0, position.stones.length - takeBack)
+    .map(({ row, column }) => ({ row, column }));
+}
+
 export function cellKey(cell: Cell): string {
   return `${cell.row}:${cell.column}`;
 }

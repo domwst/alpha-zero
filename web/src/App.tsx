@@ -27,6 +27,7 @@ import {
   cellKey,
   moveName,
   restoreGameCommand,
+  undoMoves,
   temperatureProbabilities,
   visitFraction,
 } from './protocol';
@@ -387,6 +388,7 @@ export function App(): JSX.Element {
     && currentPosition.outcome === null
     && selected.value,
   );
+  const undoTarget = undoMoves(currentPosition);
   const documentTitle = currentPosition
     ? `${turnLabel} — AlphaZero Playground`
     : 'AlphaZero Playground';
@@ -485,6 +487,16 @@ export function App(): JSX.Element {
       next === count - 1
         ? null
         : (allSnapshots[next]?.searched_simulations ?? null);
+  };
+
+  const undoLastMove = () => {
+    if (!currentPosition || !undoTarget) return;
+    lastJudgment.value = null;
+    send({
+      type: 'restore_game',
+      human_color: currentPosition.human_color,
+      moves: undoTarget,
+    });
   };
 
   return (
@@ -900,6 +912,14 @@ export function App(): JSX.Element {
                 type="button"
               >
                 Let network choose
+              </button>
+              <button
+                className="button"
+                disabled={!undoTarget}
+                onClick={undoLastMove}
+                type="button"
+              >
+                Undo move
               </button>
             </div>
           </section>
