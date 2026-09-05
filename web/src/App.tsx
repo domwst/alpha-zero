@@ -361,6 +361,13 @@ export function App(): JSX.Element {
   const simsPerSecond = liveSnapshot?.simulations_per_second ?? 0;
   const etaSeconds =
     running && simsPerSecond > 0 && remaining > 0 ? remaining / simsPerSecond : null;
+  const searchUnavailableReason = !currentPosition
+    ? 'Waiting for the server — search unlocks once a position arrives.'
+    : currentPosition.outcome !== null
+      ? 'The game is over. Start a new game to keep exploring.'
+      : !running && progress >= budget.value
+        ? 'The search budget is exhausted — increase it to resume the search from the current tree.'
+        : null;
   const maximumBudget = hello.value?.max_search_simulations ?? 10_000;
   const budgetStep = maximumBudget < 100 ? 1 : 100;
   const turnColor = titleCase(currentPosition?.to_move ?? 'black');
@@ -668,27 +675,30 @@ export function App(): JSX.Element {
           <section className="inspector-section">
             <div className="section-heading">
               <h2>Search controls</h2>
-              <button
-                className={`button${running ? '' : ' button-primary'}`}
-                disabled={
-                  !currentPosition
-                  || currentPosition.outcome !== null
-                  || (!running && progress >= budget.value)
-                }
-                onClick={startOrStopSearch}
-                title={
-                  !currentPosition
-                    ? undefined
-                    : currentPosition.outcome !== null
-                      ? 'The game is over.'
-                      : !running && progress >= budget.value
-                        ? 'Search budget is exhausted — increase the search budget to resume.'
-                        : undefined
-                }
-                type="button"
-              >
-                {running ? 'Stop search' : progress > 0 ? 'Continue search' : 'Run search'}
-              </button>
+              <div className="search-actions">
+                <button
+                  className={`button${running ? '' : ' button-primary'}`}
+                  disabled={
+                    !currentPosition
+                    || currentPosition.outcome !== null
+                    || (!running && progress >= budget.value)
+                  }
+                  onClick={startOrStopSearch}
+                  type="button"
+                >
+                  {running ? 'Stop search' : progress > 0 ? 'Continue search' : 'Run search'}
+                </button>
+                {searchUnavailableReason && (
+                  <InfoTip
+                    id="tip-search-button"
+                    title="Search unavailable"
+                    triggerLabel="Why is search unavailable?"
+                    variant="trigger"
+                  >
+                    {searchUnavailableReason}
+                  </InfoTip>
+                )}
+              </div>
             </div>
             <div className="control-grid">
               <label className="range-control">

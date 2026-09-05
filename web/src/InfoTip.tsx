@@ -4,12 +4,20 @@ interface InfoTipProps {
   id: string;
   title: string;
   triggerLabel: string;
+  /** 'tile' anchors the popover to the surrounding block; 'trigger' hugs the icon. */
+  variant?: 'tile' | 'trigger';
   children: ComponentChildren;
 }
 
-export function InfoTip({ id, title, triggerLabel, children }: InfoTipProps): JSX.Element {
+export function InfoTip({
+  id,
+  title,
+  triggerLabel,
+  variant = 'tile',
+  children,
+}: InfoTipProps): JSX.Element {
   return (
-    <span class="info-tip">
+    <span class={variant === 'trigger' ? 'info-tip info-tip--trigger' : 'info-tip'}>
       <button
         aria-describedby={id}
         aria-label={triggerLabel}

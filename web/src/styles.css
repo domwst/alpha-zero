@@ -1186,6 +1186,22 @@ h2 {
   font-size: var(--ds-font-size-label);
 }
 
+.info-tip--trigger {
+  position: relative;
+}
+
+.info-tip--trigger .info-tip-popover {
+  inset-block-start: calc(100% + var(--ds-space-2));
+  inset-inline: auto 0;
+  inline-size: 15rem;
+}
+
+.search-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+}
+
 .table-wrap {
   overflow-x: auto;
 }
