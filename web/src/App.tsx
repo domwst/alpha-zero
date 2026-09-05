@@ -676,9 +676,18 @@ export function App(): JSX.Element {
                   || (!running && progress >= budget.value)
                 }
                 onClick={startOrStopSearch}
+                title={
+                  !currentPosition
+                    ? undefined
+                    : currentPosition.outcome !== null
+                      ? 'The game is over.'
+                      : !running && progress >= budget.value
+                        ? 'Search budget is exhausted — increase the search budget to resume.'
+                        : undefined
+                }
                 type="button"
               >
-                {running ? 'Stop search' : 'Run search'}
+                {running ? 'Stop search' : progress > 0 ? 'Continue search' : 'Run search'}
               </button>
             </div>
             <div className="control-grid">
