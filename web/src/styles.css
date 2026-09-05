@@ -506,8 +506,16 @@ h2 {
 .workspace {
   display: grid;
   grid-template-columns: minmax(34rem, 1.35fr) minmax(22rem, 0.65fr);
+  align-items: start;
   gap: var(--ds-space-5);
   margin-block-start: var(--ds-space-5);
+}
+
+.board-column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-5);
+  min-inline-size: 0;
 }
 
 .panel {
@@ -645,7 +653,7 @@ h2 {
 
 .board-frame {
   inline-size: 100%;
-  max-inline-size: min(69vh, 42.5rem);
+  max-inline-size: min(56vh, 42.5rem);
   margin: var(--ds-space-5) auto var(--ds-space-4);
   padding: 1px;
 }
@@ -1320,7 +1328,6 @@ tbody tr:hover,
 
 .evolution {
   min-inline-size: 0;
-  grid-column: 1 / -1;
   padding: var(--ds-panel-padding) 0 0;
   overflow: hidden;
 }
@@ -1657,12 +1664,24 @@ figcaption strong {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .board-column {
+    display: contents;
+  }
+
+  .board-panel {
+    order: 1;
+  }
+
+  .inspector {
+    order: 2;
+  }
+
   .evolution {
-    grid-column: 1;
+    order: 3;
   }
 
   .board-frame {
-    max-inline-size: min(78vh, 42.5rem);
+    max-inline-size: min(64vh, 42.5rem);
   }
 }
 

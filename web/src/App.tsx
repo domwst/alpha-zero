@@ -562,7 +562,8 @@ export function App(): JSX.Element {
       )}
 
       <main className="workspace">
-        <section className="panel board-panel" aria-labelledby="board-title">
+        <div className="board-column">
+          <section className="panel board-panel" aria-labelledby="board-title">
           <div className="panel-heading">
             <div>
               <div className="turn-heading">
@@ -636,12 +637,32 @@ export function App(): JSX.Element {
                   }</span>
                   <span className="legend-note">larger square = more likely · 1 = top move</span>
                 </>
-            ) : (
-              <span className="legend-note">Move guidance is hidden by your settings.</span>
-            )}
+              ) : (
+                <span className="legend-note">Move guidance is hidden by your settings.</span>
+              )}
             </div>
           )}
-        </section>
+          </section>
+
+          {showMoveGuidance && (
+            <section className="panel evolution" aria-labelledby="evolution-title">
+              <div className="section-heading evolution-heading">
+                <div>
+                  <h2 id="evolution-title">How search changes its mind</h2>
+                  <p>Root visit fraction as simulations accumulate. Hover for exact values; click to pin a snapshot.</p>
+                </div>
+              </div>
+              <SearchChart
+                onSelectIndex={(index) => {
+                  inspectedSimulations.value =
+                    index === null ? null : (allSnapshots[index]?.searched_simulations ?? null);
+                }}
+                selectedIndex={inspectedIndex}
+                snapshots={allSnapshots}
+              />
+            </section>
+          )}
+        </div>
 
         <aside className="panel inspector" aria-label="Position analysis">
           <section className="inspector-section">
@@ -890,25 +911,6 @@ export function App(): JSX.Element {
             )}
           </section>
         </aside>
-
-        {showMoveGuidance && (
-          <section className="panel evolution" aria-labelledby="evolution-title">
-            <div className="section-heading evolution-heading">
-              <div>
-                <h2 id="evolution-title">How search changes its mind</h2>
-                <p>Root visit fraction as simulations accumulate. Hover for exact values; click to pin a snapshot.</p>
-              </div>
-            </div>
-            <SearchChart
-              onSelectIndex={(index) => {
-                inspectedSimulations.value =
-                  index === null ? null : (allSnapshots[index]?.searched_simulations ?? null);
-              }}
-              selectedIndex={inspectedIndex}
-              snapshots={allSnapshots}
-            />
-          </section>
-        )}
       </main>
 
       {showMoveGuidance && allSnapshots.length > 0 && (
