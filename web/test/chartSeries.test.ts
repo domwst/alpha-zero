@@ -54,12 +54,10 @@ test('tracked moves keep early leaders that later fall behind', () => {
   );
 });
 
-test('tracked moves deduplicate repeated leaders', () => {
+test('tracked moves deduplicate repeated leaders and carry latest visit counts', () => {
   const snapshots = [0, 100, 200].map((visits) => [move(3, 7, visits)]);
   const tracked = trackedMoves(snapshots);
   assert.equal(tracked.length, 1);
-  assert.deepEqual(
-    tracked.map((entry) => `${entry.row}:${entry.column}`),
-    ['3:7'],
-  );
+  assert.equal(tracked[0]!.visits, 200);
+  assert.deepEqual(`${tracked[0]!.row}:${tracked[0]!.column}`, '3:7');
 });

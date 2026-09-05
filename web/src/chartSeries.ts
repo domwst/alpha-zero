@@ -19,7 +19,8 @@ export function leadingMoves<T extends ChartMove>(moves: readonly T[]): T[] {
 /**
  * Every move that led a snapshot at any point, plus the latest leading pack.
  * Keeps the "search changed its mind" story visible even after a leader falls
- * behind. Ordered by standing in the latest snapshot.
+ * behind. Ordered by standing in the latest snapshot; each entry carries the
+ * latest snapshot's data (fresh visit counts) when the move is still listed.
  */
 export function trackedMoves<T extends ChartMove>(snapshots: readonly (readonly T[])[]): T[] {
   const byKey = new Map<string, T>();
@@ -35,13 +36,17 @@ export function trackedMoves<T extends ChartMove>(snapshots: readonly (readonly 
     if (leader) consider(leader);
   }
   const latest = snapshots[snapshots.length - 1];
-  const latestVisits = new Map(
-    (latest ?? []).map((move) => [moveKey(move), move.visits] as const),
+  const latestByKey = new Map(
+    (latest ?? []).map((move) => [moveKey(move), move] as const),
   );
   if (latest) for (const move of leadingMoves(latest)) consider(move);
-  return [...byKey.values()].sort(
-    (left, right) => (latestVisits.get(moveKey(right)) ?? 0) - (latestVisits.get(moveKey(left)) ?? 0),
-  );
+  return [...byKey.values()]
+    .map((move) => latestByKey.get(moveKey(move)) ?? move)
+    .sort(
+      (left, right) =>
+        (latestByKey.get(moveKey(right))?.visits ?? 0)
+        - (latestByKey.get(moveKey(left))?.visits ?? 0),
+    );
 }
 
 export function assignSeriesColorIndexes(
