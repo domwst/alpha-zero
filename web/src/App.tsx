@@ -380,12 +380,6 @@ export function App(): JSX.Element {
     && currentPosition.outcome === null
     && selected.value,
   );
-  const hiddenGuidanceText = policyVisibility.value === 'never'
-    ? 'Move probabilities and ranking are hidden.'
-    : currentPosition?.outcome
-      ? 'Move probabilities and ranking are hidden after the game.'
-      : 'Move probabilities and ranking will appear on the network’s turn.';
-
   const documentTitle = currentPosition
     ? `${turnLabel} — AlphaZero Playground`
     : 'AlphaZero Playground';
@@ -492,7 +486,7 @@ export function App(): JSX.Element {
         <div className="brand">
           <div>
             <h1>AlphaZero Playground</h1>
-            <p>Play Gomoku and inspect the search as it unfolds</p>
+            <p>Play Gomoku and inspect the MCTS search as it unfolds</p>
           </div>
         </div>
         <div className="topbar-actions">
@@ -577,10 +571,7 @@ export function App(): JSX.Element {
                 </span>
                 <h2 id="board-title">{turnLabel}</h2>
               </div>
-              <p>
-                Move {(currentPosition?.ply ?? 0) + 1}
-                {' · '}{selected.value ? `${moveName(selected.value)} selected` : 'no cell selected'}
-              </p>
+              <p>Move {(currentPosition?.ply ?? 0) + 1}{selected.value ? ` · ${moveName(selected.value)} selected` : ''}</p>
             </div>
             <div className="search-readout">
               <span className={running ? 'pulse-dot' : 'status-dot'} aria-hidden="true" />
@@ -602,7 +593,7 @@ export function App(): JSX.Element {
               <span style={{ inlineSize: `${Math.min(100, (progress / target) * 100)}%` }} />
             </div>
           )}
-          {currentPosition && currentPosition.outcome === null && (
+          {currentPosition && currentPosition.outcome === null && currentPosition.ply === 0 && (
             <div className={`turn-guidance ${isHumanTurn ? 'turn-guidance-human' : 'turn-guidance-network'}`}>
               <strong>{isHumanTurn ? `You are ${turnColor}.` : `The network is ${turnColor}.`}</strong>
               <span>
@@ -645,9 +636,9 @@ export function App(): JSX.Element {
                   }</span>
                   <span className="legend-note">larger square = more likely · 1 = top move</span>
                 </>
-              ) : (
-                <span className="legend-note">{hiddenGuidanceText}</span>
-              )}
+            ) : (
+              <span className="legend-note">Move guidance is hidden by your settings.</span>
+            )}
             </div>
           )}
         </section>
@@ -666,7 +657,7 @@ export function App(): JSX.Element {
                 onClick={startOrStopSearch}
                 type="button"
               >
-                {running ? 'Stop search' : progress >= budget.value ? 'Search complete' : 'Run search'}
+                {running ? 'Stop search' : 'Run search'}
               </button>
             </div>
             <div className="control-grid">
@@ -699,7 +690,7 @@ export function App(): JSX.Element {
               <div className="overlay-control-group">
                 <div className="control-copy">
                   <b>Show probabilities and ranking</b>
-                  <small>Applies to board hints, candidate ranking, and search history</small>
+                  <small>Applies to board hints, candidate table, and search history</small>
                 </div>
                 <fieldset className="segmented">
                   <legend className="visually-hidden">Show probabilities and ranking</legend>
@@ -724,7 +715,7 @@ export function App(): JSX.Element {
               <div className="overlay-control-group">
                 <div className="control-copy">
                   <b>Board overlay metric</b>
-                  <small>Choose what the square size represents when guidance is visible</small>
+                  <small>What the square size represents</small>
                 </div>
                 <fieldset className="segmented" disabled={!showMoveGuidance}>
                   <legend className="visually-hidden">Board policy overlay</legend>
@@ -752,7 +743,6 @@ export function App(): JSX.Element {
           <section className="inspector-section">
             <div className="section-heading">
               <h2>Position</h2>
-              <span className="muted">{selected.value ? `${moveName(selected.value)} selected` : 'Select a cell'}</span>
             </div>
             <div className="value-grid">
               <div>
@@ -793,14 +783,20 @@ export function App(): JSX.Element {
                 </span>
                 <strong>{signed(displaySnapshot?.search_value ?? null)}</strong>
               </div>
-              <div><span>Tree visits</span><strong>{displaySnapshot?.total_visits.toLocaleString() ?? '—'}</strong></div>
-              <div><span>Carried visits</span><strong>{displaySnapshot?.carried_visits.toLocaleString() ?? currentPosition?.carried_visits.toLocaleString() ?? '—'}</strong></div>
             </div>
+            <p className="visits-note">
+              {displaySnapshot
+                ? `${displaySnapshot.total_visits.toLocaleString()} tree visits`
+                : 'No search yet'}
+              {displaySnapshot && displaySnapshot.carried_visits > 0 && (
+                ` · ${displaySnapshot.carried_visits.toLocaleString()} carried from previous search`
+              )}
+            </p>
             {showMoveGuidance ? (
               <>
                 <div className="table-wrap">
                   <table aria-label="Top candidate moves">
-                    <thead><tr><th>Move</th><th>Prior</th><th>Visits</th><th>At T</th></tr></thead>
+                    <thead><tr><th>Move</th><th>Prior</th><th>Visits</th><th>P(move)</th></tr></thead>
                     <tbody>
                       {topMoves.map((move) => {
                         const key = cellKey(move);
@@ -842,7 +838,6 @@ export function App(): JSX.Element {
             ) : (
               <div className="move-guidance-hidden">
                 <b>Move guidance hidden</b>
-                <span>{hiddenGuidanceText}</span>
               </div>
             )}
             <div className="action-row">
@@ -866,19 +861,12 @@ export function App(): JSX.Element {
               >
                 Let network choose
               </button>
-              {selected.value && currentPosition?.outcome === null && (
-                <span className="action-hint">
-                  Or click {moveName(selected.value)} on the board again.
-                </span>
-              )}
             </div>
           </section>
 
           <section className="inspector-section judgment-section">
             <h2>How the network judged your last move</h2>
-            {!showMoveGuidance ? (
-              <p className="empty-copy">{hiddenGuidanceText}</p>
-            ) : lastJudgment.value ? (
+            {!showMoveGuidance ? null : lastJudgment.value ? (
               <div className="judgment-card">
                 <div>
                   <strong>{lastJudgment.value.name}</strong>
@@ -903,14 +891,14 @@ export function App(): JSX.Element {
           </section>
         </aside>
 
-        <section className="panel evolution" aria-labelledby="evolution-title">
-          <div className="section-heading evolution-heading">
-            <div>
-              <h2 id="evolution-title">How search changes its mind</h2>
-              <p>Root visit fraction as simulations accumulate. Hover for exact values; click to pin a snapshot.</p>
+        {showMoveGuidance && (
+          <section className="panel evolution" aria-labelledby="evolution-title">
+            <div className="section-heading evolution-heading">
+              <div>
+                <h2 id="evolution-title">How search changes its mind</h2>
+                <p>Root visit fraction as simulations accumulate. Hover for exact values; click to pin a snapshot.</p>
+              </div>
             </div>
-          </div>
-          {showMoveGuidance ? (
             <SearchChart
               onSelectIndex={(index) => {
                 inspectedSimulations.value =
@@ -919,10 +907,8 @@ export function App(): JSX.Element {
               selectedIndex={inspectedIndex}
               snapshots={allSnapshots}
             />
-          ) : (
-            <div className="chart-empty">{hiddenGuidanceText}</div>
-          )}
-        </section>
+          </section>
+        )}
       </main>
 
       {showMoveGuidance && allSnapshots.length > 0 && (
@@ -975,10 +961,6 @@ export function App(): JSX.Element {
           </button>
         </div>
       )}
-
-      <footer>
-        Search is bounded to {(hello.value?.max_search_simulations ?? 10_000).toLocaleString()} simulations per position. Raw network policy is fixed; visits and temperature-adjusted move probability evolve independently.
-      </footer>
     </div>
   );
 }

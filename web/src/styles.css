@@ -956,8 +956,7 @@ h2 {
   border-block-end: 0;
 }
 
-.muted,
-.action-hint {
+.muted {
   color: var(--ds-color-text-muted);
   font-size: var(--ds-font-size-label);
 }
@@ -1104,6 +1103,12 @@ h2 {
   color: var(--ds-color-text-primary);
   font-size: var(--ds-font-size-control);
   font-variant-numeric: tabular-nums;
+}
+
+.visits-note {
+  margin-block-start: var(--ds-space-3);
+  color: var(--ds-color-text-muted);
+  font-size: var(--ds-font-size-label);
 }
 
 .info-tip {
@@ -1272,10 +1277,6 @@ tbody tr:hover,
   flex-wrap: wrap;
   gap: var(--ds-space-2);
   margin-block-start: var(--ds-space-4);
-}
-
-.action-hint {
-  flex-basis: 100%;
 }
 
 .judgment-section h2 {
@@ -1589,14 +1590,6 @@ figcaption {
 
 figcaption strong {
   color: var(--ds-color-text);
-}
-
-footer {
-  padding: var(--ds-space-5) var(--ds-space-1) var(--ds-space-3);
-  color: var(--ds-color-text-subtle);
-  font-size: var(--ds-font-size-eyebrow);
-  text-align: center;
-  text-wrap: pretty;
 }
 
 .theme-picker {
