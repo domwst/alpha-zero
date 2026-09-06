@@ -21,7 +21,9 @@ the resulting position arrives and replaces it with the played stone. Arrow keys
 (it is created on the first press), skipping occupied cells; Enter or Space activates the focused
 cell; Esc clears the selection. This works on either
 side's turn: on the network's turn the interface labels the current color and treats the move as a
-manual override, while `Let network choose` samples from MCTS normally. The evolution chart shows
+manual override, while `Let network choose` samples from MCTS normally. `Undo move` takes back the
+human's last move (and the network's reply when one exists) by replaying the remaining moves into a
+fresh search — the tree is re-explored. The evolution chart shows
 numeric axis ticks and exact vertical-slice values on hover; clicking the chart pins that snapshot. A
 move keeps the color assigned when it first enters the leading set, even when its rank later changes.
 Black always moves first. The segmented next-game control states the move order for both colors and
