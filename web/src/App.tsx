@@ -676,7 +676,12 @@ export function App(): JSX.Element {
                   inspectedSimulations.value =
                     index === null ? null : (allSnapshots[index]?.searched_simulations ?? null);
                 }}
+                onSelectMove={(cell) => {
+                  selected.value =
+                    selected.value && cellKey(selected.value) === cellKey(cell) ? null : cell;
+                }}
                 selectedIndex={inspectedIndex}
+                selectedCell={selected.value}
                 snapshots={allSnapshots}
               />
             </section>

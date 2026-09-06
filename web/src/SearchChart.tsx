@@ -4,6 +4,7 @@ import { useState } from 'preact/hooks';
 import { seriesColor, seriesColorIndexes, trackedMoves } from './chartSeries';
 import { percent } from './format';
 import {
+  type Cell,
   type MoveStats,
   type SearchSnapshotMessage,
   cellKey,
@@ -15,6 +16,8 @@ interface SearchChartProps {
   snapshots: SearchSnapshotMessage[];
   selectedIndex: number | null;
   onSelectIndex: (index: number | null) => void;
+  selectedCell: Cell | null;
+  onSelectMove: (cell: Cell) => void;
 }
 
 interface HoverSlice {
@@ -41,6 +44,8 @@ export function SearchChart({
   snapshots,
   selectedIndex,
   onSelectIndex,
+  selectedCell,
+  onSelectMove,
 }: SearchChartProps): JSX.Element {
   const [hoverSlice, setHoverSlice] = useState<HoverSlice | null>(null);
 
@@ -80,6 +85,7 @@ export function SearchChart({
   const hoveredX = hovered ? hoverSlice?.viewX ?? null : null;
   const leading = candidates[0];
   const runnerUp = candidates[1];
+  const focusKey = selectedCell ? cellKey(selectedCell) : null;
   const latestShare = (candidate: typeof leading): number => {
     if (!candidate) return 0;
     return visitFraction(candidate, latest);
@@ -129,17 +135,28 @@ export function SearchChart({
 
   return (
     <figure className="search-figure">
-      <div className="chart-legend" aria-label="Leading move series and inspected values">
+      <div
+        aria-label="Leading move series; activate an entry to follow that move on the board"
+        className="chart-legend"
+        role="group"
+      >
         {candidates.map((candidate, index) => {
-          const move = inspected.moves.find((entry) => cellKey(entry) === cellKey(candidate));
+          const key = cellKey(candidate);
+          const move = inspected.moves.find((entry) => cellKey(entry) === key);
           const share = move ? visitFraction(move, inspected) : 0;
           const color = colorFor(candidate, index);
           return (
-            <span key={cellKey(candidate)}>
-              <i style={{ background: color }} />
+            <button
+              aria-pressed={focusKey === key}
+              className="chart-legend-item"
+              key={key}
+              onClick={() => onSelectMove(candidate)}
+              type="button"
+            >
+              <i aria-hidden="true" style={{ background: color }} />
               {moveName(candidate)}
               <b>{percent(share)}</b>
-            </span>
+            </button>
           );
         })}
         <span className="legend-note">Dashed line: raw network prior</span>
@@ -187,7 +204,7 @@ export function SearchChart({
                   y2={HEIGHT - MARGIN.bottom}
                 />
                 <text
-                  className="chart-label"
+                  className={`chart-label${ratio > 0 && ratio < 1 ? ' chart-label-minor' : ''}`}
                   textAnchor={ratio === 0 ? 'start' : ratio === 1 ? 'end' : 'middle'}
                   x={x(nodes)}
                   y={HEIGHT - 20}
@@ -214,17 +231,20 @@ export function SearchChart({
           >
             Search simulations
           </text>
-          {candidates.map((candidate, index) => (
-            <line
-              className="chart-prior"
-              key={`prior-${cellKey(candidate)}`}
-              stroke={colorFor(candidate, index)}
-              x1={MARGIN.left}
-              x2={WIDTH - MARGIN.right}
-              y1={y(candidate.prior)}
-              y2={y(candidate.prior)}
-            />
-          ))}
+          {candidates.map((candidate, index) => {
+            const dimmed = focusKey !== null && focusKey !== cellKey(candidate);
+            return (
+              <line
+                className={`chart-prior${dimmed ? ' is-dimmed' : ''}`}
+                key={`prior-${cellKey(candidate)}`}
+                stroke={colorFor(candidate, index)}
+                x1={MARGIN.left}
+                x2={WIDTH - MARGIN.right}
+                y1={y(candidate.prior)}
+                y2={y(candidate.prior)}
+              />
+            );
+          })}
           {candidates.map((candidate, index) => {
             const points = snapshots.map((snapshot) => {
               const move = snapshot.moves.find((entry) => cellKey(entry) === cellKey(candidate));
@@ -233,8 +253,9 @@ export function SearchChart({
             });
             const finalShare = latestShare(candidate);
             const color = colorFor(candidate, index);
+            const dimmed = focusKey !== null && focusKey !== cellKey(candidate);
             return (
-              <g key={cellKey(candidate)}>
+              <g className={`chart-series${dimmed ? ' is-dimmed' : ''}`} key={cellKey(candidate)}>
                 <polyline
                   fill="none"
                   points={points.join(' ')}

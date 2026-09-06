@@ -110,6 +110,7 @@
   --ds-focus-width: 2px;
   --ds-focus-offset: 2px;
   --ds-opacity-disabled: 0.45;
+  --ds-dim-muted: 0.78;
   --ds-shadow-selected: 0 1px 2px rgba(16, 16, 20, 0.08);
   --ds-shadow-overlay: light-dark(
     0 16px 40px rgba(16, 16, 20, 0.18),
@@ -207,6 +208,11 @@ input[type="range"] {
 :focus-visible {
   outline: var(--ds-focus-width) solid var(--ds-focus-color);
   outline-offset: var(--ds-focus-offset);
+}
+
+::selection {
+  background: var(--ds-color-accent);
+  color: var(--ds-color-on-accent);
 }
 
 .visually-hidden {
@@ -1387,6 +1393,37 @@ tbody tr:hover,
   font-size: var(--ds-font-size-label);
 }
 
+.chart-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-1) var(--ds-space-2);
+  border: 1px solid transparent;
+  border-radius: var(--ds-radius-sm);
+  color: var(--ds-color-text-muted);
+  background: transparent;
+  cursor: pointer;
+  font-size: var(--ds-font-size-label);
+}
+
+.motion-on .chart-legend-item {
+  transition: background var(--ds-duration-fast) var(--ds-ease-standard),
+    color var(--ds-duration-fast) var(--ds-ease-standard),
+    border-color var(--ds-duration-fast) var(--ds-ease-standard);
+}
+
+.chart-legend-item:hover {
+  color: var(--ds-color-text-primary);
+  background: var(--ds-color-surface-subtle);
+}
+
+.chart-legend-item[aria-pressed='true'] {
+  color: var(--ds-color-text-primary);
+  border-color: var(--ds-color-accent);
+  background: var(--ds-color-accent-soft);
+  box-shadow: var(--ds-shadow-selected);
+}
+
 .chart-legend i {
   display: inline-block;
   inline-size: var(--ds-space-5);
@@ -1401,9 +1438,16 @@ tbody tr:hover,
 
 .chart-wrap {
   position: relative;
+  container: plot / inline-size;
   inline-size: 100%;
   margin-block-start: var(--ds-space-1);
   padding-inline: var(--ds-space-2);
+}
+
+@container plot (max-width: 680px) {
+  .chart-label-minor {
+    display: none;
+  }
 }
 
 .chart {
@@ -1420,9 +1464,22 @@ tbody tr:hover,
 }
 
 .chart-prior {
-  stroke-dasharray: 4 6;
+  stroke-dasharray: 4 4;
   stroke-width: 1.5;
-  opacity: 0.35;
+  opacity: 0.55;
+}
+
+.chart-series.is-dimmed {
+  opacity: var(--ds-dim-muted);
+}
+
+.chart-prior.is-dimmed {
+  opacity: calc(0.55 * var(--ds-dim-muted));
+}
+
+.motion-on .chart-series,
+.motion-on .chart-prior {
+  transition: opacity var(--ds-duration-fast) var(--ds-ease-standard);
 }
 
 .chart-label,
