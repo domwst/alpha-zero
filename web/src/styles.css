@@ -129,6 +129,7 @@
   --ds-duration-normal: 180ms;
   --ds-duration-slow: 300ms;
   --ds-ease-standard: ease;
+  --ds-theme-transition-duration: var(--ds-duration-normal);
 
   --ds-z-header: 100;
   --ds-z-popover: 500;
@@ -208,6 +209,23 @@ input[type="range"] {
 :focus-visible {
   outline: var(--ds-focus-width) solid var(--ds-focus-color);
   outline-offset: var(--ds-focus-offset);
+}
+
+/* Cross-fade colors during an explicit theme switch; the class is added around
+   the switch and removed shortly after, so interaction transitions keep their
+   own durations. The class lives on <html> together with .motion-on, hence the
+   compound selectors — the root must transition its own background too. */
+.motion-on.theme-transition,
+.motion-on.theme-transition *,
+.motion-on.theme-transition *::before,
+.motion-on.theme-transition *::after {
+  transition:
+    background-color var(--ds-theme-transition-duration) var(--ds-ease-standard),
+    border-color var(--ds-theme-transition-duration) var(--ds-ease-standard),
+    color var(--ds-theme-transition-duration) var(--ds-ease-standard),
+    fill var(--ds-theme-transition-duration) var(--ds-ease-standard),
+    stroke var(--ds-theme-transition-duration) var(--ds-ease-standard),
+    box-shadow var(--ds-theme-transition-duration) var(--ds-ease-standard) !important;
 }
 
 ::selection {

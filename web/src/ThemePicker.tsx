@@ -4,6 +4,40 @@ import { useEffect, useState } from 'preact/hooks';
 type Theme = 'system' | 'light' | 'dark';
 
 const THEME_KEY = 'alz-playground-theme';
+const THEME_TRANSITION_CLASS = 'theme-transition';
+const THEME_TRANSITION_FALLBACK_MS = 300;
+
+let themeTransitionTimer: ReturnType<typeof setTimeout> | undefined;
+
+/** The fade duration is owned by CSS; JS only reads it to know when the
+ *  transition class can be removed. Reading the computed style also flushes
+ *  the newly added class into the before-change style, so the transition
+ *  reliably starts when the theme values flip. */
+function themeTransitionDurationMs(root: HTMLElement): number {
+  const raw = getComputedStyle(root)
+    .getPropertyValue('--ds-theme-transition-duration')
+    .trim();
+  const parsed = Number.parseFloat(raw);
+  if (!Number.isFinite(parsed)) return THEME_TRANSITION_FALLBACK_MS;
+  return raw.endsWith('ms') ? parsed : parsed * 1000;
+}
+
+/** Cross-fades the theme; the class enables color transitions and is removed
+ *  once the fade can no longer be in flight. */
+function withThemeTransition(apply: () => void): void {
+  const root = document.documentElement;
+  if (!root.classList.contains('motion-on')) {
+    apply();
+    return;
+  }
+  root.classList.add(THEME_TRANSITION_CLASS);
+  const durationMs = themeTransitionDurationMs(root);
+  apply();
+  clearTimeout(themeTransitionTimer);
+  themeTransitionTimer = setTimeout(() => {
+    root.classList.remove(THEME_TRANSITION_CLASS);
+  }, durationMs + 50);
+}
 
 function storedTheme(): Theme {
   try {
@@ -44,7 +78,7 @@ export function ThemePicker(): JSX.Element {
       applyTheme(current);
     };
     const handleSystemThemeChange = () => {
-      if (!document.documentElement.dataset.theme) announceTheme();
+      if (!document.documentElement.dataset.theme) withThemeTransition(announceTheme);
     };
 
     syncFromStorage();
@@ -58,7 +92,7 @@ export function ThemePicker(): JSX.Element {
 
   const selectTheme = (next: Theme) => {
     setTheme(next);
-    applyTheme(next);
+    withThemeTransition(() => applyTheme(next));
     try {
       if (next === 'system') localStorage.removeItem(THEME_KEY);
       else localStorage.setItem(THEME_KEY, next);

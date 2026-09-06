@@ -30,7 +30,7 @@ Black always moves first. The segmented next-game control states the move order 
 makes clear that changing it does not alter the game already in progress.
 
 The interface follows the system color scheme by default and exposes persistent System, Light, and
-Dark choices. The board, grid, stones, controls, and chart surfaces all use the selected theme. The
+Dark choices; theme switches cross-fade over ~180 ms unless reduced motion is requested. The board, grid, stones, controls, and chart surfaces all use the selected theme. The
 connection indicator reports the executor's actual device, such as `CPU ready` or `CUDA 0 ready`.
 
 ## Run
