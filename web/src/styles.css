@@ -302,7 +302,7 @@ h2 {
 .connection,
 .checkpoint {
   display: inline-flex;
-  min-block-size: calc(var(--ds-control-height) - var(--ds-space-1));
+  min-block-size: var(--ds-control-height);
   align-items: center;
   border-radius: var(--ds-radius-sm);
   color: var(--ds-color-text-muted);
@@ -356,7 +356,6 @@ h2 {
 
 .player-picker {
   display: inline-flex;
-  min-block-size: var(--ds-control-height);
   align-items: center;
   gap: var(--ds-space-1);
   margin: 0;
@@ -367,16 +366,35 @@ h2 {
 }
 
 .player-picker-caption {
-  padding-inline: var(--ds-space-3);
-  color: var(--ds-color-text-muted);
-  font-size: var(--ds-font-size-label);
+  cursor: default;
+  padding-inline: var(--ds-space-2) var(--ds-space-3);
+  color: var(--ds-color-text-subtle);
+  font-size: var(--ds-font-size-eyebrow);
+  font-weight: var(--ds-font-weight-semibold);
+  letter-spacing: 0.05em;
   white-space: nowrap;
+}
+
+.player-picker-group {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ds-radius-sm);
+  background: var(--ds-color-surface);
+}
+
+.button.player-picker-action {
+  min-block-size: calc(var(--ds-control-height) - var(--ds-space-3));
+  padding-inline: var(--ds-space-4);
 }
 
 .player-picker label {
   position: relative;
   display: inline-flex;
-  min-block-size: calc(var(--ds-control-height) - var(--ds-space-2));
+  min-block-size: calc(var(--ds-control-height) - var(--ds-space-3));
   align-items: center;
   gap: var(--ds-space-1);
   padding-inline: var(--ds-space-3);
@@ -1693,7 +1711,7 @@ figcaption strong {
   min-inline-size: 30px;
   align-items: center;
   justify-content: center;
-  min-block-size: 28px;
+  min-block-size: calc(var(--ds-control-height) - var(--ds-space-3));
   gap: var(--ds-space-2);
   padding-inline: var(--ds-space-2);
   border-radius: var(--ds-radius-sm);

@@ -524,47 +524,49 @@ export function App(): JSX.Element {
             </span>
           )}
           <ThemePicker />
-          <fieldset className="player-picker">
-            <legend className="visually-hidden">
-              Your color for the next game; Black moves first
-            </legend>
+          <div className="player-picker">
             <span aria-hidden="true" className="player-picker-caption">Next game</span>
-            <label title="Play Black and move first">
-              <input
-                checked={newHumanColor.value === 'black'}
-                name="next-human-color"
-                onChange={() => { newHumanColor.value = 'black'; }}
-                type="radio"
-                value="black"
-              />
-              <span>Black</span>
-              <small>First</small>
-            </label>
-            <label title="Play White and move second">
-              <input
-                checked={newHumanColor.value === 'white'}
-                name="next-human-color"
-                onChange={() => { newHumanColor.value = 'white'; }}
-                type="radio"
-                value="white"
-              />
-              <span>White</span>
-              <small>Second</small>
-            </label>
-          </fieldset>
-          <button
-            className="button"
-            disabled={connection.value !== 'connected'}
-            onClick={() => {
-              if (send({ type: 'new_game', human_color: newHumanColor.value })) {
-                selected.value = null;
-                lastJudgment.value = null;
-              }
-            }}
-            type="button"
-          >
-            New game
-          </button>
+            <fieldset className="player-picker-group">
+              <legend className="visually-hidden">
+                Your color for the next game; Black moves first
+              </legend>
+              <label title="Play Black and move first">
+                <input
+                  checked={newHumanColor.value === 'black'}
+                  name="next-human-color"
+                  onChange={() => { newHumanColor.value = 'black'; }}
+                  type="radio"
+                  value="black"
+                />
+                <span>Black</span>
+                <small>First</small>
+              </label>
+              <label title="Play White and move second">
+                <input
+                  checked={newHumanColor.value === 'white'}
+                  name="next-human-color"
+                  onChange={() => { newHumanColor.value = 'white'; }}
+                  type="radio"
+                  value="white"
+                />
+                <span>White</span>
+                <small>Second</small>
+              </label>
+            </fieldset>
+            <button
+              className="button player-picker-action"
+              disabled={connection.value !== 'connected'}
+              onClick={() => {
+                if (send({ type: 'new_game', human_color: newHumanColor.value })) {
+                  selected.value = null;
+                  lastJudgment.value = null;
+                }
+              }}
+              type="button"
+            >
+              New game
+            </button>
+          </div>
         </div>
       </header>
 
