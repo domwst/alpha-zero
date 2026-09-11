@@ -1,4 +1,6 @@
 /target
+/target-*
+/validated
 /.venv
 
 /venv
@@ -15,3 +17,8 @@
 
 .DS_Store
 .env
+
+# Generated reports and downloaded plotting libraries (source templates are kept).
+/reports/**/*.html
+/reports/**/upload-receipt*.json
+/reports/**/plotly-*.min.js
