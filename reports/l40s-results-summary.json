@@ -1,0 +1,143 @@
+{
+  "schema_version": 1,
+  "date": "2026-08-29",
+  "hardware": {
+    "gpu": "NVIDIA L40S",
+    "gpu_memory_mib": 46068,
+    "gpu_power_limit_w": 350,
+    "cpu": "Intel Xeon Gold 6338",
+    "physical_cores": 8,
+    "logical_cpus": 16,
+    "driver": "580.173.02",
+    "pytorch": "2.13.0+cu130"
+  },
+  "selected": {
+    "inference_batch_size": 128,
+    "games_parallelism": 160,
+    "batch_timeout_us": 100000,
+    "tokio_worker_threads": 16,
+    "training_batch_size": 256,
+    "median_evaluations_per_second": 16685.5926490751
+  },
+  "throughput_optimum": {
+    "inference_batch_size": 128,
+    "games_parallelism": 384,
+    "batch_timeout_us": 5000,
+    "median_evaluations_per_second": 17603.67558919644
+  },
+  "controlled_self_play": {
+    "workload": { "games": 384, "simulations": 32, "repeats": 3 },
+    "former_baseline_median_evaluations_per_second": 16685.5926490751,
+    "throughput_optimum_median_evaluations_per_second": 17603.67558919644,
+    "speedup_percent": 5.502249512079671,
+    "throughput_optimum_median_batch_fill_ratio": 0.8950034935199842,
+    "physical_cores_only_median_evaluations_per_second": 17542.19226585621
+  },
+  "inference": {
+    "peak_batch_size": 256,
+    "peak_median_examples_per_second": 128012
+  },
+  "training": {
+    "peak_batch_size": 256,
+    "peak_median_samples_per_second": 28109,
+    "maximum_observed_memory_mib": 17589
+  },
+  "gpu_telemetry": {
+    "finalist_self_play_average_utilization_percent": 15.9,
+    "finalist_self_play_max_utilization_percent": 23,
+    "finalist_self_play_max_memory_mib": 915,
+    "training_sweep_average_utilization_percent": 70.3,
+    "training_sweep_max_utilization_percent": 100
+  },
+  "pilot": {
+    "games": 128,
+    "simulations": 64,
+    "epoch_seconds": 66.088397393,
+    "self_play_seconds": 59.535332226,
+    "evaluations_per_second": 13560.56932604846,
+    "training_samples_per_second": 16857.601441150717,
+    "checkpoint_seconds": 0.480276919
+  },
+  "long_run": {
+    "started_utc": "2026-08-29T22:00:00Z",
+    "tmux_session": "alpha-zero-train",
+    "run_root": "/home/arch/alpha-zero/runs/training-50e-20260829",
+    "epochs_total": 50,
+    "games_per_epoch": 700,
+    "simulations": 2000,
+    "games_parallelism": 160,
+    "batch_timeout_us": 100000,
+    "current_segment": "20260829T220000Z-84338",
+    "initial_status": "running",
+    "five_minute_health": {
+      "heartbeats": 5,
+      "average_gpu_utilization_percent": 13.7,
+      "maximum_gpu_utilization_percent": 15,
+      "maximum_gpu_memory_mib": 899,
+      "maximum_process_rss_gib": 22.5,
+      "minimum_available_host_memory_gib": 38.5
+    },
+    "stopped_preflight_segments": [
+      {
+        "started_utc": "2026-08-29T21:37:02Z",
+        "finished_utc": "2026-08-29T21:47:00Z",
+        "exit_status": 130,
+        "games_parallelism": 384,
+        "batch_timeout_us": 5000,
+        "maximum_observed_process_rss_gib": 50.9,
+        "checkpoint_created": false,
+        "reason": "Host memory kept growing on a 62 GiB no-swap VM"
+      },
+      {
+        "started_utc": "2026-08-29T21:49:16Z",
+        "finished_utc": "2026-08-29T21:57:50Z",
+        "exit_status": 130,
+        "games_parallelism": 256,
+        "batch_timeout_us": 100000,
+        "maximum_observed_process_rss_gib": 35.2,
+        "checkpoint_created": false,
+        "reason": "Only 0.8% faster than P160 while retaining 60% more trees"
+      }
+    ]
+  },
+  "production_depth_parallelism_trial": {
+    "date": "2026-08-30",
+    "checkpoint_start_epoch": 39,
+    "completed_trial_epochs": [40, 41],
+    "workload": {
+      "games_per_epoch": 700,
+      "simulations": 2000,
+      "inference_batch_size": 192,
+      "games_parallelism": 500,
+      "batch_timeout_us": 100000
+    },
+    "baseline": {
+      "epochs": [36, 37, 38, 39],
+      "inference_batch_size": 128,
+      "games_parallelism": 160,
+      "mean_evaluations_per_second": 30213.295596258005,
+      "mean_moves_per_second": 19.131684781123687,
+      "mean_actual_batch_size": 75.37758279184825,
+      "mean_request_latency_us": 3631.69747404316,
+      "average_gpu_utilization_percent": 30.6939,
+      "minimum_available_host_memory_gib": 47.2544
+    },
+    "trial": {
+      "mean_evaluations_per_second": 30002.62679359922,
+      "mean_moves_per_second": 19.03067668194834,
+      "mean_actual_batch_size": 89.33671652608043,
+      "mean_request_latency_us": 8740.689097871556,
+      "average_gpu_utilization_percent": 29.3665,
+      "maximum_process_rss_gib": 33.05,
+      "minimum_available_host_memory_gib": 27.8511,
+      "max_batch_invocation_ratio": 0.35907
+    },
+    "relative_to_baseline_percent": {
+      "evaluations_per_second": -0.697,
+      "moves_per_second": -0.528,
+      "actual_batch_size": 18.519,
+      "request_latency": 140.678
+    },
+    "decision": "reject B192/P500/100ms as the production default; it is memory-safe but does not improve normalized throughput"
+  }
+}

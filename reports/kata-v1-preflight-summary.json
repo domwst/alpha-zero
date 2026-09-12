@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-01",
+  "source_commit": "60bce9dbea51c1c2f7bc7db4b7700538681d0c58",
+  "binary_sha256": "e3f7b9a73c2ee2b9163c8d5bf912b3099b3b6d51c826b2ef732a244c50ff7695",
+  "hardware": {
+    "gpu": "NVIDIA L40S",
+    "gpu_memory_mib": 46068,
+    "cpu_threads": 16,
+    "host_memory_gib": 62,
+    "swap_gib": 0
+  },
+  "selected": {
+    "architecture": "kata_v1",
+    "epochs": 50,
+    "games_per_epoch": 700,
+    "simulations": 2000,
+    "inference_batch_size": 256,
+    "games_parallelism": 500,
+    "batch_timeout_us": 1000,
+    "training_batch_size": 256,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001
+  },
+  "inference": {
+    "best_batch_size": 256,
+    "median_examples_per_second": 122684.32145170824,
+    "median_milliseconds_per_iteration": 2.0866561999999997,
+    "relative_to_batch_128_percent": 54.366
+  },
+  "training": {
+    "best_batch_size": 256,
+    "median_samples_per_second": 26549.30105646306,
+    "median_milliseconds_per_iteration": 9.6424384,
+    "maximum_sweep_gpu_memory_mib": 19397
+  },
+  "shallow_self_play": {
+    "baseline_evaluations_per_second": 30587.791618624513,
+    "selected_evaluations_per_second": 38491.321191505405,
+    "selected_average_batch_size": 198.21066666666667,
+    "selected_batch_fill_ratio": 0.7742604166666667,
+    "relative_improvement_percent": 25.839
+  },
+  "production_depth_probe": {
+    "baseline_evaluations_per_second": 33567.23854942102,
+    "selected_evaluations_per_second": 39203.86928768951,
+    "relative_improvement_percent": 16.792,
+    "baseline_minimum_available_memory_gib": 53.202,
+    "selected_minimum_available_memory_gib": 38.155,
+    "selected_maximum_gpu_memory_mib": 955
+  },
+  "tail_timeout": {
+    "games": 32,
+    "simulations": 256,
+    "timeout_1000_us_seconds": 97.552887702,
+    "timeout_1000_us_evaluations_per_second": 6525.116939074985,
+    "timeout_100000_us_finished_within_180_seconds": false
+  },
+  "checkpoint_validation": {
+    "kata_save_and_resume": "passed",
+    "legacy_epoch_117_cuda_load": "passed",
+    "legacy_checkpoint_count": 118
+  }
+}

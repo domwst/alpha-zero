@@ -1,0 +1,333 @@
+{
+  "recorded_at": "2026-09-07T17:10:32.466433+00:00",
+  "baseline_epochs": [
+    {
+      "epoch": 0,
+      "training": {
+        "batches": 11004,
+        "duration_seconds": 448.696621437,
+        "policy_loss": 1.9186175008276811,
+        "samples": 2816904,
+        "samples_per_second": 6277.970159388669,
+        "total_loss": 2.3629729348184463,
+        "value_loss": 0.44435543399076527
+      },
+      "validation": {
+        "policy_loss": 1.7612072980667022,
+        "samples": 312792,
+        "total_loss": 2.1843617247353397,
+        "value_loss": 0.42315442666863784
+      },
+      "start": 1788799118.599,
+      "training_end": 1788799567.2956214
+    },
+    {
+      "epoch": 1,
+      "training": {
+        "batches": 11004,
+        "duration_seconds": 447.972993059,
+        "policy_loss": 1.732370473762766,
+        "samples": 2816904,
+        "samples_per_second": 6288.111211268938,
+        "total_loss": 2.129184782501396,
+        "value_loss": 0.39681430873862983
+      },
+      "validation": {
+        "policy_loss": 1.7093623228221175,
+        "samples": 312792,
+        "total_loss": 2.135201274437611,
+        "value_loss": 0.42583895161549373
+      },
+      "start": 1788799577.952,
+      "training_end": 1788800025.924993
+    }
+  ],
+  "probe_epochs": [
+    {
+      "epoch": 0,
+      "training": {
+        "batches": 11004,
+        "duration_seconds": 451.470885669,
+        "policy_loss": 1.918781142233475,
+        "samples": 2816904,
+        "samples_per_second": 6239.392371505522,
+        "total_loss": 2.362931641981643,
+        "value_loss": 0.44415049974816795
+      },
+      "validation": {
+        "policy_loss": 1.7700736555785712,
+        "samples": 312792,
+        "total_loss": 2.2033198784311065,
+        "value_loss": 0.43324622285253556
+      },
+      "start": 1788800104.004,
+      "training_end": 1788800555.4748857
+    },
+    {
+      "epoch": 1,
+      "training": {
+        "batches": 11004,
+        "duration_seconds": 446.215855315,
+        "policy_loss": 1.7300298176386009,
+        "samples": 2816904,
+        "samples_per_second": 6312.872943547569,
+        "total_loss": 2.1272525590181317,
+        "value_loss": 0.3972227413795308
+      },
+      "validation": {
+        "policy_loss": 1.7040980551327527,
+        "samples": 312792,
+        "total_loss": 2.1317910301187295,
+        "value_loss": 0.4276929749859767
+      },
+      "start": 1788800568.909,
+      "training_end": 1788801015.1248553
+    }
+  ],
+  "fully_overlapping_main_epochs": [
+    {
+      "epoch": 3,
+      "training": {
+        "batches": 11004,
+        "duration_seconds": 449.070880983,
+        "policy_loss": 1.6794385832600092,
+        "samples": 2816904,
+        "samples_per_second": 6272.738044902619,
+        "total_loss": 2.0424751319862517,
+        "value_loss": 0.3630365487262424
+      },
+      "validation": {
+        "policy_loss": 1.6781504389154243,
+        "samples": 312792,
+        "total_loss": 2.1026535371430937,
+        "value_loss": 0.42450309822766924
+      },
+      "start": 1788800490.484,
+      "training_end": 1788800939.5548809
+    }
+  ],
+  "baseline_samples_per_second": 6283.036593323898,
+  "probe_samples_per_second": 6275.917581031104,
+  "probe_process_seconds": 998.3367319107056,
+  "method": "Training-only rates from native epoch metrics. Sum concurrent worker rates; exclude partially overlapping main epochs. This is a smoke estimate, not an exact same-window sample counter.",
+  "concurrent_main_samples_per_second": 6272.738044902619,
+  "aggregate_samples_per_second": 12548.655625933723,
+  "aggregate_speedup": 1.9972278435028405,
+  "completed_main_epochs_inside_probe_process": [
+    {
+      "epoch": 2,
+      "training": {
+        "batches": 11004,
+        "duration_seconds": 440.639416015,
+        "policy_loss": 1.6952569403200415,
+        "samples": 2816904,
+        "samples_per_second": 6392.764463685901,
+        "total_loss": 2.072419919763703,
+        "value_loss": 0.3771629794436615
+      },
+      "validation": {
+        "policy_loss": 1.691152700393315,
+        "samples": 312792,
+        "total_loss": 2.1186826444824822,
+        "value_loss": 0.42752994408916706
+      },
+      "start": 1788800036.622,
+      "training_end": 1788800477.261416
+    },
+    {
+      "epoch": 3,
+      "training": {
+        "batches": 11004,
+        "duration_seconds": 449.070880983,
+        "policy_loss": 1.6794385832600092,
+        "samples": 2816904,
+        "samples_per_second": 6272.738044902619,
+        "total_loss": 2.0424751319862517,
+        "value_loss": 0.3630365487262424
+      },
+      "validation": {
+        "policy_loss": 1.6781504389154243,
+        "samples": 312792,
+        "total_loss": 2.1026535371430937,
+        "value_loss": 0.42450309822766924
+      },
+      "start": 1788800490.484,
+      "training_end": 1788800939.5548809
+    }
+  ],
+  "conservative_completed_work_samples_per_second": 11286.388289485287,
+  "conservative_speedup_vs_solo_training_rate": 1.7963270023729845,
+  "conservative_method": "Count only entire epochs started and trained during the probe process lifetime (including setup and checkpoint overhead); discard partial main-run work. Compare against the training-only solo rate, making this a conservative smoke estimate.",
+  "gpu": {
+    "solo": {
+      "samples": 897,
+      "mean": {
+        "utilization_percent": 38,
+        "memory_mib": 14815.59977703456,
+        "power_w": 186.26691192865107,
+        "sm_clock_mhz": 2489.247491638796,
+        "temperature_c": 65.75027870680044
+      },
+      "maximum": {
+        "utilization_percent": 97,
+        "memory_mib": 14817,
+        "power_w": 300.43,
+        "sm_clock_mhz": 2490,
+        "temperature_c": 70
+      }
+    },
+    "concurrent": {
+      "samples": 897,
+      "mean": {
+        "utilization_percent": 97.75696767001115,
+        "memory_mib": 29630,
+        "power_w": 281.62809364548497,
+        "sm_clock_mhz": 2463.9297658862874,
+        "temperature_c": 74.2329988851728
+      },
+      "maximum": {
+        "utilization_percent": 100,
+        "memory_mib": 29630,
+        "power_w": 302.35,
+        "sm_clock_mhz": 2490,
+        "temperature_c": 78
+      }
+    }
+  },
+  "audit": {
+    "plan.json": {
+      "created_at": "2026-09-07T16:48:48.502020+00:00",
+      "command": [
+        "/workspace/alpha-zero-capacity-20260907/run.sh",
+        "/workspace/alpha-zero-capacity-20260907/target/release/alz",
+        "train-replay",
+        "--replay-checkpoint-dir",
+        "/workspace/alpha-zero/replays/00000060",
+        "--replay-checkpoint-dir",
+        "/workspace/alpha-zero/replays/00000061",
+        "--replay-checkpoint-dir",
+        "/workspace/alpha-zero/replays/00000062",
+        "--replay-checkpoint-dir",
+        "/workspace/alpha-zero/replays/00000063",
+        "--replay-checkpoint-dir",
+        "/workspace/alpha-zero/replays/00000064",
+        "--replay-checkpoint-dir",
+        "/workspace/alpha-zero/replays/00000065",
+        "--replay-checkpoint-dir",
+        "/workspace/alpha-zero/replays/00000066",
+        "--replay-checkpoint-dir",
+        "/workspace/alpha-zero/replays/00000067",
+        "--replay-checkpoint-dir",
+        "/workspace/alpha-zero/replays/00000068",
+        "--replay-checkpoint-dir",
+        "/workspace/alpha-zero/replays/00000069",
+        "--run-dir",
+        "/workspace/alpha-zero-followups/runs/value-heads-20260906/capacity-concurrency-smoke-20260907/probe",
+        "--architecture",
+        "kata-gelu-b16c32-value64x2-v1",
+        "--device",
+        "cuda",
+        "--epochs",
+        "2",
+        "--training-batch-size",
+        "256",
+        "--learning-rate",
+        "0.001",
+        "--weight-decay",
+        "0.0001",
+        "--validation-fraction",
+        "0.1",
+        "--seed",
+        "20260906",
+        "--adam-backend",
+        "standard",
+        "--replay-cache",
+        "device",
+        "--prefetch-batches",
+        "0"
+      ],
+      "main_config": {
+        "adam_backend": "standard",
+        "schema_version": 1,
+        "model": {
+          "architecture": "kata_gelu_b16c32_value64x2_v1"
+        },
+        "dataset_sha256": "2a391f1f93a588877e06dc550d2eaa8f953d1c198f8d6988053594a32a46f5bc",
+        "seed": 20260906,
+        "batch_size": 256,
+        "learning_rate": 0.001,
+        "weight_decay": 0.0001,
+        "validation_fraction": 0.1
+      },
+      "binary_sha256": "3c4f186b2fa967f96ce81eda9524b1812017ff99f619cb1fb6f9071b437d79fd",
+      "script_sha256": "4bbb94766328528c560b8de67ff48873ae2329b8a6f524f51b53f14e946e5b9f",
+      "baseline_completed_epochs_required": 2,
+      "probe_epochs": 2,
+      "production_queue_unchanged": true,
+      "mps_configuration_unchanged": true
+    },
+    "launch.json": {
+      "started_at": "2026-09-07T16:53:54.126816+00:00",
+      "unix_time": 1788800034.126843
+    },
+    "exit.json": {
+      "finished_at": "2026-09-07T17:10:32.463542+00:00",
+      "unix_time": 1788801032.463575,
+      "returncode": 0
+    },
+    "status.json": {
+      "stage": "complete",
+      "updated_at": "2026-09-07T17:10:32.467699+00:00"
+    }
+  },
+  "main_status_after_probe": {
+    "stage": "train-capacity-depth16",
+    "updated_at": "2026-09-07T16:37:35.135047+00:00",
+    "pid": 319510,
+    "log": "/workspace/alpha-zero-followups/runs/value-heads-20260906/capacity/train-capacity-depth16.log"
+  },
+  "probe_result": {
+    "checkpoint": {
+      "epoch": 1,
+      "format_version": 2,
+      "model": {
+        "architecture": "kata_gelu_b16c32_value64x2_v1"
+      },
+      "model_sha256": "6c1f79ea22c215621337220931c72ca61437748a5009c25d2f75c5288229c0ca",
+      "path": "/workspace/alpha-zero-followups/runs/value-heads-20260906/capacity-concurrency-smoke-20260907/probe/checkpoints/00000001",
+      "tensor_schema_sha256": "c586cd04539291231847233e8385caa9c44a5b5063f2fc084cfadb57d80e50ef"
+    },
+    "completed_epochs": 2,
+    "dataset_sha256": "2a391f1f93a588877e06dc550d2eaa8f953d1c198f8d6988053594a32a46f5bc",
+    "model": {
+      "architecture": "kata_gelu_b16c32_value64x2_v1"
+    },
+    "schema_version": 1,
+    "selection": "final checkpoint after the requested training budget; no match-based selection"
+  },
+  "probe_config_matches_main": true,
+  "log_hashes": {
+    "probe.log": "689c90702f164783587bacf389f0292d101be924344774dc388b5cde8ef01d0c",
+    "baseline-main.log": "dc4dd7a6628ff4623de11ee30318494a5f0dd0cc5764749196a4d65ac18244a9",
+    "telemetry.jsonl": "e447d024478f4622335e4775c6c091bb9140f9ac400e57f12056b7d4f0aa0df5"
+  },
+  "timing_logs": {
+    "main": [
+      "2026-09-07T16:38:38.599Z  INFO src/commands/train_replay.rs:193: starting fixed replay training pass epoch=0 epochs=20",
+      "2026-09-07T16:46:11.818Z  INFO src/commands/train_replay.rs:214: completed replay training pass epoch=0 validation_value_loss=0.42315442666863784 validation_policy_loss=1.7612072980667022",
+      "2026-09-07T16:46:17.952Z  INFO src/commands/train_replay.rs:193: starting fixed replay training pass epoch=1 epochs=20",
+      "2026-09-07T16:53:50.470Z  INFO src/commands/train_replay.rs:214: completed replay training pass epoch=1 validation_value_loss=0.42583895161549373 validation_policy_loss=1.7093623228221175",
+      "2026-09-07T16:53:56.622Z  INFO src/commands/train_replay.rs:193: starting fixed replay training pass epoch=2 epochs=20",
+      "2026-09-07T17:01:25.124Z  INFO src/commands/train_replay.rs:214: completed replay training pass epoch=2 validation_value_loss=0.42752994408916706 validation_policy_loss=1.691152700393315",
+      "2026-09-07T17:01:30.484Z  INFO src/commands/train_replay.rs:193: starting fixed replay training pass epoch=3 epochs=20",
+      "2026-09-07T17:09:07.725Z  INFO src/commands/train_replay.rs:214: completed replay training pass epoch=3 validation_value_loss=0.42450309822766924 validation_policy_loss=1.6781504389154243",
+      "2026-09-07T17:09:13.049Z  INFO src/commands/train_replay.rs:193: starting fixed replay training pass epoch=4 epochs=20"
+    ],
+    "probe": [
+      "2026-09-07T16:55:04.004Z  INFO src/commands/train_replay.rs:193: starting fixed replay training pass epoch=0 epochs=2",
+      "2026-09-07T17:02:43.479Z  INFO src/commands/train_replay.rs:214: completed replay training pass epoch=0 validation_value_loss=0.43324622285253556 validation_policy_loss=1.7700736555785712",
+      "2026-09-07T17:02:48.909Z  INFO src/commands/train_replay.rs:193: starting fixed replay training pass epoch=1 epochs=2",
+      "2026-09-07T17:10:23.055Z  INFO src/commands/train_replay.rs:214: completed replay training pass epoch=1 validation_value_loss=0.4276929749859767 validation_policy_loss=1.7040980551327527"
+    ]
+  }
+}

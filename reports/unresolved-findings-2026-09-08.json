@@ -1,0 +1,1130 @@
+{
+  "snapshot_received_at": "2026-09-08T11:01:11.684056+00:00",
+  "connected": true,
+  "comparisons": [
+    {
+      "id": "activation-match",
+      "state": "completed",
+      "completed": 300,
+      "total": 300,
+      "result": {
+        "first_checkpoint": {
+          "path": "/workspace/alpha-zero/runs/relu-vs-gelu-20260906/kata-v1/checkpoints/00000019",
+          "format_version": 2,
+          "epoch": 19,
+          "model": {
+            "architecture": "kata_v1"
+          },
+          "model_sha256": "cf7fe55e21943b3e219adf42a41b8b5052c2aac165995e42d1d89baddd9bbc51",
+          "tensor_schema_sha256": "a8c732eb360867780c8dcd98983c63a8fb9402202936cdbd679f150356de3bbc"
+        },
+        "second_checkpoint": {
+          "path": "/workspace/alpha-zero/runs/relu-vs-gelu-20260906/kata-gelu-v1/checkpoints/00000019",
+          "format_version": 2,
+          "epoch": 19,
+          "model": {
+            "architecture": "kata_gelu_v1"
+          },
+          "model_sha256": "20e4781409ec7363d6205dee1da620aec3c0dd10ab83f4f97ec635bbbe394ad1",
+          "tensor_schema_sha256": "a8c732eb360867780c8dcd98983c63a8fb9402202936cdbd679f150356de3bbc"
+        },
+        "first_checkpoint_result": {
+          "wins": 144,
+          "losses": 156,
+          "draws": 0,
+          "score": 144.0,
+          "score_rate": 0.48,
+          "score_rate_95_percent_low": 0.42407680086272237,
+          "score_rate_95_percent_high": 0.5364289179862594,
+          "elo_difference": -13.904842503684788,
+          "as_first_seat": {
+            "games": 150,
+            "wins": 127,
+            "losses": 23,
+            "draws": 0
+          },
+          "as_second_seat": {
+            "games": 150,
+            "wins": 17,
+            "losses": 133,
+            "draws": 0
+          }
+        },
+        "second_checkpoint_result": {
+          "wins": 156,
+          "losses": 144,
+          "draws": 0,
+          "score": 156.0,
+          "score_rate": 0.52,
+          "score_rate_95_percent_low": 0.4635710820137406,
+          "score_rate_95_percent_high": 0.5759231991372776,
+          "elo_difference": 13.904842503684801,
+          "as_first_seat": {
+            "games": 150,
+            "wins": 133,
+            "losses": 17,
+            "draws": 0
+          },
+          "as_second_seat": {
+            "games": 150,
+            "wins": 23,
+            "losses": 127,
+            "draws": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "replay-relu-vs-selfplay",
+      "state": "completed",
+      "completed": 300,
+      "total": 300,
+      "result": {
+        "first_checkpoint": {
+          "path": "/workspace/alpha-zero/runs/relu-vs-gelu-20260906/kata-v1/checkpoints/00000019",
+          "format_version": 2,
+          "epoch": 19,
+          "model": {
+            "architecture": "kata_v1"
+          },
+          "model_sha256": "cf7fe55e21943b3e219adf42a41b8b5052c2aac165995e42d1d89baddd9bbc51",
+          "tensor_schema_sha256": "a8c732eb360867780c8dcd98983c63a8fb9402202936cdbd679f150356de3bbc"
+        },
+        "second_checkpoint": {
+          "path": "/workspace/alpha-zero-followups/reference/00000069",
+          "format_version": 2,
+          "epoch": 69,
+          "model": {
+            "architecture": "kata_v1"
+          },
+          "model_sha256": "91b74e5b63c6b92055331f9acbff9c68b15e96e0f9b3188aa92dc04673e2243a",
+          "tensor_schema_sha256": "a8c732eb360867780c8dcd98983c63a8fb9402202936cdbd679f150356de3bbc"
+        },
+        "first_checkpoint_result": {
+          "wins": 169,
+          "losses": 131,
+          "draws": 0,
+          "score": 169.0,
+          "score_rate": 0.5633333333333334,
+          "score_rate_95_percent_low": 0.5067592167427277,
+          "score_rate_95_percent_high": 0.6183060069021631,
+          "elo_difference": 44.246163583163714,
+          "as_first_seat": {
+            "games": 150,
+            "wins": 131,
+            "losses": 19,
+            "draws": 0
+          },
+          "as_second_seat": {
+            "games": 150,
+            "wins": 38,
+            "losses": 112,
+            "draws": 0
+          }
+        },
+        "second_checkpoint_result": {
+          "wins": 131,
+          "losses": 169,
+          "draws": 0,
+          "score": 131.0,
+          "score_rate": 0.43666666666666665,
+          "score_rate_95_percent_low": 0.3816939930978369,
+          "score_rate_95_percent_high": 0.49324078325727216,
+          "elo_difference": -44.246163583163714,
+          "as_first_seat": {
+            "games": 150,
+            "wins": 112,
+            "losses": 38,
+            "draws": 0
+          },
+          "as_second_seat": {
+            "games": 150,
+            "wins": 19,
+            "losses": 131,
+            "draws": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "current-vs-wide64",
+      "state": "completed",
+      "completed": 600,
+      "total": 600,
+      "result": {
+        "first_checkpoint": {
+          "path": "/workspace/alpha-zero/runs/relu-vs-gelu-20260906/kata-gelu-v1/checkpoints/00000019",
+          "format_version": 2,
+          "epoch": 19,
+          "model": {
+            "architecture": "kata_gelu_v1"
+          },
+          "model_sha256": "20e4781409ec7363d6205dee1da620aec3c0dd10ab83f4f97ec635bbbe394ad1",
+          "tensor_schema_sha256": "a8c732eb360867780c8dcd98983c63a8fb9402202936cdbd679f150356de3bbc"
+        },
+        "second_checkpoint": {
+          "path": "/workspace/alpha-zero-followups/runs/value-heads-20260906/kata-gelu-value64-v1/checkpoints/00000019",
+          "format_version": 2,
+          "epoch": 19,
+          "model": {
+            "architecture": "kata_gelu_value64_v1"
+          },
+          "model_sha256": "e0c5517886cc5c130e26906a00d15521d86b085d859a751e7b00b3d9827217ee",
+          "tensor_schema_sha256": "d48f56c2666107ddefe1e1ae243012b30923fb79071d2fb7b2ef2ace6ddaaf67"
+        },
+        "first_checkpoint_result": {
+          "wins": 280,
+          "losses": 320,
+          "draws": 0,
+          "score": 280.0,
+          "score_rate": 0.4666666666666667,
+          "score_rate_95_percent_low": 0.427086743461777,
+          "score_rate_95_percent_high": 0.5066707032724699,
+          "elo_difference": -23.196778791074703,
+          "as_first_seat": {
+            "games": 300,
+            "wins": 240,
+            "losses": 60,
+            "draws": 0
+          },
+          "as_second_seat": {
+            "games": 300,
+            "wins": 40,
+            "losses": 260,
+            "draws": 0
+          }
+        },
+        "second_checkpoint_result": {
+          "wins": 320,
+          "losses": 280,
+          "draws": 0,
+          "score": 320.0,
+          "score_rate": 0.5333333333333333,
+          "score_rate_95_percent_low": 0.49332929672753023,
+          "score_rate_95_percent_high": 0.5729132565382231,
+          "elo_difference": 23.196778791074692,
+          "as_first_seat": {
+            "games": 300,
+            "wins": 260,
+            "losses": 40,
+            "draws": 0
+          },
+          "as_second_seat": {
+            "games": 300,
+            "wins": 60,
+            "losses": 240,
+            "draws": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "current-vs-deep64",
+      "state": "completed",
+      "completed": 600,
+      "total": 600,
+      "result": {
+        "first_checkpoint": {
+          "path": "/workspace/alpha-zero/runs/relu-vs-gelu-20260906/kata-gelu-v1/checkpoints/00000019",
+          "format_version": 2,
+          "epoch": 19,
+          "model": {
+            "architecture": "kata_gelu_v1"
+          },
+          "model_sha256": "20e4781409ec7363d6205dee1da620aec3c0dd10ab83f4f97ec635bbbe394ad1",
+          "tensor_schema_sha256": "a8c732eb360867780c8dcd98983c63a8fb9402202936cdbd679f150356de3bbc"
+        },
+        "second_checkpoint": {
+          "path": "/workspace/alpha-zero-followups/runs/value-heads-20260906/kata-gelu-value64x2-v1/checkpoints/00000019",
+          "format_version": 2,
+          "epoch": 19,
+          "model": {
+            "architecture": "kata_gelu_value64x2_v1"
+          },
+          "model_sha256": "c6f630e8d8b3dfe0143a35671d3435b3f9dd684703c6d30088e46ca5089c77cc",
+          "tensor_schema_sha256": "f91778926d8de8bd21ee33b7e4ef7cb65cfc1daea02e43dd0859606106b76a06"
+        },
+        "first_checkpoint_result": {
+          "wins": 287,
+          "losses": 313,
+          "draws": 0,
+          "score": 287.0,
+          "score_rate": 0.47833333333333333,
+          "score_rate_95_percent_low": 0.4386282562988837,
+          "score_rate_95_percent_high": 0.5183140840783768,
+          "elo_difference": -15.06497632498248,
+          "as_first_seat": {
+            "games": 300,
+            "wins": 265,
+            "losses": 35,
+            "draws": 0
+          },
+          "as_second_seat": {
+            "games": 300,
+            "wins": 22,
+            "losses": 278,
+            "draws": 0
+          }
+        },
+        "second_checkpoint_result": {
+          "wins": 313,
+          "losses": 287,
+          "draws": 0,
+          "score": 313.0,
+          "score_rate": 0.5216666666666666,
+          "score_rate_95_percent_low": 0.4816859159216232,
+          "score_rate_95_percent_high": 0.5613717437011163,
+          "elo_difference": 15.064976324982416,
+          "as_first_seat": {
+            "games": 300,
+            "wins": 278,
+            "losses": 22,
+            "draws": 0
+          },
+          "as_second_seat": {
+            "games": 300,
+            "wins": 35,
+            "losses": 265,
+            "draws": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "wide64-vs-deep64",
+      "state": "completed",
+      "completed": 1000,
+      "total": 1000,
+      "result": {
+        "first_checkpoint": {
+          "path": "/workspace/alpha-zero-followups/runs/value-heads-20260906/kata-gelu-value64-v1/checkpoints/00000019",
+          "format_version": 2,
+          "epoch": 19,
+          "model": {
+            "architecture": "kata_gelu_value64_v1"
+          },
+          "model_sha256": "e0c5517886cc5c130e26906a00d15521d86b085d859a751e7b00b3d9827217ee",
+          "tensor_schema_sha256": "d48f56c2666107ddefe1e1ae243012b30923fb79071d2fb7b2ef2ace6ddaaf67"
+        },
+        "second_checkpoint": {
+          "path": "/workspace/alpha-zero-followups/runs/value-heads-20260906/kata-gelu-value64x2-v1/checkpoints/00000019",
+          "format_version": 2,
+          "epoch": 19,
+          "model": {
+            "architecture": "kata_gelu_value64x2_v1"
+          },
+          "model_sha256": "c6f630e8d8b3dfe0143a35671d3435b3f9dd684703c6d30088e46ca5089c77cc",
+          "tensor_schema_sha256": "f91778926d8de8bd21ee33b7e4ef7cb65cfc1daea02e43dd0859606106b76a06"
+        },
+        "first_checkpoint_result": {
+          "wins": 489,
+          "losses": 511,
+          "draws": 0,
+          "score": 489.0,
+          "score_rate": 0.489,
+          "score_rate_95_percent_low": 0.4581191521232714,
+          "score_rate_95_percent_high": 0.5199650365634109,
+          "elo_difference": -7.644816404436994,
+          "as_first_seat": {
+            "games": 500,
+            "wins": 437,
+            "losses": 63,
+            "draws": 0
+          },
+          "as_second_seat": {
+            "games": 500,
+            "wins": 52,
+            "losses": 448,
+            "draws": 0
+          }
+        },
+        "second_checkpoint_result": {
+          "wins": 511,
+          "losses": 489,
+          "draws": 0,
+          "score": 511.0,
+          "score_rate": 0.511,
+          "score_rate_95_percent_low": 0.4800349634365892,
+          "score_rate_95_percent_high": 0.5418808478767286,
+          "elo_difference": 7.644816404437001,
+          "as_first_seat": {
+            "games": 500,
+            "wins": 448,
+            "losses": 52,
+            "draws": 0
+          },
+          "as_second_seat": {
+            "games": 500,
+            "wins": 63,
+            "losses": 437,
+            "draws": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "current-vs-katago-pooling",
+      "state": "completed",
+      "completed": 1000,
+      "total": 1000,
+      "result": {
+        "first_checkpoint": {
+          "path": "/workspace/alpha-zero-followups/runs/value-heads-20260906/kata-gelu-value64x2-v1/checkpoints/00000019",
+          "format_version": 2,
+          "epoch": 19,
+          "model": {
+            "architecture": "kata_gelu_value64x2_v1"
+          },
+          "model_sha256": "c6f630e8d8b3dfe0143a35671d3435b3f9dd684703c6d30088e46ca5089c77cc",
+          "tensor_schema_sha256": "f91778926d8de8bd21ee33b7e4ef7cb65cfc1daea02e43dd0859606106b76a06"
+        },
+        "second_checkpoint": {
+          "path": "/workspace/alpha-zero-followups/runs/value-heads-20260906/pooling/katago-pooling/checkpoints/00000019",
+          "format_version": 2,
+          "epoch": 19,
+          "model": {
+            "architecture": "kata_gelu_pool_value64x2_v1"
+          },
+          "model_sha256": "6b30f7dd576d7bde5b22132be6874cd501cdda1f51437c6a8726aeac5ebb6ed5",
+          "tensor_schema_sha256": "1df7c20073072fdb6c17bf28c3226cd75af41d24d82b47fa8b47b8a1b6203128"
+        },
+        "first_checkpoint_result": {
+          "wins": 532,
+          "losses": 468,
+          "draws": 0,
+          "score": 532.0,
+          "score_rate": 0.532,
+          "score_rate_95_percent_low": 0.5010103116491519,
+          "score_rate_95_percent_high": 0.5627447758077727,
+          "elo_difference": 22.266311688369687,
+          "as_first_seat": {
+            "games": 500,
+            "wins": 454,
+            "losses": 46,
+            "draws": 0
+          },
+          "as_second_seat": {
+            "games": 500,
+            "wins": 78,
+            "losses": 422,
+            "draws": 0
+          }
+        },
+        "second_checkpoint_result": {
+          "wins": 468,
+          "losses": 532,
+          "draws": 0,
+          "score": 468.0,
+          "score_rate": 0.468,
+          "score_rate_95_percent_low": 0.4372552241922274,
+          "score_rate_95_percent_high": 0.4989896883508482,
+          "elo_difference": -22.266311688369658,
+          "as_first_seat": {
+            "games": 500,
+            "wins": 422,
+            "losses": 78,
+            "draws": 0
+          },
+          "as_second_seat": {
+            "games": 500,
+            "wins": 46,
+            "losses": 454,
+            "draws": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "selected-current-vs-katago-pooling",
+      "state": "completed",
+      "completed": 1000,
+      "total": 1000,
+      "result": {
+        "first_checkpoint": {
+          "path": "/workspace/alpha-zero-followups/runs/value-heads-20260906/kata-gelu-value64x2-v1/checkpoints/00000017",
+          "format_version": 2,
+          "epoch": 17,
+          "model": {
+            "architecture": "kata_gelu_value64x2_v1"
+          },
+          "model_sha256": "6c9d758cfba6d1ed86a06d176efeb89f6584fb76425898f3f6a05a941dde2e8f",
+          "tensor_schema_sha256": "f91778926d8de8bd21ee33b7e4ef7cb65cfc1daea02e43dd0859606106b76a06"
+        },
+        "second_checkpoint": {
+          "path": "/workspace/alpha-zero-followups/runs/value-heads-20260906/pooling/katago-pooling/checkpoints/00000014",
+          "format_version": 2,
+          "epoch": 14,
+          "model": {
+            "architecture": "kata_gelu_pool_value64x2_v1"
+          },
+          "model_sha256": "c03b806b08b2062c6491e43f49488f8c4edc388d0b8861ba4fdf9ab88aebf9df",
+          "tensor_schema_sha256": "1df7c20073072fdb6c17bf28c3226cd75af41d24d82b47fa8b47b8a1b6203128"
+        },
+        "first_checkpoint_result": {
+          "wins": 570,
+          "losses": 430,
+          "draws": 0,
+          "score": 570.0,
+          "score_rate": 0.57,
+          "score_rate_95_percent_low": 0.539105173730678,
+          "score_rate_95_percent_high": 0.6003590800813441,
+          "elo_difference": 48.96256003716191,
+          "as_first_seat": {
+            "games": 500,
+            "wins": 461,
+            "losses": 39,
+            "draws": 0
+          },
+          "as_second_seat": {
+            "games": 500,
+            "wins": 109,
+            "losses": 391,
+            "draws": 0
+          }
+        },
+        "second_checkpoint_result": {
+          "wins": 430,
+          "losses": 570,
+          "draws": 0,
+          "score": 430.0,
+          "score_rate": 0.43,
+          "score_rate_95_percent_low": 0.3996409199186558,
+          "score_rate_95_percent_high": 0.4608948262693219,
+          "elo_difference": -48.96256003716197,
+          "as_first_seat": {
+            "games": 500,
+            "wins": 391,
+            "losses": 109,
+            "draws": 0
+          },
+          "as_second_seat": {
+            "games": 500,
+            "wins": 39,
+            "losses": 461,
+            "draws": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "current-pooling-selected-vs-final",
+      "state": "cancelled",
+      "completed": 465,
+      "total": 1000
+    },
+    {
+      "id": "katago-pooling-selected-vs-final",
+      "state": "cancelled",
+      "completed": 0,
+      "total": 1000
+    },
+    {
+      "id": "capacity-baseline-vs-depth16",
+      "state": "completed",
+      "completed": 1000,
+      "total": 1000,
+      "result": {
+        "first_checkpoint": {
+          "path": "/workspace/alpha-zero-followups/runs/value-heads-20260906/kata-gelu-value64x2-v1/checkpoints/00000017",
+          "format_version": 2,
+          "epoch": 17,
+          "model": {
+            "architecture": "kata_gelu_value64x2_v1"
+          },
+          "model_sha256": "6c9d758cfba6d1ed86a06d176efeb89f6584fb76425898f3f6a05a941dde2e8f",
+          "tensor_schema_sha256": "f91778926d8de8bd21ee33b7e4ef7cb65cfc1daea02e43dd0859606106b76a06"
+        },
+        "second_checkpoint": {
+          "path": "/workspace/alpha-zero-followups/runs/value-heads-20260906/capacity/capacity-depth16/checkpoints/00000014",
+          "format_version": 2,
+          "epoch": 14,
+          "model": {
+            "architecture": "kata_gelu_b16c32_value64x2_v1"
+          },
+          "model_sha256": "56f46d6687fa00d14b0e37f55f6531562738d9a5899f7719607fa3973b683e39",
+          "tensor_schema_sha256": "c586cd04539291231847233e8385caa9c44a5b5063f2fc084cfadb57d80e50ef"
+        },
+        "first_checkpoint_result": {
+          "wins": 563,
+          "losses": 437,
+          "draws": 0,
+          "score": 563.0,
+          "score_rate": 0.563,
+          "score_rate_95_percent_low": 0.5320740752991774,
+          "score_rate_95_percent_high": 0.5934437531316427,
+          "elo_difference": 44.01078315236972,
+          "as_first_seat": {
+            "games": 500,
+            "wins": 451,
+            "losses": 49,
+            "draws": 0
+          },
+          "as_second_seat": {
+            "games": 500,
+            "wins": 112,
+            "losses": 388,
+            "draws": 0
+          }
+        },
+        "second_checkpoint_result": {
+          "wins": 437,
+          "losses": 563,
+          "draws": 0,
+          "score": 437.0,
+          "score_rate": 0.437,
+          "score_rate_95_percent_low": 0.40655624686835734,
+          "score_rate_95_percent_high": 0.4679259247008226,
+          "elo_difference": -44.01078315236975,
+          "as_first_seat": {
+            "games": 500,
+            "wins": 388,
+            "losses": 112,
+            "draws": 0
+          },
+          "as_second_seat": {
+            "games": 500,
+            "wins": 49,
+            "losses": 451,
+            "draws": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "capacity-baseline-vs-width48",
+      "state": "completed",
+      "completed": 1000,
+      "total": 1000,
+      "result": {
+        "first_checkpoint": {
+          "path": "/workspace/alpha-zero-followups/runs/value-heads-20260906/kata-gelu-value64x2-v1/checkpoints/00000017",
+          "format_version": 2,
+          "epoch": 17,
+          "model": {
+            "architecture": "kata_gelu_value64x2_v1"
+          },
+          "model_sha256": "6c9d758cfba6d1ed86a06d176efeb89f6584fb76425898f3f6a05a941dde2e8f",
+          "tensor_schema_sha256": "f91778926d8de8bd21ee33b7e4ef7cb65cfc1daea02e43dd0859606106b76a06"
+        },
+        "second_checkpoint": {
+          "path": "/workspace/alpha-zero-followups/runs/value-heads-20260906/capacity/capacity-width48/checkpoints/00000010",
+          "format_version": 2,
+          "epoch": 10,
+          "model": {
+            "architecture": "kata_gelu_b10c48_value64x2_v1"
+          },
+          "model_sha256": "41bd155429f7ccaeb554165f5f8c2c70aa011152ee2f5098542690e9e7a3eea8",
+          "tensor_schema_sha256": "40f9226cc6c5a5e49ba550d99790017349af4441e607bda7599d89ab7bea42ed"
+        },
+        "first_checkpoint_result": {
+          "wins": 521,
+          "losses": 479,
+          "draws": 0,
+          "score": 521.0,
+          "score_rate": 0.521,
+          "score_rate_95_percent_low": 0.49001642660541767,
+          "score_rate_95_percent_high": 0.5518228495381892,
+          "elo_difference": 14.60088395398453,
+          "as_first_seat": {
+            "games": 500,
+            "wins": 444,
+            "losses": 56,
+            "draws": 0
+          },
+          "as_second_seat": {
+            "games": 500,
+            "wins": 77,
+            "losses": 423,
+            "draws": 0
+          }
+        },
+        "second_checkpoint_result": {
+          "wins": 479,
+          "losses": 521,
+          "draws": 0,
+          "score": 479.0,
+          "score_rate": 0.479,
+          "score_rate_95_percent_low": 0.4481771504618109,
+          "score_rate_95_percent_high": 0.5099835733945823,
+          "elo_difference": -14.600883953984505,
+          "as_first_seat": {
+            "games": 500,
+            "wins": 423,
+            "losses": 77,
+            "draws": 0
+          },
+          "as_second_seat": {
+            "games": 500,
+            "wins": 56,
+            "losses": 444,
+            "draws": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "capacity-depth16-vs-width48",
+      "state": "completed",
+      "completed": 1000,
+      "total": 1000,
+      "result": {
+        "first_checkpoint": {
+          "path": "/workspace/alpha-zero-followups/runs/value-heads-20260906/capacity/capacity-depth16/checkpoints/00000014",
+          "format_version": 2,
+          "epoch": 14,
+          "model": {
+            "architecture": "kata_gelu_b16c32_value64x2_v1"
+          },
+          "model_sha256": "56f46d6687fa00d14b0e37f55f6531562738d9a5899f7719607fa3973b683e39",
+          "tensor_schema_sha256": "c586cd04539291231847233e8385caa9c44a5b5063f2fc084cfadb57d80e50ef"
+        },
+        "second_checkpoint": {
+          "path": "/workspace/alpha-zero-followups/runs/value-heads-20260906/capacity/capacity-width48/checkpoints/00000010",
+          "format_version": 2,
+          "epoch": 10,
+          "model": {
+            "architecture": "kata_gelu_b10c48_value64x2_v1"
+          },
+          "model_sha256": "41bd155429f7ccaeb554165f5f8c2c70aa011152ee2f5098542690e9e7a3eea8",
+          "tensor_schema_sha256": "40f9226cc6c5a5e49ba550d99790017349af4441e607bda7599d89ab7bea42ed"
+        },
+        "first_checkpoint_result": {
+          "wins": 467,
+          "losses": 533,
+          "draws": 0,
+          "score": 467.0,
+          "score_rate": 0.467,
+          "score_rate_95_percent_low": 0.4362630649735458,
+          "score_rate_95_percent_high": 0.4979895010865009,
+          "elo_difference": -22.964131384184007,
+          "as_first_seat": {
+            "games": 500,
+            "wins": 394,
+            "losses": 106,
+            "draws": 0
+          },
+          "as_second_seat": {
+            "games": 500,
+            "wins": 73,
+            "losses": 427,
+            "draws": 0
+          }
+        },
+        "second_checkpoint_result": {
+          "wins": 533,
+          "losses": 467,
+          "draws": 0,
+          "score": 533.0,
+          "score_rate": 0.533,
+          "score_rate_95_percent_low": 0.5020104989134991,
+          "score_rate_95_percent_high": 0.5637369350264544,
+          "elo_difference": 22.964131384184064,
+          "as_first_seat": {
+            "games": 500,
+            "wins": 427,
+            "losses": 73,
+            "draws": 0
+          },
+          "as_second_seat": {
+            "games": 500,
+            "wins": 106,
+            "losses": 394,
+            "draws": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "global3-baseline-vs-depth16",
+      "state": "completed",
+      "completed": 1000,
+      "total": 1000,
+      "result": {
+        "first_checkpoint": {
+          "path": "/workspace/alpha-zero-followups/runs/value-heads-20260906/kata-gelu-value64x2-v1/checkpoints/00000017",
+          "format_version": 2,
+          "epoch": 17,
+          "model": {
+            "architecture": "kata_gelu_value64x2_v1"
+          },
+          "model_sha256": "6c9d758cfba6d1ed86a06d176efeb89f6584fb76425898f3f6a05a941dde2e8f",
+          "tensor_schema_sha256": "f91778926d8de8bd21ee33b7e4ef7cb65cfc1daea02e43dd0859606106b76a06"
+        },
+        "second_checkpoint": {
+          "path": "/workspace/alpha-zero-followups/runs/value-heads-20260906/third-global/depth16-global3/checkpoints/00000008",
+          "format_version": 2,
+          "epoch": 8,
+          "model": {
+            "architecture": "kata_gelu_b16c32g3_value64x2_v1"
+          },
+          "model_sha256": "81e228e86a4559e07cf7f1b3c97163669806cb128baa96ce3f660eef3df841c5",
+          "tensor_schema_sha256": "70d29566598ba28b13c62d93874df22852215be882cdbc0403275ec8aa3182b6"
+        },
+        "first_checkpoint_result": {
+          "wins": 500,
+          "losses": 500,
+          "draws": 0,
+          "score": 500.0,
+          "score_rate": 0.5,
+          "score_rate_95_percent_low": 0.4690696003681042,
+          "score_rate_95_percent_high": 0.5309303996318958,
+          "elo_difference": 0.0,
+          "as_first_seat": {
+            "games": 500,
+            "wins": 455,
+            "losses": 45,
+            "draws": 0
+          },
+          "as_second_seat": {
+            "games": 500,
+            "wins": 45,
+            "losses": 455,
+            "draws": 0
+          }
+        },
+        "second_checkpoint_result": {
+          "wins": 500,
+          "losses": 500,
+          "draws": 0,
+          "score": 500.0,
+          "score_rate": 0.5,
+          "score_rate_95_percent_low": 0.4690696003681042,
+          "score_rate_95_percent_high": 0.5309303996318958,
+          "elo_difference": 0.0,
+          "as_first_seat": {
+            "games": 500,
+            "wins": 455,
+            "losses": 45,
+            "draws": 0
+          },
+          "as_second_seat": {
+            "games": 500,
+            "wins": 45,
+            "losses": 455,
+            "draws": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "global3-depth16-two-vs-three",
+      "state": "running",
+      "completed": 999,
+      "total": 1000
+    }
+  ],
+  "training": [
+    {
+      "id": "kata-v1",
+      "best": {
+        "epoch": 8,
+        "training": {
+          "batches": 11004,
+          "duration_seconds": 341.907194858,
+          "policy_loss": 1.6747366756814674,
+          "samples": 2816904,
+          "samples_per_second": 8238.79708401547,
+          "total_loss": 2.0267765903877777,
+          "value_loss": 0.35203991470631035
+        },
+        "validation": {
+          "policy_loss": 1.6685867905692984,
+          "samples": 312792,
+          "total_loss": 2.086421427914002,
+          "value_loss": 0.41783463734470366
+        }
+      },
+      "final": {
+        "epoch": 20,
+        "training": {
+          "batches": 11004,
+          "duration_seconds": 342.273172213,
+          "policy_loss": 1.6546615118313632,
+          "samples": 2816904,
+          "samples_per_second": 8229.987707733671,
+          "total_loss": 1.9796962566489222,
+          "value_loss": 0.325034744817559
+        },
+        "validation": {
+          "policy_loss": 1.6679681881226744,
+          "samples": 312792,
+          "total_loss": 2.126846091585928,
+          "value_loss": 0.45887790346325363
+        }
+      }
+    },
+    {
+      "id": "kata-gelu-v1",
+      "best": {
+        "epoch": 16,
+        "training": {
+          "batches": 11004,
+          "duration_seconds": 342.139089169,
+          "policy_loss": 1.650824115113851,
+          "samples": 2816904,
+          "samples_per_second": 8233.213009486288,
+          "total_loss": 1.9701793536214645,
+          "value_loss": 0.31935523850761344
+        },
+        "validation": {
+          "policy_loss": 1.6530753366690882,
+          "samples": 312792,
+          "total_loss": 2.0830261818310967,
+          "value_loss": 0.4299508451620082
+        }
+      },
+      "final": {
+        "epoch": 20,
+        "training": {
+          "batches": 11004,
+          "duration_seconds": 342.174540358,
+          "policy_loss": 1.6475255584933337,
+          "samples": 2816904,
+          "samples_per_second": 8232.360002742504,
+          "total_loss": 1.961151272625565,
+          "value_loss": 0.3136257141322314
+        },
+        "validation": {
+          "policy_loss": 1.6519298600298038,
+          "samples": 312792,
+          "total_loss": 2.0917222026383775,
+          "value_loss": 0.43979234260857386
+        }
+      }
+    },
+    {
+      "id": "train-kata-gelu-value64-v1",
+      "best": {
+        "epoch": 8,
+        "training": {
+          "batches": 11004,
+          "duration_seconds": 342.761150841,
+          "policy_loss": 1.6639610584868285,
+          "samples": 2816904,
+          "samples_per_second": 8218.270924486145,
+          "total_loss": 2.000944435025918,
+          "value_loss": 0.3369833765390894
+        },
+        "validation": {
+          "policy_loss": 1.6608367621275149,
+          "samples": 312792,
+          "total_loss": 2.0780325331247953,
+          "value_loss": 0.4171957709972805
+        }
+      },
+      "final": {
+        "epoch": 20,
+        "training": {
+          "batches": 11004,
+          "duration_seconds": 342.148626765,
+          "policy_loss": 1.6469176886655632,
+          "samples": 2816904,
+          "samples_per_second": 8232.98350378811,
+          "total_loss": 1.9522429075693613,
+          "value_loss": 0.3053252189037981
+        },
+        "validation": {
+          "policy_loss": 1.6769604055700822,
+          "samples": 312792,
+          "total_loss": 2.1541000627813136,
+          "value_loss": 0.47713965721123125
+        }
+      }
+    },
+    {
+      "id": "train-kata-gelu-value64x2-v1",
+      "best": {
+        "epoch": 18,
+        "training": {
+          "batches": 11004,
+          "duration_seconds": 342.159479875,
+          "policy_loss": 1.6486240129904202,
+          "samples": 2816904,
+          "samples_per_second": 8232.722358091876,
+          "total_loss": 1.965752356497015,
+          "value_loss": 0.3171283435065948
+        },
+        "validation": {
+          "policy_loss": 1.6488419229372855,
+          "samples": 312792,
+          "total_loss": 2.0858653859787033,
+          "value_loss": 0.4370234630414177
+        }
+      },
+      "final": {
+        "epoch": 20,
+        "training": {
+          "batches": 11004,
+          "duration_seconds": 342.227552747,
+          "policy_loss": 1.6473563199606451,
+          "samples": 2816904,
+          "samples_per_second": 8231.084777918113,
+          "total_loss": 1.961788792317292,
+          "value_loss": 0.3144324723566469
+        },
+        "validation": {
+          "policy_loss": 1.6760107184460122,
+          "samples": 312792,
+          "total_loss": 2.1615909700581306,
+          "value_loss": 0.4855802516121185
+        }
+      }
+    },
+    {
+      "id": "train-katago-pooling",
+      "best": {
+        "epoch": 15,
+        "training": {
+          "batches": 11004,
+          "duration_seconds": 341.744458024,
+          "policy_loss": 1.6514217879655433,
+          "samples": 2816904,
+          "samples_per_second": 8242.72035393819,
+          "total_loss": 1.9689848198745088,
+          "value_loss": 0.3175630319089655
+        },
+        "validation": {
+          "policy_loss": 1.6496303012668088,
+          "samples": 312792,
+          "total_loss": 2.0856278091070735,
+          "value_loss": 0.43599750784026464
+        }
+      },
+      "final": {
+        "epoch": 20,
+        "training": {
+          "batches": 11004,
+          "duration_seconds": 341.721130497,
+          "policy_loss": 1.6475232101841175,
+          "samples": 2816904,
+          "samples_per_second": 8243.283041651795,
+          "total_loss": 1.956726067314363,
+          "value_loss": 0.3092028571302454
+        },
+        "validation": {
+          "policy_loss": 1.6704848821292635,
+          "samples": 312792,
+          "total_loss": 2.136120822170408,
+          "value_loss": 0.46563594004114484
+        }
+      }
+    },
+    {
+      "id": "train-capacity-depth16",
+      "best": {
+        "epoch": 15,
+        "training": {
+          "batches": 11004,
+          "duration_seconds": 437.418007171,
+          "policy_loss": 1.646706984139291,
+          "samples": 2816904,
+          "samples_per_second": 6439.844619608416,
+          "total_loss": 1.9602483279681084,
+          "value_loss": 0.3135413438288175
+        },
+        "validation": {
+          "policy_loss": 1.648971686939708,
+          "samples": 312792,
+          "total_loss": 2.0894341745735807,
+          "value_loss": 0.440462487633873
+        }
+      },
+      "final": {
+        "epoch": 20,
+        "training": {
+          "batches": 11004,
+          "duration_seconds": 440.076161225,
+          "policy_loss": 1.6426241883547337,
+          "samples": 2816904,
+          "samples_per_second": 6400.946581970812,
+          "total_loss": 1.9479815931497804,
+          "value_loss": 0.30535740479504664
+        },
+        "validation": {
+          "policy_loss": 1.6876979990716987,
+          "samples": 312792,
+          "total_loss": 2.1689401126234857,
+          "value_loss": 0.48124211355178687
+        }
+      }
+    },
+    {
+      "id": "train-capacity-width48",
+      "best": {
+        "epoch": 11,
+        "training": {
+          "batches": 11004,
+          "duration_seconds": 377.209506046,
+          "policy_loss": 1.643728474757499,
+          "samples": 2816904,
+          "samples_per_second": 7467.743932350644,
+          "total_loss": 1.9469959154238698,
+          "value_loss": 0.303267440666371
+        },
+        "validation": {
+          "policy_loss": 1.6476882174635863,
+          "samples": 312792,
+          "total_loss": 2.0929108177637783,
+          "value_loss": 0.4452226003001921
+        }
+      },
+      "final": {
+        "epoch": 20,
+        "training": {
+          "batches": 11004,
+          "duration_seconds": 353.912639515,
+          "policy_loss": 1.6337822293084687,
+          "samples": 2816904,
+          "samples_per_second": 7959.320141434536,
+          "total_loss": 1.9071915012480374,
+          "value_loss": 0.2734092719395686
+        },
+        "validation": {
+          "policy_loss": 1.7138447168949709,
+          "samples": 312792,
+          "total_loss": 2.2452196452875324,
+          "value_loss": 0.5313749283925614
+        }
+      }
+    },
+    {
+      "id": "train-depth16-global3",
+      "best": {
+        "epoch": 9,
+        "training": {
+          "batches": 11004,
+          "duration_seconds": 454.23690021,
+          "policy_loss": 1.654445019816352,
+          "samples": 2816904,
+          "samples_per_second": 6201.39843041749,
+          "total_loss": 1.98135292623323,
+          "value_loss": 0.3269079064168779
+        },
+        "validation": {
+          "policy_loss": 1.6530895142418767,
+          "samples": 312792,
+          "total_loss": 2.0808370439794706,
+          "value_loss": 0.427747529737594
+        }
+      },
+      "final": {
+        "epoch": 20,
+        "training": {
+          "batches": 11004,
+          "duration_seconds": 446.001717349,
+          "policy_loss": 1.6403120624163987,
+          "samples": 2816904,
+          "samples_per_second": 6315.903931364797,
+          "total_loss": 1.9424797173248045,
+          "value_loss": 0.3021676549084059
+        },
+        "validation": {
+          "policy_loss": 1.7091802743735005,
+          "samples": 312792,
+          "total_loss": 2.2209987307289465,
+          "value_loss": 0.5118184563554462
+        }
+      }
+    }
+  ]
+}

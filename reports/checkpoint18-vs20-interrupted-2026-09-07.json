@@ -1,0 +1,47 @@
+{
+  "cancelled_at": "2026-09-07T16:12:07.272651+00:00",
+  "reason": "User requested stopping checkpoint-only comparisons to run depth/width experiments",
+  "jobs": [
+    "current-pooling-selected-vs-final",
+    "katago-pooling-selected-vs-final"
+  ],
+  "partial": {
+    "id": "current-pooling-selected-vs-final",
+    "games_completed": 465,
+    "games_requested": 1000,
+    "seat_results": {
+      "first_checkpoint": {
+        "first": {
+          "games": 238,
+          "wins": 227,
+          "losses": 11,
+          "draws": 0
+        },
+        "second": {
+          "games": 227,
+          "wins": 10,
+          "losses": 217,
+          "draws": 0
+        }
+      },
+      "second_checkpoint": {
+        "first": {
+          "games": 227,
+          "wins": 217,
+          "losses": 10,
+          "draws": 0
+        },
+        "second": {
+          "games": 238,
+          "wins": 11,
+          "losses": 227,
+          "draws": 0
+        }
+      }
+    },
+    "log_sha256": "1f14ecb7bd68b29dfedb4496d976e2b992f552b192ed05e0041f335c65c3ed39",
+    "warning": "Completed games only; unfinished long games are censored. Not a completed match or an unbiased strength estimate.",
+    "pass18_raw_score": 0.5096774193548387,
+    "pass18_seat_balanced_score": 0.4989171880205827
+  }
+}
