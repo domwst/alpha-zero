@@ -1,0 +1,173 @@
+:root {
+  color-scheme: light dark;
+
+  --ds-font-ui: Inter, "Aptos", ui-sans-serif, system-ui, -apple-system,
+    BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --ds-font-data: "SFMono-Regular", "Cascadia Code", Consolas, monospace;
+
+  --ds-font-size-body: 14px;
+  --ds-font-size-prose: 1rem;
+  --ds-font-size-page-title: clamp(27px, 3.4vw, 34px);
+  --ds-font-size-section-title: 19px;
+  --ds-font-size-subsection-title: 16px;
+  --ds-font-size-control: 13px;
+  --ds-font-size-label: 12px;
+  --ds-font-size-value: 19px;
+  --ds-font-size-summary-value: clamp(24px, 2.4vw, 28px);
+  --ds-font-size-eyebrow: 12px;
+
+  --ds-font-weight-regular: 400;
+  --ds-font-weight-medium: 500;
+  --ds-font-weight-semibold: 650;
+  --ds-font-weight-bold: 700;
+  --ds-line-height-body: 1.55;
+  --ds-line-height-prose: 1.65;
+
+  --ds-color-canvas: light-dark(#fafafc, #0f0f12);
+  --ds-color-surface: light-dark(#ffffff, #17171b);
+  --ds-color-surface-subtle: light-dark(#f0f1f4, #1f1f25);
+
+  --ds-color-text-primary: light-dark(#17171c, #ececf1);
+  --ds-color-text: light-dark(#3f3f47, #c4c4cd);
+  --ds-color-text-muted: light-dark(#5f5f68, #90909b);
+  --ds-color-text-subtle: light-dark(#696972, #8b8b96);
+
+  --ds-color-border: light-dark(#e4e5e9, #26262d);
+  --ds-color-border-strong: light-dark(#858892, #696974);
+
+  --ds-color-accent: light-dark(#2563eb, #5b9cf5);
+  --ds-color-accent-hover: light-dark(#1d4ed8, #7cb0f7);
+  --ds-color-accent-soft: light-dark(
+    rgba(37, 99, 235, 0.08),
+    rgba(91, 156, 245, 0.14)
+  );
+  --ds-color-on-accent: light-dark(#ffffff, #0b0b0e);
+  --ds-color-brand: light-dark(#2563eb, #1d4ed8);
+
+  --ds-color-positive: light-dark(#16a34a, #4ade80);
+  --ds-color-positive-text: light-dark(#166534, #4ade80);
+  --ds-color-positive-soft: light-dark(
+    rgba(22, 163, 74, 0.12),
+    rgba(74, 222, 128, 0.14)
+  );
+  --ds-color-on-positive: light-dark(#ffffff, #0b0b0e);
+
+  --ds-color-warning: light-dark(#d97706, #fbbf24);
+  --ds-color-warning-text: light-dark(#92400e, #fbbf24);
+  --ds-color-warning-soft: light-dark(
+    rgba(217, 119, 6, 0.1),
+    rgba(251, 191, 36, 0.14)
+  );
+  --ds-color-on-warning: light-dark(#17171c, #0b0b0e);
+
+  --ds-color-danger: light-dark(#dc2626, #f87171);
+  --ds-color-danger-text: light-dark(#b91c1c, #f87171);
+  --ds-color-danger-soft: light-dark(
+    rgba(220, 38, 38, 0.12),
+    rgba(248, 113, 113, 0.14)
+  );
+  --ds-color-on-danger: light-dark(#ffffff, #0b0b0e);
+
+  --ds-color-info: light-dark(#2563eb, #60a5fa);
+  --ds-color-info-text: light-dark(#1d4ed8, #60a5fa);
+  --ds-color-info-soft: light-dark(
+    rgba(37, 99, 235, 0.12),
+    rgba(96, 165, 250, 0.14)
+  );
+  --ds-color-on-info: light-dark(#ffffff, #0b0b0e);
+
+  --ds-color-neutral: light-dark(#6e6e78, #8b8b96);
+  --ds-color-neutral-text: light-dark(#5f5f68, #8b8b96);
+  --ds-color-neutral-soft: light-dark(
+    rgba(110, 110, 120, 0.1),
+    rgba(144, 144, 155, 0.12)
+  );
+
+  --ds-color-inverse: light-dark(#17171c, #0a0a0d);
+  --ds-color-on-inverse: light-dark(#ececf1, #e6e6ec);
+  --ds-color-inverse-muted: light-dark(#9b9ba5, #8b8b96);
+  --ds-color-inverse-border: light-dark(#33333b, #2b2b33);
+
+  --ds-chart-series-1: light-dark(#2563eb, #7cb0f7);
+  --ds-chart-series-2: light-dark(#059669, #6ee7b7);
+  --ds-chart-series-3: light-dark(#7c3aed, #c4b5fd);
+  --ds-chart-series-4: light-dark(#db2777, #f0abfc);
+  --ds-chart-series-5: light-dark(#b45309, #fcd34d);
+
+  --ds-radius-sm: 6px;
+  --ds-radius: 8px;
+  --ds-radius-lg: 12px;
+  --ds-radius-pill: 999px;
+
+  --ds-space-1: 4px;
+  --ds-space-2: 6px;
+  --ds-space-3: 8px;
+  --ds-space-4: 10px;
+  --ds-space-5: 12px;
+  --ds-space-6: 16px;
+  --ds-space-7: 20px;
+  --ds-space-8: 24px;
+  --ds-space-9: 32px;
+  --ds-space-10: 40px;
+
+  --ds-focus-color: var(--ds-color-accent);
+  --ds-focus-width: 2px;
+  --ds-focus-offset: 2px;
+  --ds-opacity-disabled: 0.45;
+  --ds-dim-muted: 0.78;
+  --ds-shadow-selected: 0 1px 2px rgba(16, 16, 20, 0.08);
+  --ds-shadow-overlay: 0 16px 40px rgba(16, 16, 20, 0.18);
+  --ds-color-overlay: rgba(0, 0, 0, 0.48);
+
+  --ds-content-width: 1320px;
+  --ds-content-width-data: 1540px;
+  --ds-content-width-prose: 70ch;
+  --ds-header-height: 60px;
+  --ds-control-height: 40px;
+  --ds-row-height: 48px;
+  --ds-panel-padding: 20px;
+  --ds-field-gap: 16px;
+  --ds-duration-fast: 120ms;
+  --ds-duration-normal: 180ms;
+  --ds-duration-slow: 300ms;
+  --ds-ease-standard: ease;
+  --ds-theme-transition-duration: var(--ds-duration-slow);
+
+  --ds-z-header: 100;
+  --ds-z-popover: 500;
+  --ds-z-modal: 1000;
+  --ds-z-toast: 1100;
+}
+
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ds-shadow-overlay: 0 18px 50px rgba(0, 0, 0, 0.5);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --ds-shadow-overlay: 0 18px 50px rgba(0, 0, 0, 0.5);
+  }
+}
+
+:root[data-density="comfortable"] {
+  --ds-control-height: 44px;
+  --ds-row-height: 52px;
+  --ds-panel-padding: 24px;
+  --ds-field-gap: 20px;
+}
+
+:root[data-density="standard"] {
+  --ds-control-height: 40px;
+  --ds-row-height: 48px;
+  --ds-panel-padding: 20px;
+  --ds-field-gap: 16px;
+}
+
+:root[data-density="compact"] {
+  --ds-control-height: 36px;
+  --ds-row-height: 40px;
+  --ds-panel-padding: 16px;
+  --ds-field-gap: 12px;
+}

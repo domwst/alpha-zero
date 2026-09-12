@@ -1,0 +1,152 @@
+{
+  "deduplication": "SHA256 of complete bincode game including states, policies and outcomes",
+  "duplicate_games_removed": 22500,
+  "missing_actions": "final action of each game is not stored and cannot be uniquely reconstructed",
+  "policy_semantics": "stored targets, analyzed without another temperature transform",
+  "positions": 391212,
+  "recoverable_actions": 373712,
+  "schema_version": 1,
+  "sources": [
+    {
+      "checkpoint": {
+        "epoch": 60,
+        "format_version": 2,
+        "model": {
+          "architecture": "kata_v1"
+        },
+        "model_sha256": "197acf86910ae0069eb61d77272bd97554473c2bde0e77a93b117b1d9d570ce1",
+        "path": "runs/pod-backup-rpii1ijfvmno97-20260908/restored/workspace/alpha-zero/replays/00000060",
+        "tensor_schema_sha256": "a8c732eb360867780c8dcd98983c63a8fb9402202936cdbd679f150356de3bbc"
+      },
+      "games": 4000,
+      "replay_sha256": "7910d6bb463f52b2ca235dd84e27bdd77872f1b0998fe27ea5037b25c699c08e"
+    },
+    {
+      "checkpoint": {
+        "epoch": 61,
+        "format_version": 2,
+        "model": {
+          "architecture": "kata_v1"
+        },
+        "model_sha256": "01050120feb177bf12567ebbe5d6f590c32b089dae65ff5744df1e1965622169",
+        "path": "runs/pod-backup-rpii1ijfvmno97-20260908/restored/workspace/alpha-zero/replays/00000061",
+        "tensor_schema_sha256": "a8c732eb360867780c8dcd98983c63a8fb9402202936cdbd679f150356de3bbc"
+      },
+      "games": 4000,
+      "replay_sha256": "0f9d7b34c72f955cb0a3a52bd32739dc895c8da5e3631a5a087dfceb713dfb76"
+    },
+    {
+      "checkpoint": {
+        "epoch": 62,
+        "format_version": 2,
+        "model": {
+          "architecture": "kata_v1"
+        },
+        "model_sha256": "8c1de9d57a6a3150b856a76fd63e82df0b9d85d84e5c6039a6926f3cd98b7560",
+        "path": "runs/pod-backup-rpii1ijfvmno97-20260908/restored/workspace/alpha-zero/replays/00000062",
+        "tensor_schema_sha256": "a8c732eb360867780c8dcd98983c63a8fb9402202936cdbd679f150356de3bbc"
+      },
+      "games": 4000,
+      "replay_sha256": "6efd86feb8fc5dbdca83e2715ce8055f24dbb93e4bd640263f005f2439223f4c"
+    },
+    {
+      "checkpoint": {
+        "epoch": 63,
+        "format_version": 2,
+        "model": {
+          "architecture": "kata_v1"
+        },
+        "model_sha256": "69b2240a0cc4a0bedda27ab2d369ee41e8218ee3763a448cffce025a76240414",
+        "path": "runs/pod-backup-rpii1ijfvmno97-20260908/restored/workspace/alpha-zero/replays/00000063",
+        "tensor_schema_sha256": "a8c732eb360867780c8dcd98983c63a8fb9402202936cdbd679f150356de3bbc"
+      },
+      "games": 4000,
+      "replay_sha256": "53f6a4e0ce78c7033d2491a98788c21fd88c5b6aa48a4c2eda45443fc7581588"
+    },
+    {
+      "checkpoint": {
+        "epoch": 64,
+        "format_version": 2,
+        "model": {
+          "architecture": "kata_v1"
+        },
+        "model_sha256": "473eead8f002cff9f047f287dab326d0433d44db18c14c003a17037ee2de007f",
+        "path": "runs/pod-backup-rpii1ijfvmno97-20260908/restored/workspace/alpha-zero/replays/00000064",
+        "tensor_schema_sha256": "a8c732eb360867780c8dcd98983c63a8fb9402202936cdbd679f150356de3bbc"
+      },
+      "games": 4000,
+      "replay_sha256": "477b878341e94d927e741e3cabbd19152b052dcffd3a4ca9866e5feef43db83a"
+    },
+    {
+      "checkpoint": {
+        "epoch": 65,
+        "format_version": 2,
+        "model": {
+          "architecture": "kata_v1"
+        },
+        "model_sha256": "1b54208965a402a89c12eb852dad9b22c250968a73084e177db086d5bc4a02f8",
+        "path": "runs/pod-backup-rpii1ijfvmno97-20260908/restored/workspace/alpha-zero/replays/00000065",
+        "tensor_schema_sha256": "a8c732eb360867780c8dcd98983c63a8fb9402202936cdbd679f150356de3bbc"
+      },
+      "games": 4000,
+      "replay_sha256": "638b5ee1c8d3cc6a7250feaf156da93e00afe5a3f7d38827affc8ecc7dde869a"
+    },
+    {
+      "checkpoint": {
+        "epoch": 66,
+        "format_version": 2,
+        "model": {
+          "architecture": "kata_v1"
+        },
+        "model_sha256": "cf7b6677224f3ca453e1003fece46d61c12664a94d592665f6f618cea8fd37ca",
+        "path": "runs/pod-backup-rpii1ijfvmno97-20260908/restored/workspace/alpha-zero/replays/00000066",
+        "tensor_schema_sha256": "a8c732eb360867780c8dcd98983c63a8fb9402202936cdbd679f150356de3bbc"
+      },
+      "games": 4000,
+      "replay_sha256": "d264770830f43d593f2714574b34d281ce06db093b0439755a703adb3b26ab85"
+    },
+    {
+      "checkpoint": {
+        "epoch": 67,
+        "format_version": 2,
+        "model": {
+          "architecture": "kata_v1"
+        },
+        "model_sha256": "cc6c0412dcb9a55f65d1a2a6a95cf52fe782e85220c45b2dac3e5c3232247bf9",
+        "path": "runs/pod-backup-rpii1ijfvmno97-20260908/restored/workspace/alpha-zero/replays/00000067",
+        "tensor_schema_sha256": "a8c732eb360867780c8dcd98983c63a8fb9402202936cdbd679f150356de3bbc"
+      },
+      "games": 4000,
+      "replay_sha256": "60b556bd6b682291f4b73c1a3af27a3f52ec1b3c1c2f87d02309df28e8b794c7"
+    },
+    {
+      "checkpoint": {
+        "epoch": 68,
+        "format_version": 2,
+        "model": {
+          "architecture": "kata_v1"
+        },
+        "model_sha256": "3b395622cf85956510c297af2eaf7d18a5aa7d8aaf695f2a97d9c9d67cd04300",
+        "path": "runs/pod-backup-rpii1ijfvmno97-20260908/restored/workspace/alpha-zero/replays/00000068",
+        "tensor_schema_sha256": "a8c732eb360867780c8dcd98983c63a8fb9402202936cdbd679f150356de3bbc"
+      },
+      "games": 4000,
+      "replay_sha256": "8b209a6cd1d7d2cf41d06ebb62bffb9739d94e7e72a87dcdb8fe894e0add293c"
+    },
+    {
+      "checkpoint": {
+        "epoch": 69,
+        "format_version": 2,
+        "model": {
+          "architecture": "kata_v1"
+        },
+        "model_sha256": "91b74e5b63c6b92055331f9acbff9c68b15e96e0f9b3188aa92dc04673e2243a",
+        "path": "runs/pod-backup-rpii1ijfvmno97-20260908/restored/workspace/alpha-zero/replays/00000069",
+        "tensor_schema_sha256": "a8c732eb360867780c8dcd98983c63a8fb9402202936cdbd679f150356de3bbc"
+      },
+      "games": 4000,
+      "replay_sha256": "0962accef8e314ed4f138ed0ab4c4f977414f9f19db40ddadb1e4bd2bef5a429"
+    }
+  ],
+  "unique_games": 17500
+}
