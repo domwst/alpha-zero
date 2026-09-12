@@ -1,0 +1,13 @@
+[Unit]
+Description=Read-only AlphaZero experiment dashboard
+
+[Service]
+Type=simple
+WorkingDirectory=%h/misc/alpha-zero
+ExecStart=/usr/bin/python3 scripts/experiment_dashboard.py --connection runs/dashboard-connection.json --port 8765
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=10
+
+[Install]
+WantedBy=default.target

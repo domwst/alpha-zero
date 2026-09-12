@@ -1,0 +1,82 @@
+{
+  "boardmask-vs-current": [
+    "Current · BN gamma=1 · selected pass 11",
+    "Board mask · validation-selected"
+  ],
+  "selfplay-vs-replay-baseline": [
+    "Replay-trained · BN gamma=1 · selected pass 11",
+    "Latest self-play · epoch 20"
+  ],
+  "recipe-constant-vs-cosine-s1": [
+    "Constant LR · seed 1 · pass 11",
+    "Cosine LR · seed 1 · pass 15"
+  ],
+  "recipe-constant-vs-gamma-one-s1": [
+    "Constant LR · seed 1 · pass 11",
+    "BN gamma=1 · seed 1 · pass 11"
+  ],
+  "recipe-constant-vs-cosine-s2": [
+    "Constant LR · seed 2 · pass 10",
+    "Cosine LR · seed 2 · pass 16"
+  ],
+  "recipe-constant-vs-gamma-one-s2": [
+    "Constant LR · seed 2 · pass 10",
+    "BN gamma=1 · seed 2 · pass 19"
+  ],
+  "activation-match": [
+    "Replay-trained ReLU",
+    "Replay-trained GELU"
+  ],
+  "replay-relu-vs-selfplay": [
+    "Replay-trained ReLU",
+    "Self-play checkpoint 69"
+  ],
+  "current-vs-wide64": [
+    "Current value head · 64 → 10 → 1",
+    "Wide value head · 64 → 64 → 1"
+  ],
+  "current-vs-deep64": [
+    "Current value head · 64 → 10 → 1",
+    "Deep value head · 64 → 64 → 64 → 1"
+  ],
+  "wide64-vs-deep64": [
+    "Wide value head · 64 → 64 → 1",
+    "Deep value head · 64 → 64 → 64 → 1"
+  ],
+  "current-vs-katago-pooling": [
+    "Current global pooling",
+    "KataGo-style global pooling"
+  ],
+  "selected-current-vs-katago-pooling": [
+    "Current pooling · selected pass 18",
+    "KataGo pooling · selected pass 15"
+  ],
+  "current-pooling-selected-vs-final": [
+    "Current pooling · selected pass 18",
+    "Current pooling · final pass 20"
+  ],
+  "katago-pooling-selected-vs-final": [
+    "KataGo pooling · selected pass 15",
+    "KataGo pooling · final pass 20"
+  ],
+  "global3-baseline-vs-depth16": [
+    "Current · 10 blocks · 2 global pools",
+    "16 blocks · 3 global pools"
+  ],
+  "global3-depth16-two-vs-three": [
+    "16 blocks · 2 global pools",
+    "16 blocks · 3 global pools"
+  ],
+  "capacity-baseline-vs-depth16": [
+    "Current · 10 blocks × 32 channels",
+    "Deeper · 16 blocks × 32 channels"
+  ],
+  "capacity-baseline-vs-width48": [
+    "Current · 10 blocks × 32 channels",
+    "Wider · 10 blocks × 48 channels"
+  ],
+  "capacity-depth16-vs-width48": [
+    "Deeper · 16 blocks × 32 channels",
+    "Wider · 10 blocks × 48 channels"
+  ]
+}
