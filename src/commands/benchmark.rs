@@ -5,12 +5,14 @@ use alz::{
         AlphaZeroNet, NetworkBatchStats, masked_policy_probabilities, policy_log_probabilities,
     },
     gomoku::{GomokuModel, ModelSpec},
+    training_batches::{ReplayCacheMode, TrainingBatch, TrainingBatches},
+    training_snapshot::load_replay_checkpoint,
 };
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
 use tch::{
     Device, Kind, Reduction, Tensor,
-    nn::{self, Optimizer, OptimizerConfig},
+    nn::{self, Optimizer},
 };
 
 use crate::cli::{
@@ -22,7 +24,7 @@ use super::{
     train::{SelfPlaySettings, collect_epoch_games},
 };
 
-const BENCHMARK_SCHEMA_VERSION: u32 = 5;
+const BENCHMARK_SCHEMA_VERSION: u32 = 6;
 
 #[derive(Serialize)]
 struct InferenceResult<'a> {
@@ -39,6 +41,7 @@ struct InferenceResult<'a> {
 
 #[derive(Serialize)]
 struct TrainingResult<'a> {
+    preparation_seconds: f64,
     schema_version: u32,
     benchmark: &'static str,
     config: &'a TrainingBenchmarkArgs,
@@ -147,51 +150,99 @@ fn inference_iteration(
 }
 
 fn run_training(args: TrainingBenchmarkArgs) -> Result<()> {
+    args.performance.validate()?;
     ensure!(args.batch_size > 0, "batch-size must be greater than zero");
     ensure!(args.iterations > 0, "iterations must be greater than zero");
+    ensure!(
+        args.weight_decay.is_finite() && args.weight_decay >= 0.0,
+        "invalid weight decay"
+    );
+    ensure!(
+        args.replay_checkpoint_dir.is_some()
+            || args.performance.replay_cache == ReplayCacheMode::None,
+        "replay-cache requires --replay-checkpoint-dir in a training benchmark"
+    );
     tch::manual_seed((args.seed & i64::MAX as u64) as i64);
     let device = resolve_device(&args.device)?;
     let var_store = nn::VarStore::new(device);
     let model_spec = ModelSpec::from(args.architecture);
     let network = GomokuModel::new(var_store.root(), &model_spec);
-    let mut optimizer = nn::Adam::default().build(&var_store, 1e-3)?;
-    let states = Tensor::zeros(
-        [args.batch_size as i64, 2, 19, 19],
-        (Kind::Float, Device::Cpu),
-    );
-    let policies = Tensor::ones([args.batch_size as i64, 19, 19], (Kind::Float, Device::Cpu))
-        / (19 * 19) as f64;
-    let values = Tensor::zeros([args.batch_size as i64], (Kind::Float, Device::Cpu));
-
-    let mut final_loss = 0.0;
-    for _ in 0..args.warmup_iterations {
-        final_loss = training_iteration(
-            &network,
-            &mut optimizer,
-            &states,
-            &policies,
-            &values,
-            device,
-        )?;
+    let mut optimizer = super::common::build_adam(
+        args.performance.adam_backend,
+        &var_store,
+        1e-3,
+        args.weight_decay,
+    )?;
+    let preparation = Instant::now();
+    let replay = args
+        .replay_checkpoint_dir
+        .as_deref()
+        .map(load_replay_checkpoint)
+        .transpose()?
+        .map(|(_, replay)| replay);
+    let source = replay
+        .as_ref()
+        .map(|r| TrainingBatches::new(r, args.performance.replay_cache, device))
+        .transpose()?;
+    let total = args
+        .warmup_iterations
+        .checked_add(args.iterations)
+        .context("iteration count overflow")?;
+    let required_samples = total
+        .checked_mul(args.batch_size)
+        .context("sample count overflow")?;
+    if let Some(source) = &source {
+        ensure!(
+            source.len() >= required_samples,
+            "replay is too small for the requested number of full benchmark batches"
+        );
     }
-    let started = Instant::now();
-    for _ in 0..args.iterations {
+    let mut batches = source
+        .as_ref()
+        .map(|s| {
+            s.batches(
+                args.batch_size,
+                Some(args.seed),
+                args.performance.prefetch_batches,
+            )
+        })
+        .transpose()?;
+    let synthetic = TrainingBatch {
+        states: Tensor::zeros(
+            [args.batch_size as i64, 2, 19, 19],
+            (Kind::Float, Device::Cpu),
+        ),
+        policies: Tensor::ones([args.batch_size as i64, 19, 19], (Kind::Float, Device::Cpu))
+            / (19 * 19) as f64,
+        values: Tensor::zeros([args.batch_size as i64], (Kind::Float, Device::Cpu)),
+    };
+    let preparation_seconds = preparation.elapsed().as_secs_f64();
+    let mut final_loss = 0.0;
+    let mut started = Instant::now();
+    for index in 0..total {
+        if index == args.warmup_iterations {
+            started = Instant::now();
+        }
+        let replay_batch = batches
+            .as_mut()
+            .map(|b| b.next().context("replay exhausted")?)
+            .transpose()?;
         final_loss = training_iteration(
             &network,
             &mut optimizer,
-            &states,
-            &policies,
-            &values,
+            replay_batch.as_ref().unwrap_or(&synthetic),
             device,
         )?;
     }
     let duration = started.elapsed();
+    ensure!(final_loss.is_finite(), "non-finite training loss");
     let examples = args.batch_size * args.iterations;
     let result = TrainingResult {
         schema_version: BENCHMARK_SCHEMA_VERSION,
         benchmark: "training",
         config: &args,
         device: format!("{device:?}"),
+        preparation_seconds,
         examples,
         duration_seconds: duration.as_secs_f64(),
         milliseconds_per_iteration: duration.as_secs_f64() * 1_000.0 / args.iterations as f64,
@@ -204,22 +255,17 @@ fn run_training(args: TrainingBenchmarkArgs) -> Result<()> {
 fn training_iteration(
     network: &GomokuModel,
     optimizer: &mut Optimizer,
-    cpu_states: &Tensor,
-    cpu_policies: &Tensor,
-    cpu_values: &Tensor,
+    batch: &TrainingBatch,
     device: Device,
 ) -> Result<f64> {
-    let states = cpu_states.to_device(device);
-    let policies = cpu_policies.to_device(device);
-    let values = cpu_values.to_device(device);
-    let output = network.forward_t(&states, true);
-    let predicted_policy_log_probabilities = policy_log_probabilities(&output.policy_logits);
-    let value_loss = output.values.mse_loss(&values, Reduction::Mean);
-    let policy_loss =
-        -(policies * predicted_policy_log_probabilities).sum(None) / cpu_states.size()[0] as f64;
-    let loss = &value_loss + &policy_loss;
-    optimizer.backward_step(&loss);
-    Ok(f32::try_from(&loss).context("reading training loss")? as f64)
+    let batch = batch.to_device(device)?;
+    let output = network.forward_t(&batch.states, true);
+    let log_probs = policy_log_probabilities(&output.policy_logits);
+    let value_loss = output.values.mse_loss(&batch.values, Reduction::Mean);
+    let policy_loss = -(&batch.policies * log_probs).sum(None) / batch.len() as f64;
+    optimizer.backward_step(&(&value_loss + &policy_loss));
+    // Match production: two scalar readbacks per step.
+    Ok(f32::try_from(&value_loss)? as f64 + f32::try_from(&policy_loss)? as f64)
 }
 
 async fn run_self_play(args: SelfPlayBenchmarkArgs) -> Result<()> {
@@ -261,6 +307,7 @@ async fn run_self_play(args: SelfPlayBenchmarkArgs) -> Result<()> {
     }
 
     let settings = SelfPlaySettings {
+        top_p: 1.0,
         games: args.games,
         simulations: args.simulations,
         c_puct: args.c_puct,

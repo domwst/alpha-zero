@@ -18,6 +18,34 @@ where
     Temperature: Fn(usize) -> f32 + Send,
     Random: Rng + Send,
 {
+    generate_self_played_game_with_top_p(
+        start,
+        simulations,
+        c_puct,
+        temperature,
+        evaluator,
+        random,
+        1.0,
+    )
+    .await
+}
+
+pub async fn generate_self_played_game_with_top_p<TGame, Evaluator, Temperature, Random>(
+    start: TGame,
+    simulations: usize,
+    c_puct: f32,
+    temperature: Temperature,
+    evaluator: Evaluator,
+    random: Random,
+    top_p: f64,
+) -> Result<MatchRecord<TGame>>
+where
+    TGame: Game + Clone + PartialEq + Send + Sync,
+    TGame::Move: Clone + PartialEq + Send + Sync,
+    Evaluator: PositionEvaluator<TGame> + Send + Sync,
+    Temperature: Fn(usize) -> f32 + Send,
+    Random: Rng + Send,
+{
     let agent = MctsAgent::new(
         start.clone(),
         evaluator,
@@ -29,7 +57,8 @@ where
         c_puct,
         random,
         temperature,
-    );
+    )
+    .with_top_p(top_p);
     let mut controller = Shared::new(agent);
     run_match(start, &mut controller).await
 }

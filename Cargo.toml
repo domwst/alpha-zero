@@ -8,7 +8,7 @@ members = [".", "crates/demo-server"]
 resolver = "3"
 
 [workspace.dependencies]
-tch = { git = "https://github.com/domwst/tch-rs", rev = "7e7d436ac73523afedf1a192892dfc9346568ba6" }
+tch = { git = "https://github.com/domwst/tch-rs", rev = "07f5604711b5bd9acd3ad501dbdf76fa758720a4" }
 
 [dependencies]
 anyhow = { version = "1", features = ["backtrace"] }

@@ -486,6 +486,30 @@ pub fn load_training_snapshot(
     var_store: &mut VarStore,
     optimizer: &mut Optimizer,
 ) -> Result<ReplayBuffer> {
+    let replay = load_snapshot_replay(snapshot)?;
+
+    snapshot.load_model(var_store)?;
+    let optimizer_path = snapshot.path.join(OPTIMIZER_FILE);
+    optimizer
+        .load(&optimizer_path)
+        .with_context(|| format!("loading {}", optimizer_path.display()))?;
+    Ok(replay)
+}
+
+/// Read replay targets independently of the source model and optimizer.
+/// The source architecture does not have to match a new replay-trained model.
+pub fn load_replay_checkpoint(path: &Path) -> Result<(SnapshotDescriptor, ReplayBuffer)> {
+    let epoch = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.parse::<usize>().ok())
+        .context("replay-checkpoint-dir must be an individual numeric snapshot directory")?;
+    let snapshot = read_snapshot(path.to_owned(), epoch)?;
+    let replay = load_snapshot_replay(&snapshot)?;
+    Ok((snapshot.descriptor(), replay))
+}
+
+fn load_snapshot_replay(snapshot: &TrainingSnapshot) -> Result<ReplayBuffer> {
     let replay = load_replay(&snapshot.path.join(REPLAY_FILE))?;
     validate_replay(&replay)?;
     let replay_positions = replay.iter().map(Vec::len).sum::<usize>();
@@ -495,11 +519,6 @@ pub fn load_training_snapshot(
         bail!("replay metadata does not match {}", snapshot.path.display());
     }
 
-    snapshot.load_model(var_store)?;
-    let optimizer_path = snapshot.path.join(OPTIMIZER_FILE);
-    optimizer
-        .load(&optimizer_path)
-        .with_context(|| format!("loading {}", optimizer_path.display()))?;
     Ok(replay)
 }
 
@@ -642,7 +661,13 @@ mod tests {
     }
 
     fn training_step(model: &GomokuModel, optimizer: &mut nn::Optimizer, device: Device) {
-        let input = Tensor::zeros([1, 2, 19, 19], (tch::Kind::Float, device));
+        // Fixed binary board planes give both optimizer trajectories identical
+        // inputs without a degenerate all-empty BatchNorm training batch.
+        let input = Tensor::arange(2 * 2 * 19 * 19, (tch::Kind::Int64, device))
+            .remainder(7)
+            .eq(0)
+            .to_kind(tch::Kind::Float)
+            .view([2, 2, 19, 19]);
         let output = model.forward_t(&input, true);
         let loss = output.values.square().mean(tch::Kind::Float)
             + output.policy_logits.square().mean(tch::Kind::Float);
@@ -662,6 +687,12 @@ mod tests {
         let model = GomokuModel::new(vs.root(), &model_spec);
         let mut optimizer = nn::Adam::default().build(&vs, 1e-3).unwrap();
         training_step(&model, &mut optimizer, device);
+        for tensor in vs.trainable_variables() {
+            assert!(
+                bool::try_from(tensor.isfinite().all()).unwrap(),
+                "{model_spec:?}: non-finite parameters before saving checkpoint"
+            );
+        }
         save_training_snapshot(&root, 3, &model_spec, &vs, &optimizer, &replay).unwrap();
 
         training_step(&model, &mut optimizer, device);
@@ -685,7 +716,12 @@ mod tests {
             .iter()
             .zip(restored_vs.trainable_variables().iter())
         {
-            assert!(expected.allclose(actual, 1e-6, 1e-7, false));
+            assert!(
+                expected.allclose(actual, 1e-6, 1e-7, false),
+                "{model_spec:?}: tensor {:?}, max error {}",
+                expected.size(),
+                f64::try_from((expected - actual).abs().max()).unwrap()
+            );
         }
 
         fs::remove_dir_all(root).unwrap();
@@ -699,6 +735,32 @@ mod tests {
     #[test]
     fn kata_snapshot_restores_model_optimizer_and_replay() {
         assert_snapshot_restores_training(Device::Cpu, ModelSpec::KataV1);
+    }
+
+    #[test]
+    fn gelu_snapshot_restores_model_optimizer_and_replay() {
+        assert_snapshot_restores_training(Device::Cpu, ModelSpec::KataGeluV1);
+    }
+
+    #[test]
+    fn wider_value_heads_restore_model_optimizer_and_replay() {
+        for spec in [
+            ModelSpec::KataGeluB16C32G3Value64x2V1,
+            ModelSpec::KataGeluB16C32Value64x2V1,
+            ModelSpec::KataGeluB10C48Value64x2V1,
+            ModelSpec::KataPoolV1,
+            ModelSpec::KataGeluPoolV1,
+            ModelSpec::KataPoolValue64V1,
+            ModelSpec::KataPoolValue64x2V1,
+            ModelSpec::KataGeluPoolValue64V1,
+            ModelSpec::KataGeluPoolValue64x2V1,
+            ModelSpec::KataValue64V1,
+            ModelSpec::KataValue64x2V1,
+            ModelSpec::KataGeluValue64V1,
+            ModelSpec::KataGeluValue64x2V1,
+        ] {
+            assert_snapshot_restores_training(Device::Cpu, spec);
+        }
     }
 
     #[test]

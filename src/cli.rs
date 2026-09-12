@@ -1,8 +1,45 @@
 use std::path::PathBuf;
 
-use alz::gomoku::ModelSpec;
+use alz::{gomoku::ModelSpec, training_batches::ReplayCacheMode};
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum AdamBackendChoice {
+    #[default]
+    Standard,
+    Fused,
+}
+
+#[derive(Clone, Debug, Default, Args, Serialize)]
+pub struct TrainingPerformanceArgs {
+    /// Adam implementation. Fused supports CPU/CUDA and may change rounding.
+    #[arg(long, value_enum, default_value = "standard")]
+    pub adam_backend: AdamBackendChoice,
+
+    /// Pre-encode all replay symmetries in CPU or training-device memory.
+    #[arg(long, value_enum, default_value = "none")]
+    pub replay_cache: ReplayCacheMode,
+
+    /// CPU batches prepared ahead of training (0..16); requires --replay-cache cpu.
+    #[arg(long, default_value_t = 0)]
+    pub prefetch_batches: usize,
+}
+
+impl TrainingPerformanceArgs {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.prefetch_batches <= 16,
+            "prefetch-batches must be at most 16"
+        );
+        anyhow::ensure!(
+            self.prefetch_batches == 0 || self.replay_cache == ReplayCacheMode::Cpu,
+            "prefetch-batches requires --replay-cache cpu"
+        );
+        Ok(())
+    }
+}
 
 #[derive(Debug, Parser)]
 #[command(
@@ -19,6 +56,8 @@ pub struct Cli {
 pub enum Command {
     /// Train from the latest complete snapshot, or initialize a new run.
     Train(TrainArgs),
+    /// Train a fresh model on a fixed saved replay buffer, with a held-out game split.
+    TrainReplay(TrainReplayArgs),
     /// Play a game using the latest complete snapshot.
     Play(PlayArgs),
     /// Evaluate two snapshots against each other.
@@ -47,7 +86,7 @@ pub struct DeviceArgs {
     pub cuda_index: usize,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, ValueEnum)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum ArchitectureChoice {
     #[value(name = "legacy-resnet-v1")]
@@ -56,6 +95,62 @@ pub enum ArchitectureChoice {
     #[value(name = "kata-v1")]
     #[serde(rename = "kata_v1")]
     KataV1,
+    #[value(name = "kata-gelu-v1")]
+    #[serde(rename = "kata_gelu_v1")]
+    KataGeluV1,
+    #[value(name = "kata-value64-v1")]
+    #[serde(rename = "kata_value64_v1")]
+    KataValue64V1,
+    #[value(name = "kata-value64x2-v1")]
+    #[serde(rename = "kata_value64x2_v1")]
+    KataValue64x2V1,
+    #[value(name = "kata-gelu-value64-v1")]
+    #[serde(rename = "kata_gelu_value64_v1")]
+    KataGeluValue64V1,
+    #[value(name = "kata-gelu-value64x2-v1")]
+    #[serde(rename = "kata_gelu_value64x2_v1")]
+    KataGeluValue64x2V1,
+    #[value(name = "kata-gelu-boardmask-value64x2-v1")]
+    #[serde(rename = "kata_gelu_boardmask_value64x2_v1")]
+    #[default]
+    KataGeluBoardMaskValue64x2V1,
+    #[value(name = "kata-gelu-b16c32-value64x2-v1")]
+    #[serde(rename = "kata_gelu_b16c32_value64x2_v1")]
+    KataGeluB16C32Value64x2V1,
+    #[value(name = "kata-gelu-b16c32g3-value64x2-v1")]
+    #[serde(rename = "kata_gelu_b16c32g3_value64x2_v1")]
+    KataGeluB16C32G3Value64x2V1,
+    #[value(name = "kata-gelu-b10c48-value64x2-v1")]
+    #[serde(rename = "kata_gelu_b10c48_value64x2_v1")]
+    KataGeluB10C48Value64x2V1,
+    #[value(name = "kata-pool-v1")]
+    #[serde(rename = "kata_pool_v1")]
+    KataPoolV1,
+    #[value(name = "kata-gelu-pool-v1")]
+    #[serde(rename = "kata_gelu_pool_v1")]
+    KataGeluPoolV1,
+    #[value(name = "kata-pool-value64-v1")]
+    #[serde(rename = "kata_pool_value64_v1")]
+    KataPoolValue64V1,
+    #[value(name = "kata-pool-value64x2-v1")]
+    #[serde(rename = "kata_pool_value64x2_v1")]
+    KataPoolValue64x2V1,
+    #[value(name = "kata-gelu-pool-value64-v1")]
+    #[serde(rename = "kata_gelu_pool_value64_v1")]
+    KataGeluPoolValue64V1,
+    #[value(name = "kata-gelu-pool-value64x2-v1")]
+    #[serde(rename = "kata_gelu_pool_value64x2_v1")]
+    KataGeluPoolValue64x2V1,
+}
+
+impl std::fmt::Display for ArchitectureChoice {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(
+            self.to_possible_value()
+                .expect("architecture CLI name")
+                .get_name(),
+        )
+    }
 }
 
 impl From<ArchitectureChoice> for ModelSpec {
@@ -63,6 +158,22 @@ impl From<ArchitectureChoice> for ModelSpec {
         match value {
             ArchitectureChoice::LegacyResNetV1 => Self::LegacyResNetV1,
             ArchitectureChoice::KataV1 => Self::KataV1,
+            ArchitectureChoice::KataPoolV1 => Self::KataPoolV1,
+            ArchitectureChoice::KataGeluPoolV1 => Self::KataGeluPoolV1,
+            ArchitectureChoice::KataPoolValue64V1 => Self::KataPoolValue64V1,
+            ArchitectureChoice::KataPoolValue64x2V1 => Self::KataPoolValue64x2V1,
+            ArchitectureChoice::KataGeluPoolValue64V1 => Self::KataGeluPoolValue64V1,
+            ArchitectureChoice::KataGeluPoolValue64x2V1 => Self::KataGeluPoolValue64x2V1,
+
+            ArchitectureChoice::KataGeluV1 => Self::KataGeluV1,
+            ArchitectureChoice::KataValue64V1 => Self::KataValue64V1,
+            ArchitectureChoice::KataValue64x2V1 => Self::KataValue64x2V1,
+            ArchitectureChoice::KataGeluValue64V1 => Self::KataGeluValue64V1,
+            ArchitectureChoice::KataGeluValue64x2V1 => Self::KataGeluValue64x2V1,
+            ArchitectureChoice::KataGeluBoardMaskValue64x2V1 => Self::KataGeluBoardMaskValue64x2V1,
+            ArchitectureChoice::KataGeluB16C32Value64x2V1 => Self::KataGeluB16C32Value64x2V1,
+            ArchitectureChoice::KataGeluB16C32G3Value64x2V1 => Self::KataGeluB16C32G3Value64x2V1,
+            ArchitectureChoice::KataGeluB10C48Value64x2V1 => Self::KataGeluB10C48Value64x2V1,
         }
     }
 }
@@ -82,7 +193,7 @@ pub struct ModelArgs {
     #[arg(long, default_value = "checkpoints")]
     pub checkpoint_dir: PathBuf,
 
-    /// Expected architecture. Existing snapshots infer it when this is omitted.
+    /// Architecture assertion for existing snapshots; fresh training defaults to the board-mask model.
     #[arg(long, value_enum)]
     pub architecture: Option<ArchitectureChoice>,
 
@@ -90,8 +201,102 @@ pub struct ModelArgs {
     pub device: DeviceArgs,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum ReplayLrSchedule {
+    #[default]
+    Constant,
+    Cosine,
+}
+
+#[derive(Debug, Args, Serialize)]
+pub struct TrainReplayArgs {
+    #[command(flatten)]
+    #[serde(flatten)]
+    pub performance: TrainingPerformanceArgs,
+    /// Individual numeric snapshot directory. Repeat to pool buffers; duplicate games are removed.
+    #[arg(long, required = true)]
+    pub replay_checkpoint_dir: Vec<PathBuf>,
+
+    /// Independent output directory. Matching invocations resume completed epochs.
+    #[arg(long)]
+    pub run_dir: PathBuf,
+
+    #[arg(long, value_enum, default_value_t = ArchitectureChoice::default())]
+    pub architecture: ArchitectureChoice,
+
+    #[command(flatten)]
+    pub device: DeviceArgs,
+
+    /// Total passes over the training games, with all eight board symmetries per pass.
+    #[arg(long, default_value_t = 20)]
+    pub epochs: usize,
+
+    #[arg(long, default_value_t = 256)]
+    pub training_batch_size: usize,
+
+    #[arg(long, default_value_t = 0.001)]
+    pub learning_rate: f64,
+
+    /// Per-pass schedule; cosine includes the initial and final rates over the epoch budget.
+    #[arg(long, value_enum, default_value_t = ReplayLrSchedule::Constant)]
+    pub lr_schedule: ReplayLrSchedule,
+
+    /// Required for cosine scheduling; the schedule horizon is fixed when the run is created.
+    #[arg(long)]
+    pub final_learning_rate: Option<f64>,
+
+    /// Initialize only BatchNorm gamma to one after normal construction, preserving other weights/RNG.
+    #[arg(long)]
+    pub bn_gamma_one: bool,
+
+    /// Separate fixed data-split seed when replicating model initialization and batch-order seeds.
+    #[arg(long)]
+    pub split_seed: Option<u64>,
+
+    /// Write and validate initial state without optimizer updates (keeps the full schedule horizon).
+    #[arg(long)]
+    pub initialize_only: bool,
+
+    #[arg(long, default_value_t = 0.0001)]
+    pub weight_decay: f64,
+
+    /// Fraction of game trajectory groups reserved for validation; never used for updates.
+    #[arg(long, default_value_t = 0.1)]
+    pub validation_fraction: f64,
+
+    #[arg(long, default_value_t = 20260906)]
+    pub seed: u64,
+
+    /// Validate the source and print the split sizes without creating a run or training.
+    #[arg(long)]
+    pub inspect_only: bool,
+}
+
 #[derive(Debug, Args, Serialize)]
 pub struct TrainArgs {
+    /// Reconstruct early epochs from this self-play run's checkpoints and stats, without generating games.
+    #[arg(long, requires = "replay_history_epochs")]
+    pub replay_history_dir: Option<PathBuf>,
+
+    /// Number of initial epochs to replay in order; later epochs generate new self-play games.
+    #[arg(long, requires = "replay_history_dir")]
+    pub replay_history_epochs: Option<usize>,
+    /// Nucleus cutoff applied after temperature, only to move sampling. Preserve boundary ties.
+    #[arg(long, default_value_t = 1.0)]
+    pub top_p: f64,
+
+    /// Initialize BatchNorm scales to one for fresh runs; resumed weights are preserved.
+    #[arg(long)]
+    pub bn_gamma_one: bool,
+
+    /// LR = initial learning-rate * (initial replay capacity / current capacity)^exponent.
+    #[arg(long, requires = "learning_rate", conflicts_with = "replay_games")]
+    pub replay_lr_exponent: Option<f64>,
+
+    #[command(flatten)]
+    #[serde(flatten)]
+    pub performance: TrainingPerformanceArgs,
     #[command(flatten)]
     pub model: ModelArgs,
 
@@ -116,8 +321,21 @@ pub struct TrainArgs {
     #[arg(long, default_value_t = 1.0)]
     pub c_puct: f32,
 
-    #[arg(long, default_value_t = 1800)]
-    pub replay_games: usize,
+    /// Legacy fixed game-count capacity; overrides the default position schedule.
+    #[arg(long, conflicts_with_all = ["replay_positions", "replay_position_growth", "replay_growth_start_epoch"])]
+    pub replay_games: Option<usize>,
+
+    /// Initial base-position capacity (before symmetry augmentation): 600 * 25 * 2.5.
+    #[arg(long, default_value_t = 37_500)]
+    pub replay_positions: usize,
+
+    /// Positions added per epoch after the initial plateau: 600 * 25 * 0.15.
+    #[arg(long, default_value_t = 2_250)]
+    pub replay_position_growth: usize,
+
+    /// Number of completed epochs before the position capacity begins growing.
+    #[arg(long, default_value_t = 15)]
+    pub replay_growth_start_epoch: usize,
 
     #[arg(long, default_value_t = 128)]
     pub inference_batch_size: usize,
@@ -171,7 +389,7 @@ pub struct BenchmarkArgs {
 pub enum BenchmarkMode {
     /// Measure forward inference including host/device transfers and output synchronization.
     Inference(InferenceBenchmarkArgs),
-    /// Measure optimizer training steps on a fixed synthetic batch.
+    /// Measure training steps on synthetic inputs or a saved replay dataset.
     Training(TrainingBenchmarkArgs),
     /// Measure the complete MCTS self-play scheduler without training or checkpoints.
     SelfPlay(SelfPlayBenchmarkArgs),
@@ -182,7 +400,7 @@ pub struct InferenceBenchmarkArgs {
     #[command(flatten)]
     pub device: DeviceArgs,
 
-    #[arg(long, value_enum, default_value = "legacy-resnet-v1")]
+    #[arg(long, value_enum, default_value_t = ArchitectureChoice::default())]
     pub architecture: ArchitectureChoice,
 
     #[arg(long, default_value_t = 128)]
@@ -205,9 +423,20 @@ pub struct InferenceBenchmarkArgs {
 #[derive(Debug, Args, Serialize)]
 pub struct TrainingBenchmarkArgs {
     #[command(flatten)]
+    #[serde(flatten)]
+    pub performance: TrainingPerformanceArgs,
+
+    /// Use real replay batches, with the same order across cache/optimizer backends.
+    #[arg(long)]
+    pub replay_checkpoint_dir: Option<PathBuf>,
+
+    /// Adam's coupled weight decay. Production training uses 0.0001.
+    #[arg(long, default_value_t = 0.0)]
+    pub weight_decay: f64,
+    #[command(flatten)]
     pub device: DeviceArgs,
 
-    #[arg(long, value_enum, default_value = "legacy-resnet-v1")]
+    #[arg(long, value_enum, default_value_t = ArchitectureChoice::default())]
     pub architecture: ArchitectureChoice,
 
     #[arg(long, default_value_t = 1024)]
@@ -231,7 +460,7 @@ pub struct SelfPlayBenchmarkArgs {
     #[command(flatten)]
     pub device: DeviceArgs,
 
-    #[arg(long, value_enum, default_value = "legacy-resnet-v1")]
+    #[arg(long, value_enum, default_value_t = ArchitectureChoice::default())]
     pub architecture: ArchitectureChoice,
 
     #[arg(long, default_value_t = 32)]
@@ -380,6 +609,7 @@ pub struct BattleArgs {
 
 #[cfg(test)]
 mod tests {
+    use super::{AdamBackendChoice, ReplayCacheMode};
     use clap::Parser;
 
     use super::{
@@ -394,6 +624,10 @@ mod tests {
             panic!("expected train command");
         };
         assert_eq!(args.games_per_epoch, 600);
+        assert_eq!(args.replay_games, None);
+        assert_eq!(args.replay_positions, 37_500);
+        assert_eq!(args.replay_position_growth, 2_250);
+        assert_eq!(args.replay_growth_start_epoch, 15);
         assert_eq!(args.simulations, 2048);
         assert_eq!(args.epochs, None);
         assert_eq!(args.learning_rate, None);
@@ -403,6 +637,86 @@ mod tests {
         assert_eq!(args.batch_timeout_us, 100_000);
         assert_eq!(args.training_batch_size, 256);
         assert_eq!(args.heartbeat_seconds, 60);
+        assert_eq!(args.performance.adam_backend, AdamBackendChoice::Standard);
+        assert_eq!(args.performance.replay_cache, ReplayCacheMode::None);
+        assert_eq!(args.performance.prefetch_batches, 0);
+        // Leave this unset so resuming any existing architecture still works.
+        assert_eq!(args.model.architecture, None);
+    }
+
+    #[test]
+    fn replay_capacity_options_preserve_legacy_invocations_and_reject_ambiguity() {
+        let cli = Cli::try_parse_from(["alz", "train", "--replay-games", "1800"]).unwrap();
+        let Command::Train(args) = cli.command else {
+            panic!("expected train command");
+        };
+        assert_eq!(args.replay_games, Some(1800));
+        for option in [
+            "--replay-positions",
+            "--replay-position-growth",
+            "--replay-growth-start-epoch",
+        ] {
+            assert!(
+                Cli::try_parse_from(["alz", "train", "--replay-games", "1800", option, "10"])
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn fresh_network_commands_default_to_the_selected_architecture() {
+        let selected = ArchitectureChoice::KataGeluBoardMaskValue64x2V1;
+        assert_eq!(ArchitectureChoice::default(), selected);
+        let cli = Cli::try_parse_from([
+            "alz",
+            "train-replay",
+            "--replay-checkpoint-dir",
+            "replays/00000069",
+            "--run-dir",
+            "new-run",
+        ])
+        .unwrap();
+        let Command::TrainReplay(args) = cli.command else {
+            panic!("expected replay training")
+        };
+        assert_eq!(args.architecture, selected);
+        for mode in ["inference", "training", "self-play"] {
+            let cli = Cli::try_parse_from(["alz", "benchmark", mode]).unwrap();
+            let Command::Benchmark(args) = cli.command else {
+                panic!("expected benchmark")
+            };
+            let architecture = match args.mode {
+                super::BenchmarkMode::Inference(args) => args.architecture,
+                super::BenchmarkMode::Training(args) => args.architecture,
+                super::BenchmarkMode::SelfPlay(args) => args.architecture,
+            };
+            assert_eq!(architecture, selected);
+        }
+    }
+
+    #[test]
+    fn training_performance_options_require_cpu_cache_for_prefetch() {
+        let cli = Cli::try_parse_from([
+            "alz",
+            "train",
+            "--adam-backend",
+            "fused",
+            "--replay-cache",
+            "cpu",
+            "--prefetch-batches",
+            "2",
+        ])
+        .unwrap();
+        let Command::Train(mut args) = cli.command else {
+            panic!("expected train")
+        };
+        assert_eq!(args.performance.adam_backend, AdamBackendChoice::Fused);
+        args.performance.validate().unwrap();
+        args.performance.replay_cache = ReplayCacheMode::Device;
+        assert!(args.performance.validate().is_err());
+        args.performance.replay_cache = ReplayCacheMode::Cpu;
+        args.performance.prefetch_batches = 17;
+        assert!(args.performance.validate().is_err());
     }
 
     #[test]
