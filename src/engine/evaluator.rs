@@ -1,16 +1,16 @@
 use std::{
     future::Future,
     marker::PhantomData,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::atomic::{AtomicU64, Ordering},
     time::Instant,
 };
 
 use anyhow::{Context, Result, ensure};
 
-use super::{AlphaZeroNet, Game, NetworkBatchedExecutorHandle, PositionCodec, SubmissionHandle};
+use super::{
+    super::util::AtomicU64Ext, AlphaZeroNet, Game, NetworkBatchedExecutorHandle, PositionCodec,
+    SubmissionHandle,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PositionEvaluation {
@@ -71,29 +71,40 @@ impl<G: Game, E: PositionEvaluator<G> + ?Sized> PositionEvaluator<G> for &mut E 
     }
 }
 
-#[derive(Clone)]
 enum InferenceSymmetrySelector {
     Identity,
-    Random { seed: u64, sequence: Arc<AtomicU64> },
+    Random { seed: u64, sequence: AtomicU64 },
 }
 
 impl InferenceSymmetrySelector {
     fn random(seed: u64) -> Self {
         Self::Random {
             seed,
-            sequence: Arc::new(AtomicU64::new(0)),
+            sequence: AtomicU64::new(0),
         }
     }
 
-    fn select(&self, symmetry_count: usize) -> usize {
-        assert!(symmetry_count > 0);
+    fn next_random(&self) -> u64 {
         match self {
             Self::Identity => 0,
             Self::Random { seed, sequence } => {
-                let sequence = sequence.fetch_add(1, Ordering::Relaxed);
-                ((random_sequence_value(*seed, sequence) as u32 as u64 * symmetry_count as u64)
-                    >> 32) as usize
+                random_sequence_value(*seed, sequence.add_single_writer(1))
             }
+        }
+    }
+
+    fn select(&mut self, symmetry_count: usize) -> usize {
+        assert!(symmetry_count > 0);
+        ((self.next_random() as u32 as u64 * symmetry_count as u64) >> 32) as usize
+    }
+
+    fn branch(&self) -> Self {
+        match self {
+            Self::Identity => Self::Identity,
+            Self::Random { seed, sequence } => Self::Random {
+                seed: random_sequence_value(*seed, sequence.fetch_add(1, Ordering::Relaxed)),
+                sequence: AtomicU64::new(0),
+            },
         }
     }
 }
@@ -115,7 +126,7 @@ impl<Net: AlphaZeroNet, Codec> Clone for NetworkPositionEvaluator<Net, Codec> {
     fn clone(&self) -> Self {
         Self {
             executor: self.executor.clone(),
-            symmetry: self.symmetry.clone(),
+            symmetry: self.symmetry.branch(),
             _codec: PhantomData,
         }
     }
@@ -143,7 +154,7 @@ impl<Net: AlphaZeroNet, Codec> NetworkPositionEvaluator<Net, Codec> {
 
 pub struct ActiveNetworkEvaluator<'a, Net: AlphaZeroNet, Codec> {
     executor: SubmissionHandle<'a, Net>,
-    symmetry: &'a InferenceSymmetrySelector,
+    symmetry: &'a mut InferenceSymmetrySelector,
     _codec: PhantomData<fn() -> Codec>,
 }
 
@@ -157,7 +168,7 @@ where
     fn activity(&mut self) -> impl PositionEvaluator<TGame> + '_ {
         ActiveNetworkEvaluator::<Net, Codec> {
             executor: self.executor.submission(),
-            symmetry: &self.symmetry,
+            symmetry: &mut self.symmetry,
             _codec: PhantomData,
         }
     }
@@ -224,8 +235,8 @@ mod tests {
 
     #[test]
     fn random_symmetry_sequence_is_seeded_and_covers_all_d4_transforms() {
-        let first = InferenceSymmetrySelector::random(17);
-        let second = InferenceSymmetrySelector::random(17);
+        let mut first = InferenceSymmetrySelector::random(17);
+        let mut second = InferenceSymmetrySelector::random(17);
         let first = (0..256).map(|_| first.select(8)).collect::<Vec<_>>();
         let second = (0..256).map(|_| second.select(8)).collect::<Vec<_>>();
 
@@ -233,7 +244,7 @@ mod tests {
         assert_eq!(first.iter().copied().collect::<BTreeSet<_>>().len(), 8);
         assert!(first.iter().all(|symmetry| *symmetry < 8));
 
-        let selector = InferenceSymmetrySelector::random(17);
+        let mut selector = InferenceSymmetrySelector::random(17);
         let mut counts = [0usize; 8];
         for _ in 0..8_192 {
             counts[selector.select(8)] += 1;

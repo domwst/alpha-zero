@@ -88,24 +88,25 @@ async fn analyze<'a>(
     );
     let state = GomokuAdapter::decode(request.position.state)?;
     let terminal = state.get_state().get_terminal();
-    if let Some(previous) = cached.as_mut() {
-        if previous.state != state {
-            let successor = previous.tree.root_snapshot().and_then(|root| {
-                root.moves
-                    .iter()
-                    .enumerate()
-                    .find(|(_, m)| previous.state.make_move(&m.action) == state)
-                    .map(|(i, m)| (i, m.action.clone()))
-            });
-            if let Some((i, action)) = successor {
-                previous.tree.advance(i, &action, state.clone())?;
-                previous.state = state.clone();
-                previous.completed = previous.tree.get_total_descends().unwrap_or(0);
-            } else {
-                *cached = None;
-            }
+    if let Some(previous) = cached.as_mut()
+        && previous.state != state
+    {
+        let successor = previous.tree.root_snapshot().and_then(|root| {
+            root.moves
+                .iter()
+                .enumerate()
+                .find(|(_, m)| previous.state.make_move(&m.action) == state)
+                .map(|(i, m)| (i, m.action))
+        });
+        if let Some((i, action)) = successor {
+            previous.tree.advance(i, &action, state.clone())?;
+            previous.state = state.clone();
+            previous.completed = previous.tree.get_total_descends().unwrap_or(0);
+        } else {
+            *cached = None;
         }
     }
+
     let search = cached.get_or_insert_with(|| Search {
         state: state.clone(),
         tree: MonteCarloTree::new(

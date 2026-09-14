@@ -82,6 +82,8 @@ where
         let move_index = sample_policy(&sampling_policy, &mut self.random);
 
         let snapshot = self.tree.root_snapshot().expect("searched root");
+
+        #[allow(clippy::needless_update)]
         Ok(MoveDecision {
             move_index,
             // Exploration temperature controls the trajectory, not the search target.

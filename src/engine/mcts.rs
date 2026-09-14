@@ -368,16 +368,16 @@ where
             self.stats.expanded::<TGame>(0, state.children.len());
             assert!(self.root.node_state.set(state).is_ok());
         }
-        if self.root_noise_sample.is_none() {
-            if let RootNoise::Dirichlet { alpha, .. } = self.root_noise {
-                let size = self.root.node_state.get().unwrap().children.len();
-                let adjustment = if size >= 2 {
-                    Dirichlet::new(&vec![alpha; size]).unwrap().sample(rng)
-                } else {
-                    vec![1.0; size]
-                };
-                self.root_noise_sample = Some(adjustment.into());
-            }
+        if self.root_noise_sample.is_none()
+            && let RootNoise::Dirichlet { alpha, .. } = self.root_noise
+        {
+            let size = self.root.node_state.get().unwrap().children.len();
+            let adjustment = if size >= 2 {
+                Dirichlet::new(&vec![alpha; size]).unwrap().sample(rng)
+            } else {
+                vec![1.0; size]
+            };
+            self.root_noise_sample = Some(adjustment.into());
         }
 
         let mut state_stack = vec![];
