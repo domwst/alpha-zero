@@ -31,7 +31,7 @@ use tch::{
     nn::{self, Optimizer},
 };
 
-use crate::cli::{InferenceSymmetryChoice, TrainArgs};
+use crate::cli::{InferenceSymmetryChoice, SelfPlayTemperatureSchedule, TrainArgs};
 
 use super::common::{resolve_device, resolve_training_architecture};
 
@@ -40,13 +40,14 @@ const DEFAULT_WEIGHT_DECAY: f64 = 1e-4;
 const METRICS_SCHEMA_VERSION: u32 = 7;
 // Describes newly generated samples; resumed replay may still contain legacy targets.
 const NEW_GAME_POLICY_TARGET: &str = "normalized_search_visits_v1";
-const SELF_PLAY_TEMPERATURE_SCHEDULE: &str = "paired_moves_1_to_6_t1_19_to_20_t0.7_v1";
 const REPLAY_SHUFFLE_STREAM: u64 = 0x0000_5245_504c_4159;
 const INFERENCE_SYMMETRY_STREAM: u64 = 0x5359_4d4d_4554_5259;
 
 #[derive(Clone, Copy, Debug)]
-pub(super) struct SelfPlaySettings {
+pub(super) struct SelfPlaySettings<'a> {
+    pub batch_grid: &'a [usize],
     pub top_p: f64,
+    pub temperature_schedule: SelfPlayTemperatureSchedule,
     pub games: usize,
     pub simulations: usize,
     pub c_puct: f32,
@@ -60,6 +61,9 @@ pub(super) struct SelfPlaySettings {
 }
 
 pub(super) struct EpochGames {
+    pub first_player_wins: usize,
+    pub second_player_wins: usize,
+    pub draws: usize,
     pub sampling: SamplingStats,
     pub games: Vec<ReplayGame>,
     pub total_score: f32,
@@ -97,6 +101,9 @@ struct EpochStats<'a> {
     config: &'a TrainArgs,
     games: usize,
     total_score: f32,
+    first_player_wins: usize,
+    second_player_wins: usize,
+    draws: usize,
     average_score: f32,
     total_game_length: usize,
     average_game_length: f32,
@@ -123,12 +130,12 @@ struct EpochStats<'a> {
     network_average_policy_postprocess_submission_us: f64,
     network_average_policy_decode_us: f64,
     training: &'a TrainingStats,
-    checkpoint_seconds: f64,
+    checkpoint_seconds: Option<f64>,
     rendering_seconds: f64,
     epoch_seconds: f64,
 }
 
-pub async fn run(args: TrainArgs) -> Result<()> {
+pub async fn run(args: TrainArgs, batch_grid: &[usize]) -> Result<()> {
     args.performance.validate()?;
     validate_args(&args)?;
     ensure!(
@@ -247,10 +254,7 @@ pub async fn run(args: TrainArgs) -> Result<()> {
                 stats[key] = original[key].clone();
             }
             // Publish metrics first, then the atomic snapshot used as the completion marker.
-            fs::write(
-                stats_path(&args.stats_dir, epoch),
-                serde_json::to_vec_pretty(&stats)?,
-            )?;
+            alz::engine::archive::publish_json(&stats_path(&args.stats_dir, epoch), &stats)?;
             save_training_snapshot(
                 &args.model.checkpoint_dir,
                 epoch,
@@ -267,10 +271,16 @@ pub async fn run(args: TrainArgs) -> Result<()> {
                 policy_loss = training.policy_loss,
                 "replay-history epoch complete"
             );
+            alz::engine::telemetry::event("epoch_completed", stats)?;
+            if alz::engine::telemetry::stop_at_boundary(true)? {
+                return Ok(());
+            }
             continue;
         }
         let settings = SelfPlaySettings {
+            batch_grid,
             top_p: args.top_p,
+            temperature_schedule: args.temperature_schedule,
             games: args.games_per_epoch,
             simulations: args.simulations,
             c_puct: args.c_puct,
@@ -282,9 +292,29 @@ pub async fn run(args: TrainArgs) -> Result<()> {
             progress_every_games: args.progress_every_games,
             heartbeat_interval: Duration::from_secs(args.heartbeat_seconds),
         };
+        let archive_dir = args.games_dir.join("archive").join(format!("{epoch:08}"));
+        fs::create_dir_all(&archive_dir)?;
+        let producer = archive_dir.join("producer.safetensors");
+        let candidate = archive_dir.join("producer.tmp.safetensors");
+        var_store.save(&candidate)?;
+        if producer.exists() {
+            ensure!(
+                file_sha256(&candidate)? == file_sha256(&producer)?,
+                "saved game producer differs from the resumed model"
+            );
+        }
+        fs::rename(candidate, &producer)?;
+        alz::engine::telemetry::event(
+            "stage",
+            serde_json::json!({"stage":"self_play","epoch":epoch,"model_sha256":file_sha256(&producer)?}),
+        )?;
         let (returned_network, mut epoch_games) =
-            collect_epoch_games(network, settings, var_store.device()).await?;
+            collect_epoch_games_in(network, settings, var_store.device(), Some(archive_dir))
+                .await?;
         network = returned_network;
+        if alz::engine::telemetry::stop_at_boundary(false)? {
+            return Ok(());
+        }
 
         let games_in_epoch = epoch_games.games.len();
         let total_score = epoch_games.total_score;
@@ -361,6 +391,10 @@ pub async fn run(args: TrainArgs) -> Result<()> {
             tracing::info!(epoch, learning_rate = rate, "replay-linked learning rate");
         }
         let training_data = TrainingBatches::new(&replay, args.performance.replay_cache, device)?;
+        alz::engine::telemetry::event(
+            "stage",
+            serde_json::json!({"stage":"training","epoch":epoch}),
+        )?;
         let training_stats = train_epoch(
             &network,
             &mut optimizer,
@@ -382,30 +416,22 @@ pub async fn run(args: TrainArgs) -> Result<()> {
             "training complete"
         );
 
-        let checkpoint_started = Instant::now();
-        save_training_snapshot(
-            &args.model.checkpoint_dir,
-            epoch,
-            &model_spec,
-            &var_store,
-            &optimizer,
-            &replay,
-        )?;
-        let checkpoint_duration = checkpoint_started.elapsed();
-
         let rendering_started = Instant::now();
         render_sample_games(&args.games_dir, epoch, sample_games)?;
         let rendering_duration = rendering_started.elapsed();
 
         let epoch_duration = epoch_started.elapsed();
         let replay_positions = replay.iter().map(Vec::len).sum::<usize>();
-        let stats = EpochStats {
+        let mut stats = EpochStats {
             schema_version: METRICS_SCHEMA_VERSION,
             epoch,
             model: &model_spec,
             config: &args,
             games: games_in_epoch,
             total_score,
+            first_player_wins: epoch_games.first_player_wins,
+            second_player_wins: epoch_games.second_player_wins,
+            draws: epoch_games.draws,
             average_score: avg_score,
             total_game_length: total_length,
             average_game_length: avg_length,
@@ -413,7 +439,7 @@ pub async fn run(args: TrainArgs) -> Result<()> {
             replay_positions,
             replay_position_capacity,
             new_game_policy_target: NEW_GAME_POLICY_TARGET,
-            self_play_temperature_schedule: SELF_PLAY_TEMPERATURE_SCHEDULE,
+            self_play_temperature_schedule: args.temperature_schedule.identity(),
             sampling: &epoch_games.sampling,
             scheduled_learning_rate,
             evaluations_per_second,
@@ -444,11 +470,34 @@ pub async fn run(args: TrainArgs) -> Result<()> {
                 .average_policy_postprocess_submission_us(),
             network_average_policy_decode_us: epoch_games.batch_stats.average_policy_decode_us(),
             training: &training_stats,
-            checkpoint_seconds: checkpoint_duration.as_secs_f64(),
+            checkpoint_seconds: None,
             rendering_seconds: rendering_duration.as_secs_f64(),
             epoch_seconds: epoch_duration.as_secs_f64(),
         };
+        // Publish recoverable metric evidence before the snapshot completion marker.
+        // If interrupted after snapshot publication, the service can recover these
+        // values without inventing checkpoint-write timing or repeating training.
+        alz::engine::archive::publish_json(&stats_path(&args.stats_dir, epoch), &stats)?;
+        alz::engine::telemetry::event(
+            "stage",
+            serde_json::json!({"stage":"checkpointing","epoch":epoch}),
+        )?;
+        let checkpoint_started = Instant::now();
+        save_training_snapshot(
+            &args.model.checkpoint_dir,
+            epoch,
+            &model_spec,
+            &var_store,
+            &optimizer,
+            &replay,
+        )?;
+        stats.checkpoint_seconds = Some(checkpoint_started.elapsed().as_secs_f64());
+        stats.epoch_seconds = epoch_started.elapsed().as_secs_f64();
         write_stats(&args.stats_dir, epoch, &stats)?;
+        alz::engine::telemetry::event("epoch_completed", serde_json::to_value(&stats)?)?;
+        if alz::engine::telemetry::stop_at_boundary(true)? {
+            return Ok(());
+        }
         tracing::info!(
             epoch,
             epoch_seconds = stats.epoch_seconds,
@@ -464,8 +513,17 @@ pub async fn run(args: TrainArgs) -> Result<()> {
 
 pub(super) async fn collect_epoch_games(
     network: GomokuModel,
-    settings: SelfPlaySettings,
+    settings: SelfPlaySettings<'_>,
     device: tch::Device,
+) -> Result<(GomokuModel, EpochGames)> {
+    collect_epoch_games_in(network, settings, device, None).await
+}
+
+async fn collect_epoch_games_in(
+    network: GomokuModel,
+    settings: SelfPlaySettings<'_>,
+    device: tch::Device,
+    archive_dir: Option<std::path::PathBuf>,
 ) -> Result<(GomokuModel, EpochGames)> {
     ensure!(settings.games > 0, "games must be greater than zero");
     ensure!(
@@ -485,22 +543,58 @@ pub(super) async fn collect_epoch_games(
         "games parallelism must be greater than zero"
     );
 
+    if let Some(dir) = &archive_dir {
+        fs::create_dir_all(dir)?;
+        let manifest = serde_json::json!({"seed":settings.seed,"games":settings.games,"simulations":settings.simulations,"c_puct":settings.c_puct,"top_p":settings.top_p,"inference_symmetry":settings.inference_symmetry,"temperature_schedule":settings.temperature_schedule});
+        let path = dir.join("manifest.json");
+        if path.exists() {
+            let mut old: serde_json::Value = serde_json::from_reader(fs::File::open(&path)?)?;
+            // Epochs collected before configurable schedules used the paired schedule.
+            if old.get("temperature_schedule").is_none() {
+                old["temperature_schedule"] =
+                    serde_json::json!(SelfPlayTemperatureSchedule::Paired);
+            }
+            ensure!(
+                old == manifest,
+                "collection settings differ from saved epoch games"
+            );
+        } else {
+            fs::write(&path, serde_json::to_vec_pretty(&manifest)?)?;
+        }
+    }
     let started = Instant::now();
-    let mut executor = ExecutorScope::new(
+    let executor = ExecutorScope::new(
         network,
         settings.games_parallelism,
         settings.inference_batch_size,
         settings.batch_timeout,
         (Kind::Float, device),
-    );
+        settings.batch_grid,
+    )?;
 
-    for game_index in 0..settings.games {
+    let producer_digest = archive_dir
+        .as_ref()
+        .map(|dir| dir.join("producer.safetensors"))
+        .filter(|path| path.exists())
+        .map(|path| file_sha256(&path))
+        .transpose()?;
+    let spawn_game = |game_index: usize| {
         let simulations = settings.simulations;
         let c_puct = settings.c_puct;
         let top_p = settings.top_p;
         let inference_symmetry = settings.inference_symmetry;
         let game_seed = derive_seed(settings.seed, game_index as u64);
-        std::mem::drop(executor.spawn(move |handle| async move {
+        let archive_dir = archive_dir.clone();
+        let producer_digest = producer_digest.clone();
+        let handle = executor.evaluator_handle();
+        async move {
+            if let Some(dir) = &archive_dir {
+                let path = dir.join(format!("{game_index:08}.json"));
+                if path.exists() {
+                    let saved = alz::engine::archive::load::<BoardState>(&path, game_seed)?;
+                    return Ok::<_, anyhow::Error>(saved.record);
+                }
+            }
             let evaluator = match inference_symmetry {
                 InferenceSymmetryChoice::None => {
                     NetworkPositionEvaluator::<GomokuModel, GomokuCodec>::new(handle)
@@ -512,20 +606,56 @@ pub(super) async fn collect_epoch_games(
                     )
                 }
             };
-            generate_self_played_game_with_top_p(
+            let game_started = Instant::now();
+            let record = generate_self_played_game_with_top_p(
                 BoardState::new(),
                 simulations,
                 c_puct,
-                self_play_temperature,
+                move |ply| settings.temperature_schedule.temperature(ply),
                 evaluator,
                 SmallRng::seed_from_u64(game_seed),
                 top_p,
             )
-            .await
-        }));
-    }
+            .await?;
+            if let Some(dir) = &archive_dir {
+                let game = alz::engine::archive::ArchivedGame {
+                    schema_version: 1,
+                    game_type: "gomoku19_five_v1".into(),
+                    game_id: format!("{game_index:08}"),
+                    seed: game_seed,
+                    models_by_seat: producer_digest
+                        .as_ref()
+                        .map(|digest| {
+                            [
+                                ("First".into(), digest.clone()),
+                                ("Second".into(), digest.clone()),
+                            ]
+                            .into_iter()
+                            .collect()
+                        })
+                        .unwrap_or_default(),
+                    model_identity: producer_digest,
+                    duration_seconds: Some(game_started.elapsed().as_secs_f64()),
+                    policy_semantics: "normalized_root_visits".into(),
+                    provenance: "recorded".into(),
+                    record,
+                };
+                alz::engine::archive::save(dir, &game)?;
+                Ok(game.record)
+            } else {
+                Ok(record)
+            }
+        }
+    };
+    let mut controller =
+        alz::engine::GameController::new(settings.games, settings.games_parallelism);
+    controller.admit(spawn_game);
+    let initial_moves = alz::engine::telemetry::completed_moves();
 
     let mut games = Vec::with_capacity(settings.games);
+    let mut first_player_wins = 0;
+    let mut second_player_wins = 0;
+    let mut draws = 0;
     let mut total_score = 0.0;
     let mut total_length = 0;
     let mut sampling = SamplingStats::default();
@@ -539,15 +669,21 @@ pub(super) async fn collect_epoch_games(
     loop {
         let maybe_record = if let Some(timer) = heartbeat.as_mut() {
             tokio::select! {
-                record = executor.next() => record,
+                record = controller.next() => record,
                 _ = timer.tick() => {
                     let elapsed_seconds = started.elapsed().as_secs_f64();
+                    alz::engine::telemetry::event("self_play_progress", serde_json::json!({
+                        "games_completed":games.len(), "games_total":settings.games,
+                        "active_games":controller.active_games(), "completed_moves":alz::engine::telemetry::completed_moves()-initial_moves,
+                        "evaluations":executor.completed_evaluations(), "inference":executor.live_stats(), "elapsed_seconds":elapsed_seconds,
+                        "controller":controller.summary()
+                    }))?;
                     let completed_evaluations = executor.completed_evaluations();
                     tracing::info!(
                         update = "heartbeat",
                         games_completed = games.len(),
                         games_total = settings.games,
-                        unfinished_games = executor.len(),
+                        unfinished_games = controller.active_games() + controller.pending_games(),
                         completed_moves = total_length,
                         completed_evaluations,
                         elapsed_seconds,
@@ -560,18 +696,25 @@ pub(super) async fn collect_epoch_games(
                 }
             }
         } else {
-            executor.next().await
+            controller.next().await
         };
         let Some(record) = maybe_record else {
             break;
         };
-        let record = record?;
+        let completed = record?;
+        let record = completed.output;
+        controller.admit(spawn_game);
+        alz::engine::telemetry::event(
+            "game_completed",
+            serde_json::json!({"games_completed":games.len()+1,"games_total":settings.games,"moves":record.plies.len(),"value_first":record.value_for(Seat::First),"game_id":completed.game_id,"duration_seconds":completed.duration.as_secs_f64()}),
+        )?;
         for (ply, entry) in record.plies.iter().enumerate() {
             if let (Some(search), Some(sampled)) = (
                 &entry.decision.training_policy,
                 &entry.decision.diagnostics.sampling_policy,
             ) {
-                let before = apply_temperature(search, self_play_temperature(ply));
+                let before =
+                    apply_temperature(search, settings.temperature_schedule.temperature(ply));
                 sampling.positions += 1;
                 sampling.nonzero_before += before.iter().filter(|&&p| p > 0.0).count();
                 let retained = sampled.iter().filter(|&&p| p > 0.0).count();
@@ -590,9 +733,20 @@ pub(super) async fn collect_epoch_games(
                     .sum::<f64>();
             }
         }
-        total_score += record.value_for(Seat::First);
+        let outcome = record.value_for(Seat::First);
+        if outcome > 0.0 {
+            first_player_wins += 1;
+        } else if outcome < 0.0 {
+            second_player_wins += 1;
+        } else {
+            draws += 1;
+        }
+        total_score += outcome;
         total_length += record.plies.len();
-        games.push(extract_training_game::<_, GomokuCodec>(record)?);
+        games.push((
+            completed.game_id,
+            extract_training_game::<_, GomokuCodec>(record)?,
+        ));
         if settings.progress_every_games > 0
             && (games.len() % settings.progress_every_games == 0 || games.len() == settings.games)
         {
@@ -602,7 +756,7 @@ pub(super) async fn collect_epoch_games(
                 update = "completion",
                 games_completed = games.len(),
                 games_total = settings.games,
-                unfinished_games = executor.len(),
+                unfinished_games = controller.active_games() + controller.pending_games(),
                 completed_moves = total_length,
                 completed_evaluations,
                 elapsed_seconds,
@@ -614,16 +768,49 @@ pub(super) async fn collect_epoch_games(
         }
     }
 
-    let (network, batch_stats) = executor.join_with_stats().await;
+    games.sort_unstable_by_key(|(id, _)| *id);
+    let games = games.into_iter().map(|(_, game)| game).collect();
+    let (network, mut batch_stats) = executor.join_with_stats().await;
+    let mut duration = started.elapsed();
+    // An epoch-boundary pause must not replace the original collection duration
+    // and inference work with the near-zero cost of reading its saved games.
+    if let Some(directory) = &archive_dir {
+        #[derive(serde::Serialize, serde::Deserialize)]
+        struct CollectionReceipt {
+            duration: Duration,
+            batch_stats: NetworkBatchStats,
+        }
+        let path = directory.join("receipt.json");
+        if path.exists() {
+            ensure!(
+                batch_stats.requests == 0,
+                "completed collection is missing saved games"
+            );
+            let saved: CollectionReceipt = serde_json::from_reader(fs::File::open(path)?)?;
+            duration = saved.duration;
+            batch_stats = saved.batch_stats;
+        } else {
+            alz::engine::archive::publish_json(
+                &path,
+                &CollectionReceipt {
+                    duration,
+                    batch_stats: batch_stats.clone(),
+                },
+            )?;
+        }
+    }
     Ok((
         network,
         EpochGames {
+            first_player_wins,
+            second_player_wins,
+            draws,
             sampling,
             games,
             total_score,
             total_length,
             batch_stats,
-            duration: started.elapsed(),
+            duration,
         },
     ))
 }
@@ -641,6 +828,8 @@ pub(super) fn train_epoch(
     let mut total_value_loss = 0.0f64;
     let mut total_policy_loss = 0.0f64;
     let mut batches = 0;
+    let mut processed = 0usize;
+    let mut last_report = Instant::now();
     for batch in data.batches(batch_size, Some(seed), prefetch)? {
         let batch = batch?.to_device(device)?;
         let output = network.forward_t(&batch.states, true);
@@ -660,6 +849,14 @@ pub(super) fn train_epoch(
         total_value_loss += value_scalar * chunk_len;
         total_policy_loss += policy_scalar * chunk_len;
         batches += 1;
+        processed += batch.len();
+        if last_report.elapsed() >= Duration::from_secs(5) {
+            alz::engine::telemetry::event(
+                "training_progress",
+                serde_json::json!({"samples_completed":processed,"samples_total":data.len(),"batches_completed":batches,"value_loss":total_value_loss/processed as f64,"policy_loss":total_policy_loss/processed as f64,"elapsed_seconds":started.elapsed().as_secs_f64()}),
+            )?;
+            last_report = Instant::now();
+        }
     }
 
     let samples = data.len();
@@ -846,7 +1043,7 @@ fn write_invocation_config(
             model: model_spec,
             config: args,
             new_game_policy_target: NEW_GAME_POLICY_TARGET,
-            self_play_temperature_schedule: SELF_PLAY_TEMPERATURE_SCHEDULE,
+            self_play_temperature_schedule: args.temperature_schedule.identity(),
         },
     )?;
     writeln!(file)?;
@@ -854,12 +1051,7 @@ fn write_invocation_config(
 }
 
 fn write_stats(stats_dir: &Path, epoch: usize, stats: &EpochStats<'_>) -> Result<()> {
-    let path = stats_path(stats_dir, epoch);
-    let mut file =
-        fs::File::create(&path).with_context(|| format!("creating stats {}", path.display()))?;
-    serde_json::to_writer_pretty(&mut file, stats)?;
-    writeln!(file)?;
-    file.flush()?;
+    alz::engine::archive::publish_json(&stats_path(stats_dir, epoch), stats)?;
 
     let jsonl_path = stats_dir.join("epochs.jsonl");
     let mut jsonl = OpenOptions::new()
@@ -870,6 +1062,7 @@ fn write_stats(stats_dir: &Path, epoch: usize, stats: &EpochStats<'_>) -> Result
     serde_json::to_writer(&mut jsonl, stats)?;
     writeln!(jsonl)?;
     jsonl.flush()?;
+    jsonl.sync_data()?;
     Ok(())
 }
 
@@ -881,10 +1074,29 @@ fn stats_path(root: &Path, epoch: usize) -> PathBuf {
     root.join(format!("{epoch:08}.json"))
 }
 
-fn self_play_temperature(turn: usize) -> f32 {
-    // Both seats receive the same temperature within each consecutive move pair.
-    let progress = (turn / 2).saturating_sub(2).min(7) as f32 / 7.0;
-    1.0 - 0.3 * progress
+impl SelfPlayTemperatureSchedule {
+    fn identity(self) -> &'static str {
+        match self {
+            Self::Paired => "paired_moves_1_to_6_t1_19_to_20_t0.7_v1",
+            Self::Sharp => "moves_1_to_5_t1_6_t0.7_7_t0.6_8_plus_t0.5_v1",
+        }
+    }
+
+    fn temperature(self, turn: usize) -> f32 {
+        // turn is a zero-based ply index. Sharp deliberately treats the seats differently.
+        match self {
+            Self::Paired => {
+                let progress = (turn / 2).saturating_sub(2).min(7) as f32 / 7.0;
+                1.0 - 0.3 * progress
+            }
+            Self::Sharp => match turn {
+                0..=4 => 1.0,
+                5 => 0.7,
+                6 => 0.6,
+                _ => 0.5,
+            },
+        }
+    }
 }
 
 fn scheduled_learning_rate(args: &TrainArgs, epoch: usize) -> Result<Option<f64>> {
@@ -975,7 +1187,7 @@ mod tests {
 
     use super::{
         REPLAY_SHUFFLE_STREAM, derive_seed, extend_replay_positions_shuffled,
-        extend_replay_shuffled, replay_position_capacity, self_play_temperature,
+        extend_replay_shuffled, replay_position_capacity,
     };
     use crate::cli::{Cli, Command};
     use clap::Parser;
@@ -1035,12 +1247,18 @@ mod tests {
             }
             args
         };
-        super::run(make_args("source", 2, false)).await.unwrap();
-        super::run(make_args("reconstructed", 2, true))
+        super::run(make_args("source", 2, false), &[])
             .await
             .unwrap();
-        super::run(make_args("resumed", 1, true)).await.unwrap();
-        super::run(make_args("resumed", 2, true)).await.unwrap();
+        super::run(make_args("reconstructed", 2, true), &[])
+            .await
+            .unwrap();
+        super::run(make_args("resumed", 1, true), &[])
+            .await
+            .unwrap();
+        super::run(make_args("resumed", 2, true), &[])
+            .await
+            .unwrap();
         let tensors = |name: &str, epoch: usize| -> BTreeMap<String, tch::Tensor> {
             tch::Tensor::read_safetensors(
                 root.join(name)
@@ -1065,8 +1283,10 @@ mod tests {
             }
         }
         // The reconstructed optimizer and replay must also continue like the source.
-        super::run(make_args("source", 3, false)).await.unwrap();
-        super::run(make_args("reconstructed", 3, true))
+        super::run(make_args("source", 3, false), &[])
+            .await
+            .unwrap();
+        super::run(make_args("reconstructed", 3, true), &[])
             .await
             .unwrap();
         let expected = tensors("source", 2);
@@ -1167,21 +1387,63 @@ mod tests {
     }
 
     #[test]
+    fn sharp_temperature_uses_requested_one_based_moves_and_preserves_legacy_default() {
+        use crate::cli::SelfPlayTemperatureSchedule;
+        let sharp = SelfPlayTemperatureSchedule::Sharp;
+        let expected = [1.0, 1.0, 1.0, 1.0, 1.0, 0.7, 0.6, 0.5, 0.5];
+        for (ply, temperature) in expected.into_iter().enumerate() {
+            assert_eq!(sharp.temperature(ply), temperature, "move {}", ply + 1);
+        }
+        assert_eq!(sharp.temperature(usize::MAX), 0.5);
+        for (flags, expected) in [
+            (vec!["alz", "train"], SelfPlayTemperatureSchedule::Paired),
+            (
+                vec!["alz", "train", "--temperature-schedule", "sharp"],
+                sharp,
+            ),
+        ] {
+            let Command::Train(args) = Cli::try_parse_from(flags).unwrap().command else {
+                panic!()
+            };
+            assert_eq!(args.temperature_schedule, expected);
+        }
+    }
+
+    #[test]
     fn temperature_is_paired_monotone_and_clamped() {
         for ply in 0..6 {
-            assert_eq!(self_play_temperature(ply), 1.0);
+            assert_eq!(
+                crate::cli::SelfPlayTemperatureSchedule::Paired.temperature(ply),
+                1.0
+            );
         }
         for round in 0..200 {
             assert_eq!(
-                self_play_temperature(round * 2),
-                self_play_temperature(round * 2 + 1)
+                crate::cli::SelfPlayTemperatureSchedule::Paired.temperature(round * 2),
+                crate::cli::SelfPlayTemperatureSchedule::Paired.temperature(round * 2 + 1)
             );
-            assert!(self_play_temperature(round * 2) >= self_play_temperature(round * 2 + 2));
+            assert!(
+                crate::cli::SelfPlayTemperatureSchedule::Paired.temperature(round * 2)
+                    >= crate::cli::SelfPlayTemperatureSchedule::Paired.temperature(round * 2 + 2)
+            );
         }
-        assert!((self_play_temperature(6) - (1.0 - 0.3 / 7.0)).abs() < 1e-6);
-        assert_eq!(self_play_temperature(18), 0.7);
-        assert_eq!(self_play_temperature(19), 0.7);
-        assert_eq!(self_play_temperature(usize::MAX), 0.7);
+        assert!(
+            (crate::cli::SelfPlayTemperatureSchedule::Paired.temperature(6) - (1.0 - 0.3 / 7.0))
+                .abs()
+                < 1e-6
+        );
+        assert_eq!(
+            crate::cli::SelfPlayTemperatureSchedule::Paired.temperature(18),
+            0.7
+        );
+        assert_eq!(
+            crate::cli::SelfPlayTemperatureSchedule::Paired.temperature(19),
+            0.7
+        );
+        assert_eq!(
+            crate::cli::SelfPlayTemperatureSchedule::Paired.temperature(usize::MAX),
+            0.7
+        );
     }
 
     #[test]

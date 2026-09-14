@@ -25,3 +25,14 @@ pub use mcts::*;
 pub use network_batched_executor::*;
 pub use training::*;
 pub use util::*;
+
+pub mod archive;
+pub mod telemetry;
+
+pub mod inspection;
+
+mod game_controller;
+pub use game_controller::*;
+
+mod game_adapter;
+pub use game_adapter::*;

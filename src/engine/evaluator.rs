@@ -10,7 +10,7 @@ use std::{
 
 use anyhow::{Context, Result, ensure};
 
-use super::{AlphaZeroNet, Game, NetworkBatchedExecutorHandle, PositionCodec};
+use super::{AlphaZeroNet, Game, NetworkBatchedExecutorHandle, PositionCodec, SubmissionHandle};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PositionEvaluation {
@@ -45,12 +45,30 @@ impl PositionEvaluation {
 
 /// Evaluates a position from its current canonical player's perspective.
 /// The returned policy must follow the supplied legal-move order.
-pub trait PositionEvaluator<TGame: Game> {
+pub trait PositionEvaluator<TGame: Game>: Send + Sync {
+    /// Acquire activity for a whole search or game, not for each NN request.
+    fn activity(&mut self) -> impl PositionEvaluator<TGame> + '_
+    where
+        Self: Sized,
+    {
+        self
+    }
+
     fn evaluate<'a>(
-        &'a self,
+        &'a mut self,
         state: &'a TGame,
         moves: &'a [TGame::Move],
     ) -> impl Future<Output = Result<PositionEvaluation>> + Send + 'a;
+}
+
+impl<G: Game, E: PositionEvaluator<G> + ?Sized> PositionEvaluator<G> for &mut E {
+    fn evaluate<'a>(
+        &'a mut self,
+        state: &'a G,
+        moves: &'a [G::Move],
+    ) -> impl Future<Output = Result<PositionEvaluation>> + Send + 'a {
+        (**self).evaluate(state, moves)
+    }
 }
 
 #[derive(Clone)]
@@ -123,6 +141,12 @@ impl<Net: AlphaZeroNet, Codec> NetworkPositionEvaluator<Net, Codec> {
     }
 }
 
+pub struct ActiveNetworkEvaluator<'a, Net: AlphaZeroNet, Codec> {
+    executor: SubmissionHandle<'a, Net>,
+    symmetry: &'a InferenceSymmetrySelector,
+    _codec: PhantomData<fn() -> Codec>,
+}
+
 impl<TGame, Net, Codec> PositionEvaluator<TGame> for NetworkPositionEvaluator<Net, Codec>
 where
     TGame: Game + Sync,
@@ -130,8 +154,32 @@ where
     Net: AlphaZeroNet,
     Codec: PositionCodec<TGame>,
 {
+    fn activity(&mut self) -> impl PositionEvaluator<TGame> + '_ {
+        ActiveNetworkEvaluator::<Net, Codec> {
+            executor: self.executor.submission(),
+            symmetry: &self.symmetry,
+            _codec: PhantomData,
+        }
+    }
+
     async fn evaluate<'a>(
-        &'a self,
+        &'a mut self,
+        state: &'a TGame,
+        moves: &'a [TGame::Move],
+    ) -> Result<PositionEvaluation> {
+        self.activity().evaluate(state, moves).await
+    }
+}
+
+impl<TGame, Net, Codec> PositionEvaluator<TGame> for ActiveNetworkEvaluator<'_, Net, Codec>
+where
+    TGame: Game + Sync,
+    TGame::Move: Sync,
+    Net: AlphaZeroNet,
+    Codec: PositionCodec<TGame>,
+{
+    async fn evaluate<'a>(
+        &'a mut self,
         state: &'a TGame,
         moves: &'a [TGame::Move],
     ) -> Result<PositionEvaluation> {

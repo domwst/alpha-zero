@@ -578,7 +578,7 @@ mod tests {
 
     impl PositionEvaluator<BoardState> for UniformEvaluator {
         async fn evaluate<'a>(
-            &'a self,
+            &'a mut self,
             _state: &'a BoardState,
             moves: &'a [GomokuMove],
         ) -> anyhow::Result<PositionEvaluation> {

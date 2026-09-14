@@ -35,7 +35,7 @@ pub async fn generate_self_played_game_with_top_p<TGame, Evaluator, Temperature,
     simulations: usize,
     c_puct: f32,
     temperature: Temperature,
-    evaluator: Evaluator,
+    mut evaluator: Evaluator,
     random: Random,
     top_p: f64,
 ) -> Result<MatchRecord<TGame>>
@@ -48,7 +48,7 @@ where
 {
     let agent = MctsAgent::new(
         start.clone(),
-        evaluator,
+        evaluator.activity(),
         RootNoise::Dirichlet {
             alpha: 0.1,
             epsilon: 0.25,

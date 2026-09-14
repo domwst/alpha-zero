@@ -21,7 +21,7 @@ pub fn init() {
         .with_target(false)
         .with_line_number(true)
         .with_ansi(ansi)
-        .with_writer(io::stdout)
+        .with_writer(io::stderr)
         .init();
 }
 

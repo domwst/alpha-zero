@@ -12,12 +12,12 @@ import { nearestIndex } from './experimentChartData';
 
 type Competitor = 'first_checkpoint' | 'second_checkpoint';
 type LengthFilter = 'all' | Competitor | 'draws';
-type Completion = { p50_seconds: number; p90_seconds: number; p95_seconds: number; p99_seconds: number;
+type Completion = { includes_pauses?: boolean; p50_seconds: number; p90_seconds: number; p95_seconds: number; p99_seconds: number;
   final_10_percent_seconds: number; last_finish_seconds: number; points: { games: number; seconds: number }[] };
 export type GameStatistics = { games: number;
   seat_results: Record<Competitor, Record<'first' | 'second', MatchCounts & { games: number }>>;
   outcomes: { first_player_wins: number; second_player_wins: number; draws: number };
-  lengths: Record<LengthFilter, Lengths | null>; completion: Completion | null };
+  durations?: Lengths | null; lengths: Record<LengthFilter, Lengths | null>; completion: Completion | null };
 
 const percent = (value: number) => `${(value * 100).toFixed(1)}%`;
 const count = (value: number) => value.toLocaleString(undefined, { maximumFractionDigits: 1 });
@@ -56,7 +56,7 @@ function CompletionCurve({ data, games, formatDuration }: {
       <rect className="chart-hit-area" x="45" y="25" width={right - 45} height="185" />
     </svg>
     <figcaption><strong>Reading:</strong> 90% finished after {formatDuration(data.p90_seconds)}; all {games} games finished after {formatDuration(data.last_finish_seconds)}.</figcaption>
-    <p className="chart-help">Inspect retained completion samples by hovering, tapping, or focusing the plot and using arrow keys. Games run concurrently; individual game durations were not recorded.</p>
+    <p className="chart-help">Inspect retained completion samples by hovering, tapping, or focusing the plot and using arrow keys. Games run concurrently.{data.includes_pauses ? " Elapsed wall time includes pauses between attempts." : ""}</p>
   </figure>;
 }
 
@@ -118,12 +118,15 @@ export function ComparisonStatistics({ participants, data, confidence, formatDur
         .map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{count(value)} <small>moves</small></dd></div>)}
     </dl><LengthHistogram key={filter} data={lengths} /></> : <p className="experiment-empty">No games ended with this outcome.</p>}
 
+    {data.durations && <><h3>Individual game duration</h3><dl className="experiment-stat-grid">
+      {([['Shortest',data.durations.minimum],['Mean',data.durations.mean],['Median',data.durations.median],['95th percentile',data.durations.p95],['Longest',data.durations.maximum]] as const).map(([label,value])=><div key={label}><dt>{label}</dt><dd>{value.toFixed(2)} <small>seconds</small></dd></div>)}
+    </dl><p className="experiment-muted">Measured from game admission to completion for {data.durations.count} games, including inference waits. Recovered games retain their original duration.</p></>}
     <h3>Time to finish the match</h3>
     {completion ? <><dl className="experiment-stat-grid experiment-completion-summary">
       {([['50% finished after', completion.p50_seconds], ['90% finished after', completion.p90_seconds],
          ['99% finished after', completion.p99_seconds], ['Final 10% took', completion.final_10_percent_seconds]] as const)
         .map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{formatDuration(value)}</dd></div>)}
     </dl><CompletionCurve data={completion} games={data.games} formatDuration={formatDuration} /></>
-      : <p className="experiment-empty">{partial ? 'Completion timing will appear when the match finishes.' : 'A complete timing log is unavailable for this match.'} Individual game durations were not recorded.</p>}
+      : <p className="experiment-empty">{partial ? 'Completion timing is available once the full match and its timing events have arrived.' : 'A complete timing log is unavailable for this match.'}</p>}
   </div>;
 }

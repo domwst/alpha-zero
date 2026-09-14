@@ -26,6 +26,8 @@ interface BoardProps {
   selected: Cell | null;
   onSelect: (cell: Cell) => void;
   onNavigate?: (cell: Cell) => void;
+  policyLabel?: string;
+  recordedSampling?: Map<string, number> | null;
 }
 
 const ARROW_DELTAS: Record<string, [number, number]> = {
@@ -44,6 +46,8 @@ export function Board({
   selected,
   onSelect,
   onNavigate,
+  policyLabel = 'Network policy',
+  recordedSampling,
 }: BoardProps): JSX.Element {
   const gridRef = useRef<HTMLDivElement | null>(null);
   const [activeCell, setActiveCell] = useState<Cell>({ row: 0, column: 0 });
@@ -113,7 +117,7 @@ export function Board({
       const probability = move ? overlayValue(move) : 0;
       const markerSize = maximum > 0 ? 12 + 75 * Math.sqrt(probability / maximum) : 0;
       const visitShare = move && snapshot ? visitFraction(move, snapshot) : 0;
-      const moveProbability = moveProbabilities.get(key) ?? 0;
+      const moveProbability = recordedSampling === undefined ? moveProbabilities.get(key) ?? 0 : recordedSampling?.get(key) ?? null;
       const isLeading = showPolicy && move != null && key === topKey;
       const tooltipId = `cell-tip-${row}-${column}`;
       const canInspect = !stone;
@@ -123,7 +127,7 @@ export function Board({
       const label = stone
         ? `${moveName(cell)}, ${stone.color}${isLast ? ', last move' : ''}`
         : move && showPolicy
-          ? `${moveName(cell)}${isLeading ? ', leading move' : ''}, network policy ${percent(move.prior)}, visit fraction ${percent(visitShare)}, move probability ${percent(moveProbability)}${selectionInstruction}`
+          ? `${moveName(cell)}${isLeading ? ', leading move' : ''}, ${policyLabel.toLowerCase()} ${percent(move.prior)}, visit fraction ${percent(visitShare)}, move probability ${moveProbability==null?'unavailable':percent(moveProbability)}${selectionInstruction}`
           : `${moveName(cell)}, empty${selectionInstruction}`;
 
       cells.push(
@@ -176,10 +180,10 @@ export function Board({
               role="tooltip"
             >
               <strong>{moveName(cell)}</strong>
-              <span><em>Network policy</em><b>{percent(move.prior)}</b></span>
+              <span><em>{policyLabel}</em><b>{percent(move.prior)}</b></span>
               <span><em>Visits</em><b>{move.visits.toLocaleString()} / {(snapshot?.total_visits ?? 0).toLocaleString()}</b></span>
               <span><em>Visit fraction</em><b>{percent(visitShare)}</b></span>
-              <span><em>Move probability</em><b>{percent(moveProbability)} <small>at T={temperature.toFixed(2)}</small></b></span>
+              <span><em>Move probability</em><b>{moveProbability==null?'Unavailable':percent(moveProbability)} {recordedSampling===undefined&&<small>at T={temperature.toFixed(2)}</small>}</b></span>
               <span><em>Action value Q</em><b>{signed(move.mean_value, 3)}</b></span>
             </span>
           )}

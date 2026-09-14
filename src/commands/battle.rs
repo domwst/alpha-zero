@@ -64,6 +64,8 @@ struct GameLog {
     winner: Option<Competitor>,
     value_for_first_checkpoint: f32,
     plies: usize,
+    duration_seconds: Option<f64>,
+    recovered: bool,
     moves: Vec<MoveLog>,
 }
 
@@ -105,6 +107,7 @@ struct BattleReport<'a> {
     second_temperature: f32,
     duration_seconds: f64,
     games_per_second: f64,
+    recovered_games: usize,
     total_plies: usize,
     average_plies: f64,
     first_checkpoint_result: CompetitorAggregate,
@@ -114,7 +117,7 @@ struct BattleReport<'a> {
     games: Vec<GameLog>,
 }
 
-pub async fn run(args: BattleArgs) -> Result<()> {
+pub async fn run(args: BattleArgs, batch_grid: &[usize]) -> Result<()> {
     validate_args(&args)?;
     let first_temperature = args.first_temperature.unwrap_or(args.temperature);
     let second_temperature = args.second_temperature.unwrap_or(args.temperature);
@@ -125,26 +128,53 @@ pub async fn run(args: BattleArgs) -> Result<()> {
     let (second_var_store, second_network, second_snapshot) =
         load_network(&args.second_checkpoint_dir, None, device)?;
 
-    let first_executor = ExecutorScope::<(), _>::new(
+    let first_executor = ExecutorScope::new(
         first_network,
         args.games_parallelism,
         args.inference_batch_size,
         Duration::from_micros(args.batch_timeout_us),
         (Kind::Float, first_var_store.device()),
-    );
-    let second_executor = ExecutorScope::<(), _>::new(
+        batch_grid,
+    )?;
+    let second_executor = ExecutorScope::new(
         second_network,
         args.games_parallelism,
         args.inference_batch_size,
         Duration::from_micros(args.batch_timeout_us),
         (Kind::Float, second_var_store.device()),
-    );
+        batch_grid,
+    )?;
     let first_handle = first_executor.evaluator_handle();
     let second_handle = second_executor.evaluator_handle();
 
+    let archive_dir = args
+        .output
+        .as_ref()
+        .and_then(|p| p.parent())
+        .map(|p| p.join("games/archive/00000000"));
+    if let Some(dir) = &archive_dir {
+        fs::create_dir_all(dir)?;
+        let config = serde_json::json!({"first":first_snapshot.descriptor(),"second":second_snapshot.descriptor(),"seed":args.seed,"simulations":args.simulations,"first_temperature":first_temperature,"second_temperature":second_temperature,"games":args.games,"c_puct":args.c_puct});
+        let manifest = dir.join("manifest.json");
+        if manifest.exists() {
+            let previous: serde_json::Value = serde_json::from_reader(fs::File::open(&manifest)?)?;
+            ensure!(
+                previous == config,
+                "comparison settings differ from saved games"
+            );
+        } else {
+            alz::engine::archive::publish_json(&manifest, &config)?;
+        }
+    }
+    let model_digests = [
+        first_snapshot.descriptor().model_sha256,
+        second_snapshot.descriptor().model_sha256,
+    ];
     let started = Instant::now();
     let mut matches = stream::iter(0..args.games)
         .map(|game| {
+            let archive_dir = archive_dir.clone();
+            let model_digests = model_digests.clone();
             let first_handle = first_handle.clone();
             let second_handle = second_handle.clone();
             async move {
@@ -155,39 +185,80 @@ pub async fn run(args: BattleArgs) -> Result<()> {
                 let first_seed = derive_seed(args.seed, game as u64, 0);
                 let second_seed = derive_seed(args.seed, game as u64, 1);
 
-                if game % 2 == 0 {
-                    let record = do_battle(
-                        BoardState::new(),
-                        BattleSettings {
-                            simulations: args.simulations,
-                            c_puct: args.c_puct,
-                            first_temperature,
-                            second_temperature,
-                            first_seed,
-                            second_seed,
-                        },
-                        first_evaluator,
-                        second_evaluator,
-                    )
-                    .await?;
-                    Ok(game_log(game, Competitor::FirstCheckpoint, record))
-                } else {
-                    let record = do_battle(
-                        BoardState::new(),
-                        BattleSettings {
-                            simulations: args.simulations,
-                            c_puct: args.c_puct,
-                            first_temperature: second_temperature,
-                            second_temperature: first_temperature,
-                            first_seed: second_seed,
-                            second_seed: first_seed,
-                        },
-                        second_evaluator,
-                        first_evaluator,
-                    )
-                    .await?;
-                    Ok(game_log(game, Competitor::SecondCheckpoint, record))
+                if let Some(dir) = &archive_dir {
+                    let path = dir.join(format!("{game:08}.json"));
+                    if path.exists() {
+                        let saved = alz::engine::archive::load::<BoardState>(&path, first_seed)?;
+                        let mut log = game_log(
+                            game,
+                            if game % 2 == 0 {
+                                Competitor::FirstCheckpoint
+                            } else {
+                                Competitor::SecondCheckpoint
+                            },
+                            saved.record,
+                        );
+                        log.duration_seconds = saved.duration_seconds;
+                        log.recovered = true;
+                        return Ok(log);
+                    }
                 }
+                let game_started = Instant::now();
+                let first_seat = if game % 2 == 0 {
+                    Competitor::FirstCheckpoint
+                } else {
+                    Competitor::SecondCheckpoint
+                };
+                let (first, second, first_t, second_t, first_s, second_s) = if game % 2 == 0 {
+                    (
+                        first_evaluator,
+                        second_evaluator,
+                        first_temperature,
+                        second_temperature,
+                        first_seed,
+                        second_seed,
+                    )
+                } else {
+                    (
+                        second_evaluator,
+                        first_evaluator,
+                        second_temperature,
+                        first_temperature,
+                        second_seed,
+                        first_seed,
+                    )
+                };
+                let record = do_battle(
+                    BoardState::new(),
+                    BattleSettings {
+                        simulations: args.simulations,
+                        c_puct: args.c_puct,
+                        first_temperature: first_t,
+                        second_temperature: second_t,
+                        first_seed: first_s,
+                        second_seed: second_s,
+                    },
+                    first,
+                    second,
+                )
+                .await?;
+                let duration = game_started.elapsed().as_secs_f64();
+                let models = if game % 2 == 0 {
+                    model_digests
+                } else {
+                    [model_digests[1].clone(), model_digests[0].clone()]
+                };
+                let record = archive_game(
+                    archive_dir.as_deref(),
+                    game,
+                    first_seed,
+                    record,
+                    duration,
+                    models,
+                )?;
+                let mut log = game_log(game, first_seat, record);
+                log.duration_seconds = Some(duration);
+                Ok(log)
             }
         })
         .buffer_unordered(args.games_parallelism);
@@ -200,10 +271,11 @@ pub async fn run(args: BattleArgs) -> Result<()> {
         timer.tick().await;
     }
     loop {
-        let next = if let Some(timer) = heartbeat.as_mut() {
+        let next: Option<Result<GameLog>> = if let Some(timer) = heartbeat.as_mut() {
             tokio::select! {
                 result = matches.next() => result,
                 _ = timer.tick() => {
+                    alz::engine::telemetry::event("comparison_progress",serde_json::json!({"games_completed":results.len(),"games_total":args.games,"first_inference":first_executor.live_stats(),"second_inference":second_executor.live_stats(),"elapsed_seconds":started.elapsed().as_secs_f64()}))?;
                     log_progress(
                         "heartbeat",
                         results.len(),
@@ -221,10 +293,19 @@ pub async fn run(args: BattleArgs) -> Result<()> {
         let Some(result) = next else {
             break;
         };
-        if let Ok(game) = &result {
-            log_game_summary(game);
+        let game = result?;
+        log_game_summary(&game);
+        let mut progress = serde_json::to_value(&game)?;
+        progress.as_object_mut().unwrap().remove("moves");
+        alz::engine::telemetry::event("comparison_game", progress)?;
+        if alz::engine::telemetry::stop_at_boundary(false)? {
+            return Ok(());
         }
-        results.push(result);
+        results.push(game);
+        alz::engine::telemetry::event(
+            "comparison_progress",
+            serde_json::json!({"games_completed":results.len(),"games_total":args.games,"elapsed_seconds":started.elapsed().as_secs_f64()}),
+        )?;
         log_progress(
             "game_complete",
             results.len(),
@@ -242,13 +323,14 @@ pub async fn run(args: BattleArgs) -> Result<()> {
         second_executor.join_with_stats()
     );
     let duration = started.elapsed();
-    let mut games = results.into_iter().collect::<Result<Vec<_>>>()?;
+    let mut games = results;
     games.sort_unstable_by_key(|game| game.game);
 
     let first_result = aggregate_for(Competitor::FirstCheckpoint, &games);
     let second_result = aggregate_for(Competitor::SecondCheckpoint, &games);
     let total_plies = games.iter().map(|game| game.plies).sum::<usize>();
     let duration_seconds = duration.as_secs_f64();
+    let recovered_games = games.iter().filter(|game| game.recovered).count();
     let report = BattleReport {
         schema_version: BATTLE_SCHEMA_VERSION,
         config: &args,
@@ -257,7 +339,8 @@ pub async fn run(args: BattleArgs) -> Result<()> {
         first_temperature,
         second_temperature,
         duration_seconds,
-        games_per_second: games.len() as f64 / duration_seconds,
+        games_per_second: (games.len() - recovered_games) as f64 / duration_seconds,
+        recovered_games,
         total_plies,
         average_plies: total_plies as f64 / games.len() as f64,
         first_checkpoint_inference: InferenceAggregate {
@@ -286,6 +369,9 @@ pub async fn run(args: BattleArgs) -> Result<()> {
         "battle series complete"
     );
     write_report(&report, args.output.as_deref())?;
+    let mut summary = serde_json::to_value(&report)?;
+    summary.as_object_mut().unwrap().remove("games");
+    alz::engine::telemetry::event("comparison_completed", summary)?;
     if !args.no_move_logs {
         log_moves(&report.games);
     }
@@ -375,6 +461,8 @@ fn game_log(game: usize, first_seat: Competitor, record: MatchRecord<BoardState>
         winner,
         value_for_first_checkpoint,
         plies: moves.len(),
+        duration_seconds: None,
+        recovered: false,
         moves,
     }
 }
@@ -500,6 +588,39 @@ fn log_moves(games: &[GameLog]) {
     }
 }
 
+fn archive_game(
+    dir: Option<&Path>,
+    game: usize,
+    seed: u64,
+    record: MatchRecord<BoardState>,
+    duration_seconds: f64,
+    models: [String; 2],
+) -> Result<MatchRecord<BoardState>> {
+    if let Some(dir) = dir {
+        let archive = alz::engine::archive::ArchivedGame {
+            schema_version: 1,
+            game_type: "gomoku19_five_v1".into(),
+            game_id: format!("{game:08}"),
+            seed,
+            model_identity: None,
+            models_by_seat: [
+                ("First".into(), models[0].clone()),
+                ("Second".into(), models[1].clone()),
+            ]
+            .into_iter()
+            .collect(),
+            duration_seconds: Some(duration_seconds),
+            policy_semantics: "normalized_root_visits".into(),
+            provenance: "recorded".into(),
+            record,
+        };
+        alz::engine::archive::save(dir, &archive)?;
+        Ok(archive.record)
+    } else {
+        Ok(record)
+    }
+}
+
 fn write_report(report: &BattleReport<'_>, output: Option<&Path>) -> Result<()> {
     let Some(path) = output else {
         return Ok(());
@@ -511,12 +632,7 @@ fn write_report(report: &BattleReport<'_>, output: Option<&Path>) -> Result<()> 
         fs::create_dir_all(parent)
             .with_context(|| format!("creating battle output {}", parent.display()))?;
     }
-    let mut file = fs::File::create(path)
-        .with_context(|| format!("creating battle output {}", path.display()))?;
-    serde_json::to_writer_pretty(&mut file, report)?;
-    use std::io::Write as _;
-    writeln!(file)?;
-    Ok(())
+    alz::engine::archive::publish_json(path, report)
 }
 
 #[cfg(test)]
@@ -535,6 +651,8 @@ mod tests {
                 None => 0.0,
             },
             plies: 1,
+            duration_seconds: None,
+            recovered: false,
             moves: Vec::new(),
         }
     }

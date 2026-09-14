@@ -1,5 +1,9 @@
 # Read-only experiment dashboard
 
+This describes the retired legacy dashboard. The deployed replacement is
+documented in [job service operation and migration](job-service.md), with its local
+connection managed by [Docker Compose](../deploy/dashboard/README.md).
+
 Open **http://127.0.0.1:8765/experiments** while the local dashboard server is
 running. It shows the current activation experiment and the six follow-up
 stages: checkpoint-69 match, two fresh value-head training runs, and three

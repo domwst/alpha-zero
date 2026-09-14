@@ -9,14 +9,31 @@ all exact ties at its boundary; zero-probability moves stay zero. The default 1.
 preserves the previous sampling behavior. Outcome-dependent loss weighting is
 not enabled.
 
-Temperature uses consecutive pairs of moves to avoid giving the two seats
-different temperatures within a turn pair:
+`--temperature-schedule paired` uses consecutive pairs of moves to avoid giving
+the two seats different temperatures within a turn pair:
 
 - Moves 1–6: 1.0.
 - Pairs 7–8 through 19–20: decrease linearly in seven steps to 0.7.
 - Later moves: 0.7.
 
 This removes a scheduling asymmetry, not Gomoku's intrinsic first-player advantage.
+
+`--temperature-schedule sharp` uses 1.0 on moves 1–5, 0.7 on move 6,
+0.6 on move 7, and 0.5 from move 8 onward. Move numbers are one-based; this
+deliberately gives the second player lower sampling temperatures during the transition.
+New self-play jobs in the dashboard default to `sharp`. The native CLI default
+remains `paired`, preserving existing jobs whose specifications omit the option.
+The schedule is recorded in invocation/epoch statistics and collection manifests;
+reusing partially collected games with a different schedule is rejected. Legacy
+manifests without a schedule are interpreted as `paired`.
+
+## Nucleus sampling status
+
+Use `top_p = 1.0` for routine new runs. Lower cutoffs are retained as an advanced
+research option; they are not recommended defaults. See the
+[archived decision and results](../reports/nucleus-self-play-20260914/README.md)
+for the observed comparison and its temperature/training-age confounds. Historical
+0.95 recipes below document the runs as executed.
 
 ## Replay capacity
 

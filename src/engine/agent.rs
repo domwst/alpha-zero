@@ -81,13 +81,19 @@ where
         let sampling_policy = apply_top_p(&sampling_policy, self.top_p);
         let move_index = sample_policy(&sampling_policy, &mut self.random);
 
+        let snapshot = self.tree.root_snapshot().expect("searched root");
         Ok(MoveDecision {
             move_index,
             // Exploration temperature controls the trajectory, not the search target.
             training_policy: Some(search_policy),
             diagnostics: DecisionDiagnostics {
+                network_prior: Some(snapshot.moves.iter().map(|m| m.prior).collect()),
+                root_visits: Some(snapshot.moves.iter().map(|m| m.visits).collect()),
+                search_value: snapshot.search_value(),
+                search: Some(self.tree.search_stats()),
                 value_estimate: self.tree.get_network_state_estimation(),
                 sampling_policy: Some(sampling_policy),
+                ..DecisionDiagnostics::default()
             },
         })
     }
@@ -143,8 +149,10 @@ where
             move_index,
             training_policy: None,
             diagnostics: DecisionDiagnostics {
+                network_prior: Some(evaluation.legal_policy.clone()),
                 value_estimate: Some(evaluation.value),
                 sampling_policy: Some(sampling_policy),
+                ..DecisionDiagnostics::default()
             },
         })
     }
@@ -165,7 +173,7 @@ mod tests {
 
     impl PositionEvaluator<BoardState> for PeakedEvaluator {
         async fn evaluate(
-            &self,
+            &mut self,
             _state: &BoardState,
             moves: &[<BoardState as Game>::Move],
         ) -> Result<PositionEvaluation> {
@@ -221,7 +229,7 @@ mod tests {
 
     impl PositionEvaluator<BoardState> for UniformEvaluator {
         async fn evaluate<'a>(
-            &'a self,
+            &'a mut self,
             _state: &'a BoardState,
             moves: &'a [<BoardState as Game>::Move],
         ) -> Result<PositionEvaluation> {

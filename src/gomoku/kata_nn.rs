@@ -247,28 +247,69 @@ impl ModuleT for KataGlobalBlock {
 
 const CHANNELS: i64 = 32;
 
+/// Keep diagnostic names beside the operations they describe.
+#[derive(Debug)]
+struct NamedHead {
+    sequence: SequentialT,
+    names: Vec<String>,
+}
+
+impl NamedHead {
+    fn new() -> Self {
+        Self {
+            sequence: seq_t(),
+            names: Vec::new(),
+        }
+    }
+
+    fn add(mut self, name: impl Into<String>, layer: impl ModuleT + 'static) -> Self {
+        self.sequence = self.sequence.add(layer);
+        self.names.push(name.into());
+        self
+    }
+
+    fn add_fn<F>(self, name: impl Into<String>, f: F) -> Self
+    where
+        F: Fn(&Tensor) -> Tensor + Send + 'static,
+    {
+        self.add(name, tch::nn::func(f))
+    }
+}
+
+impl ModuleT for NamedHead {
+    fn forward_t(&self, xs: &Tensor, train: bool) -> Tensor {
+        self.sequence.forward_t(xs, train)
+    }
+}
+
 fn value_head<'a, P: Borrow<Path<'a>>>(
     path: P,
     activation: Activation,
     hidden_dims: &[i64],
     trunk_channels: i64,
-) -> SequentialT {
+) -> NamedHead {
     let p = path.borrow();
 
-    let mut head = seq_t()
-        .add(batch_norm2d(p / "bn", trunk_channels, Default::default()))
-        .add_fn(move |xs| activation.forward(xs))
-        .add(conv2d(
-            p / "conv",
-            trunk_channels,
-            CHANNELS,
-            1,
-            ConvConfig {
-                bias: false,
-                ..Default::default()
-            },
-        ))
-        .add_fn(|xs| {
+    let mut head = NamedHead::new()
+        .add(
+            "bn",
+            batch_norm2d(p / "bn", trunk_channels, Default::default()),
+        )
+        .add_fn("activation", move |xs| activation.forward(xs))
+        .add(
+            "conv",
+            conv2d(
+                p / "conv",
+                trunk_channels,
+                CHANNELS,
+                1,
+                ConvConfig {
+                    bias: false,
+                    ..Default::default()
+                },
+            ),
+        )
+        .add_fn("pool", |xs| {
             let max = xs.amax(CONV_DIMS, false);
             let avg = xs.mean_dim(CONV_DIMS, false, None);
 
@@ -277,70 +318,210 @@ fn value_head<'a, P: Borrow<Path<'a>>>(
     let mut input_dim = CHANNELS * 2;
     for (i, &hidden_dim) in hidden_dims.iter().enumerate() {
         head = head
-            .add(linear(
-                p / format!("fc{}", i + 1),
-                input_dim,
-                hidden_dim,
-                Default::default(),
-            ))
-            .add_fn(move |xs| activation.forward(xs));
+            .add(
+                format!("fc{}", i + 1),
+                linear(
+                    p / format!("fc{}", i + 1),
+                    input_dim,
+                    hidden_dim,
+                    Default::default(),
+                ),
+            )
+            .add_fn(format!("activation{}", i + 1), move |xs| {
+                activation.forward(xs)
+            });
         input_dim = hidden_dim;
     }
-    head.add(linear(
-        p / format!("fc{}", hidden_dims.len() + 1),
-        input_dim,
-        1,
-        Default::default(),
-    ))
-    .add_fn(Tensor::tanh)
-    .add_fn(|t| t.view([t.size()[0]]))
+    head.add(
+        format!("fc{}", hidden_dims.len() + 1),
+        linear(
+            p / format!("fc{}", hidden_dims.len() + 1),
+            input_dim,
+            1,
+            Default::default(),
+        ),
+    )
+    .add_fn("tanh", Tensor::tanh)
+    .add_fn("reshape", |t| t.view([t.size()[0]]))
 }
 
 fn policy_head<'a, P: Borrow<Path<'a>>>(
     path: P,
     activation: Activation,
     trunk_channels: i64,
-) -> SequentialT {
+) -> NamedHead {
     const HIDDEN_DIM: i64 = 10;
 
     let path = path.borrow();
 
-    seq_t()
-        .add(batch_norm2d(
-            path / "bn1",
-            trunk_channels,
-            Default::default(),
-        ))
-        .add_fn(move |xs| activation.forward(xs))
-        .add(conv2d(
-            path / "conv1",
-            trunk_channels,
-            HIDDEN_DIM,
-            1,
-            ConvConfig {
-                bias: false,
-                ..Default::default()
-            },
-        ))
-        .add(batch_norm2d(path / "bn2", HIDDEN_DIM, Default::default()))
-        .add_fn(move |xs| activation.forward(xs))
-        .add(conv2d(path / "conv2", HIDDEN_DIM, 1, 1, Default::default()))
-        .add_fn(|t| {
+    NamedHead::new()
+        .add(
+            "bn1",
+            batch_norm2d(path / "bn1", trunk_channels, Default::default()),
+        )
+        .add_fn("activation1", move |xs| activation.forward(xs))
+        .add(
+            "conv1",
+            conv2d(
+                path / "conv1",
+                trunk_channels,
+                HIDDEN_DIM,
+                1,
+                ConvConfig {
+                    bias: false,
+                    ..Default::default()
+                },
+            ),
+        )
+        .add(
+            "bn2",
+            batch_norm2d(path / "bn2", HIDDEN_DIM, Default::default()),
+        )
+        .add_fn("activation2", move |xs| activation.forward(xs))
+        .add(
+            "conv2",
+            conv2d(path / "conv2", HIDDEN_DIM, 1, 1, Default::default()),
+        )
+        .add_fn("reshape", |t| {
             let sz = t.size();
             t.view([sz[0], sz[2], sz[3]])
         })
 }
 
 #[derive(Debug)]
+enum TrunkBlock {
+    Residual(ResBlock),
+    Global(GlobalBlock),
+    KataGlobal(KataGlobalBlock),
+}
+impl ModuleT for TrunkBlock {
+    fn forward_t(&self, xs: &Tensor, train: bool) -> Tensor {
+        match self {
+            Self::Residual(b) => b.forward_t(xs, train),
+            Self::Global(b) => b.forward_t(xs, train),
+            Self::KataGlobal(b) => b.forward_t(xs, train),
+        }
+    }
+}
+
+impl TrunkBlock {
+    fn inspect(
+        &self,
+        xs: &Tensor,
+        prefix: &str,
+        capture: &mut impl FnMut(String, &Tensor) -> anyhow::Result<()>,
+    ) -> anyhow::Result<Tensor> {
+        let mut record = |name: &str, value: Tensor| -> anyhow::Result<Tensor> {
+            capture(format!("{prefix}.{name}"), &value)?;
+            Ok(value)
+        };
+        let out = match self {
+            Self::Residual(b) => {
+                let x = record("bn1", b.bn1.forward_t(xs, false))?;
+                let x = record("activation1", b.activation.forward(&x))?;
+                let x = record("conv1", b.conv1.forward_t(&x, false))?;
+                let x = record("bn2", b.bn2.forward_t(&x, false))?;
+                let x = record("activation2", b.activation.forward(&x))?;
+                xs + record("conv2", b.conv2.forward_t(&x, false))?
+            }
+            Self::Global(b) => {
+                let x = record("bn1", b.bn1.forward_t(xs, false))?;
+                let x = record("activation1", b.activation.forward(&x))?;
+                let global = record("global_conv", b.ctog.forward_t(&x, false))?;
+                let global = record("global_activation", b.activation.forward(&global))?;
+                let mean = global.mean_dim(CONV_DIMS, true, None);
+                let max = global.amax(CONV_DIMS, true);
+                let pooled = record("pool", Tensor::cat(&[mean, max], 1))?;
+                let bias = record("global_bias", b.gtoc.forward_t(&pooled, false))?;
+                let x = record("bn2", b.bn2.forward_t(&(x + bias), false))?;
+                let x = record("activation2", b.activation.forward(&x))?;
+                xs + record("conv2", b.ctoc.forward_t(&x, false))?
+            }
+            Self::KataGlobal(b) => {
+                let x = record("bn1", b.bn1.forward_t(xs, false))?;
+                let x = record("activation1", b.activation.forward(&x))?;
+                let local = record("local_conv", b.local.forward_t(&x, false))?;
+                let global = record("global_conv", b.global.forward_t(&x, false))?;
+                let global = record("global_bn", b.global_bn.forward_t(&global, false))?;
+                let global = record("global_activation", b.activation.forward(&global))?;
+                let pooled = record("pool", kata_pool(&global))?;
+                let bias = record("global_bias", b.project.forward_t(&pooled, false))?
+                    .unsqueeze(-1)
+                    .unsqueeze(-1);
+                let x = record("bn2", b.bn2.forward_t(&(local + bias), false))?;
+                let x = record("activation2", b.activation.forward(&x))?;
+                xs + record("conv2", b.conv2.forward_t(&x, false))?
+            }
+        };
+        record("output", out)
+    }
+}
+
+#[derive(Debug)]
 pub struct GomokuKataNet {
     conv: Conv2D,
     board_mask_conv: Option<Conv2D>,
-    blocks: SequentialT,
-    value_head: SequentialT,
-    policy_head: SequentialT,
+    blocks: Vec<TrunkBlock>,
+    value_head: NamedHead,
+    policy_head: NamedHead,
 }
 
 impl GomokuKataNet {
+    /// Diagnostic forwards retain intermediate outputs only in this explicit path.
+    pub fn inspect(
+        &self,
+        xs: &Tensor,
+        selected: &[String],
+    ) -> anyhow::Result<Vec<crate::engine::inspection::ActivationMap>> {
+        tch::no_grad(|| {
+            let mut captured = Vec::new();
+            let mut capture = |name: String, tensor: &Tensor| -> anyhow::Result<()> {
+                let wanted = if selected.is_empty() {
+                    name == "input_conv"
+                } else {
+                    selected.contains(&name)
+                };
+                captured.push(if wanted {
+                    crate::engine::inspection::ActivationMap::capture(name, tensor)?
+                } else {
+                    crate::engine::inspection::ActivationMap::describe(name, tensor)
+                });
+                Ok(())
+            };
+            capture("input".into(), xs)?;
+            let mut out = self.conv.forward_t(xs, false);
+            if let Some(conv) = &self.board_mask_conv {
+                let shape = xs.size();
+                let plane = Tensor::ones([1, 1, shape[2], shape[3]], (xs.kind(), xs.device()));
+                capture("board_mask.input".into(), &plane)?;
+                let border = conv.forward_t(&plane, false);
+                capture("board_mask.features".into(), &border)?;
+                out += border;
+            }
+            capture("input_conv".into(), &out)?;
+            for (i, block) in self.blocks.iter().enumerate() {
+                out = block.inspect(&out, &format!("trunk.block_{i}"), &mut capture)?;
+            }
+            let trunk = &out;
+            for (prefix, head) in [("value", &self.value_head), ("policy", &self.policy_head)] {
+                for (name, tensor) in head
+                    .names
+                    .iter()
+                    .zip(head.sequence.forward_all_t(trunk, false, None))
+                {
+                    capture(format!("{prefix}.{name}"), &tensor)?;
+                }
+            }
+            anyhow::ensure!(
+                selected
+                    .iter()
+                    .all(|name| captured.iter().any(|map| &map.name == name)),
+                "Unknown activation layer"
+            );
+            Ok(captured)
+        })
+    }
+
     /// An implicit third, all-ones input plane, zero-padded by its convolution.
     /// Register it last so the same seed preserves every baseline initial tensor.
     /// Splitting the input convolution also keeps replay caches two-channel.
@@ -438,30 +619,30 @@ impl GomokuKataNet {
 
         assert!(global_blocks.iter().all(|&i| i < block_count));
         let p = path.borrow();
-        let mut blocks = seq_t();
+        let mut blocks = Vec::new();
         for i in 0..block_count {
             let is_global = global_blocks.contains(&i);
             if is_global && kata_pooling {
-                blocks = blocks.add(KataGlobalBlock::new(
+                blocks.push(TrunkBlock::KataGlobal(KataGlobalBlock::new(
                     p / format!("global_block_{i}"),
                     channels,
                     channels / 2,
                     activation,
-                ));
+                )));
             } else if is_global {
-                blocks = blocks.add(GlobalBlock::with_activation(
+                blocks.push(TrunkBlock::Global(GlobalBlock::with_activation(
                     p / format!("global_block_{i}"),
                     channels,
                     channels / 2,
                     activation,
-                ));
+                )));
             } else {
-                blocks = blocks.add(ResBlock::new(
+                blocks.push(TrunkBlock::Residual(ResBlock::new(
                     p / format!("res_block_{i}"),
                     channels,
                     1,
                     activation,
-                ));
+                )));
             }
         }
 
@@ -493,7 +674,10 @@ impl AlphaZeroNet for GomokuKataNet {
             // Broadcast the same border features over every position in the batch.
             out += mask_conv.forward_t(&mask, is_training);
         }
-        let out = self.blocks.forward_t(&out, is_training);
+        let out = self
+            .blocks
+            .iter()
+            .fold(out, |x, block| block.forward_t(&x, is_training));
 
         NetworkOutput {
             values: self.value_head.forward_t(&out, is_training),
@@ -504,6 +688,68 @@ impl AlphaZeroNet for GomokuKataNet {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn inspection_matches_normal_eval_and_batch_padding() {
+        use super::*;
+        for (pooling, hidden) in [
+            (false, &[10][..]),
+            (true, &[10][..]),
+            (false, &[64][..]),
+            (true, &[64][..]),
+            (false, &[64, 64][..]),
+            (true, &[64, 64][..]),
+        ] {
+            let vs = tch::nn::VarStore::new(tch::Device::Cpu);
+            let net = GomokuKataNet::with_pooling(vs.root(), Activation::Gelu, hidden, pooling);
+            let input = Tensor::randn([1, 2, 19, 19], (tch::Kind::Float, tch::Device::Cpu));
+            let expected = tch::no_grad(|| net.forward_t(&input, false));
+            let names = net.inspect(&input, &[]).unwrap();
+            let value = "value.reshape".to_owned();
+            let policy = "policy.reshape".to_owned();
+            assert!(!names.iter().any(|n| n.name.contains(".layer_")));
+            assert_eq!(
+                names.iter().find(|n| n.name == "value.pool").unwrap().shape,
+                [1, 64]
+            );
+            assert_eq!(
+                names
+                    .iter()
+                    .find(|n| n.name == "policy.conv1")
+                    .unwrap()
+                    .shape,
+                [1, 10, 19, 19]
+            );
+            let final_fc = format!("value.fc{}", hidden.len() + 1);
+            assert_eq!(
+                names.iter().find(|n| n.name == final_fc).unwrap().shape,
+                [1, 1]
+            );
+            assert!(names.iter().any(|n| n.name == "value.activation1"));
+            assert!(names.iter().any(|n| n.name == "policy.bn2"));
+            let captured = net
+                .inspect(&input, &[value.clone(), policy.clone()])
+                .unwrap();
+            let actual = captured.iter().find(|n| n.name == value).unwrap();
+            assert!((actual.values[0] - expected.values.double_value(&[0]) as f32).abs() < 1e-6);
+            let actual = &captured.iter().find(|n| n.name == policy).unwrap().values;
+            let expected_policy =
+                Vec::<f32>::try_from(expected.policy_logits.flatten(0, -1)).unwrap();
+            assert!(
+                actual
+                    .iter()
+                    .zip(expected_policy)
+                    .all(|(a, b)| (a - b).abs() < 1e-6)
+            );
+            let padded = tch::no_grad(|| net.forward_t(&input.repeat([4, 1, 1, 1]), false));
+            assert!(
+                (padded.values.get(0) - expected.values.get(0))
+                    .abs()
+                    .double_value(&[])
+                    < 1e-5
+            );
+        }
+    }
+
     use tch::{Device, Kind, Tensor, nn};
 
     #[test]

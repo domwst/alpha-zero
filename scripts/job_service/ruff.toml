@@ -1,0 +1,3 @@
+# The stdlib-only service also runs on compute hosts with Python 3.12.
+# The repository's torch environment uses Python 3.14 independently.
+target-version = "py312"

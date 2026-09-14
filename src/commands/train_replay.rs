@@ -341,6 +341,13 @@ pub fn run(args: TrainReplayArgs) -> Result<()> {
             &optimizer,
             &training,
         )?;
+        alz::engine::telemetry::event(
+            "epoch_completed",
+            serde_json::json!({"epoch":epoch,"learning_rate":learning_rate,"training":training_stats,"validation":validation_stats}),
+        )?;
+        if alz::engine::telemetry::stop_at_boundary(true)? {
+            return Ok(());
+        }
     }
     let latest =
         find_latest_snapshot(&checkpoint_dir)?.context("no completed replay checkpoint")?;

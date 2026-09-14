@@ -1,5 +1,8 @@
 # Offline nucleus audit, 2026-09-09
 
+Research status: see the [self-play decision and results](../nucleus-self-play-20260914/README.md).
+The offline measurements below remain unchanged.
+
 Inputs: archived self-play replay checkpoints 60–69. No network inference,
 training, or modified self-play was performed. The archived collector saved
 temperature-adjusted visit distributions as training targets; this audit applies

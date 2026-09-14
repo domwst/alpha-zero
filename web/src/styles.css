@@ -1412,6 +1412,8 @@ tbody tr:hover,
 .search-figure {
   margin: 0;
 }
+.search-figure figcaption { min-block-size: 5lh; }
+.search-figure .chart-legend { min-block-size: 48px; }
 
 .chart-legend {
   display: flex;

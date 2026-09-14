@@ -208,7 +208,31 @@ impl<T: Game> NodeState<T> {
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SearchStats {
+    pub expanded_by_depth: Vec<u64>,
+    pub allocated_by_depth: Vec<u64>,
+    pub simulation_leaf_depth: Vec<u64>,
+    pub retained_nodes: u64,
+    pub discarded_nodes: u64,
+    pub estimated_tree_bytes: u64,
+}
+
+fn count_at(histogram: &mut Vec<u64>, depth: usize, count: u64) {
+    histogram.resize(histogram.len().max(depth + 1), 0);
+    histogram[depth] += count;
+}
+
+impl SearchStats {
+    fn expanded<G: Game>(&mut self, depth: usize, children: usize) {
+        count_at(&mut self.expanded_by_depth, depth, 1);
+        count_at(&mut self.allocated_by_depth, depth + 1, children as u64);
+        self.estimated_tree_bytes += (children * std::mem::size_of::<NodeChild<G>>()) as u64;
+    }
+}
+
 pub struct MonteCarloTree<TGame: Game, Evaluator: PositionEvaluator<TGame>> {
+    stats: SearchStats,
     root_game_state: TGame,
     root: MonteCarloNode<TGame>,
     evaluator: Evaluator,
@@ -230,12 +254,17 @@ where
 
         let root = MonteCarloNode::new();
         Self {
+            stats: SearchStats::default(),
             root_game_state: state,
             root,
             evaluator,
             root_noise,
             root_noise_sample: None,
         }
+    }
+
+    pub fn search_stats(&self) -> SearchStats {
+        self.stats.clone()
     }
 
     pub fn get_network_state_estimation(&self) -> Option<f32> {
@@ -281,7 +310,10 @@ where
         Some(self.root.node_state.get()?.get_max_visits())
     }
 
-    async fn create_node_state(evaluator: &Evaluator, state: &TGame) -> Result<NodeState<TGame>> {
+    async fn create_node_state(
+        evaluator: &mut impl PositionEvaluator<TGame>,
+        state: &TGame,
+    ) -> Result<NodeState<TGame>> {
         let moves = match state.get_state() {
             TerminationState::Terminal(val) => {
                 return Ok(NodeState {
@@ -323,31 +355,6 @@ where
         })
     }
 
-    async fn initialize_root(&mut self) -> Result<()> {
-        if self.root.node_state.get().is_none() {
-            let state = Self::create_node_state(&self.evaluator, &self.root_game_state).await?;
-            assert!(self.root.node_state.set(state).is_ok());
-        }
-        Ok(())
-    }
-
-    fn initialize_root_noise<R: Rng + ?Sized>(&mut self, rng: &mut R) {
-        if self.root_noise_sample.is_some() {
-            return;
-        }
-
-        let RootNoise::Dirichlet { alpha, .. } = self.root_noise else {
-            return;
-        };
-        let size = self.root.node_state.get().unwrap().children.len();
-        let adjustment = if size >= 2 {
-            Dirichlet::new(&vec![alpha; size]).unwrap().sample(rng)
-        } else {
-            vec![1.0; size]
-        };
-        self.root_noise_sample = Some(adjustment.into());
-    }
-
     pub async fn do_simulations<R: Rng + Send + ?Sized>(
         &mut self,
         samples: usize,
@@ -355,8 +362,23 @@ where
         rng: &mut R,
     ) -> Result<()> {
         assert!(samples > 0, "At least one simulation is required");
-        self.initialize_root().await?;
-        self.initialize_root_noise(rng);
+        let mut evaluator = self.evaluator.activity();
+        if self.root.node_state.get().is_none() {
+            let state = Self::create_node_state(&mut evaluator, &self.root_game_state).await?;
+            self.stats.expanded::<TGame>(0, state.children.len());
+            assert!(self.root.node_state.set(state).is_ok());
+        }
+        if self.root_noise_sample.is_none() {
+            if let RootNoise::Dirichlet { alpha, .. } = self.root_noise {
+                let size = self.root.node_state.get().unwrap().children.len();
+                let adjustment = if size >= 2 {
+                    Dirichlet::new(&vec![alpha; size]).unwrap().sample(rng)
+                } else {
+                    vec![1.0; size]
+                };
+                self.root_noise_sample = Some(adjustment.into());
+            }
+        }
 
         let mut state_stack = vec![];
         let root_noise_sample = self.root_noise_sample.clone();
@@ -371,7 +393,9 @@ where
                     if let Some(r) = cur.node_state.get() {
                         break 'cl (r, false);
                     }
-                    let state = Self::create_node_state(&self.evaluator, &cur_game_state).await?;
+                    let state = Self::create_node_state(&mut evaluator, &cur_game_state).await?;
+                    self.stats
+                        .expanded::<TGame>(state_stack.len(), state.children.len());
                     assert!(cur.node_state.set(state).is_ok());
                     (cur.node_state.get().unwrap(), true)
                 };
@@ -398,6 +422,7 @@ where
                 state_stack.push((node_state, m));
             };
 
+            count_at(&mut self.stats.simulation_leaf_depth, state_stack.len(), 1);
             while let Some((state, r#move)) = state_stack.pop() {
                 let child = &state.children[r#move];
 
@@ -461,9 +486,23 @@ where
             None
         };
 
+        let previous_nodes: u64 = self.stats.allocated_by_depth.iter().sum::<u64>() + 1;
         self.root_game_state = next_state;
         self.root = next_root.unwrap_or_else(|| MonteCarloNode::new());
         self.root_noise_sample = None;
+        // Only inspect the retained subtree, at the move boundary. No histograms
+        // live on nodes; expansion is O(1) and discarded branches need no walk.
+        let mut stats = SearchStats::default();
+        let mut stack = vec![(&self.root, 0)];
+        while let Some((node, depth)) = stack.pop() {
+            if let Some(state) = node.node_state.get() {
+                stats.expanded::<TGame>(depth, state.children.len());
+                stack.extend(state.children.iter().map(|child| (&child.node, depth + 1)));
+            }
+        }
+        stats.retained_nodes = stats.allocated_by_depth.iter().sum::<u64>() + 1;
+        stats.discarded_nodes = previous_nodes.saturating_sub(stats.retained_nodes);
+        self.stats = stats;
         Ok(())
     }
 }
@@ -522,7 +561,7 @@ mod tests {
 
     impl PositionEvaluator<TestGame> for TestEvaluator {
         fn evaluate<'a>(
-            &'a self,
+            &'a mut self,
             _state: &'a TestGame,
             _moves: &'a [TestMove],
         ) -> impl Future<Output = anyhow::Result<PositionEvaluation>> + Send + 'a {
@@ -566,7 +605,7 @@ mod tests {
 
     impl PositionEvaluator<DepthGame> for CountingEvaluator {
         fn evaluate<'a>(
-            &'a self,
+            &'a mut self,
             _state: &'a DepthGame,
             _moves: &'a [Step],
         ) -> impl Future<Output = anyhow::Result<PositionEvaluation>> + Send + 'a {
@@ -586,7 +625,7 @@ mod tests {
 
     impl PositionEvaluator<DepthGame> for CancellableEvaluator {
         async fn evaluate<'a>(
-            &'a self,
+            &'a mut self,
             _state: &'a DepthGame,
             _moves: &'a [Step],
         ) -> anyhow::Result<PositionEvaluation> {
@@ -619,6 +658,27 @@ mod tests {
         assert_eq!(snapshot.moves[0].prior, 0.75);
         assert_eq!(snapshot.moves[0].visits, 1);
         assert_eq!(snapshot.moves[0].mean_value(), Some(1.0));
+    }
+
+    #[tokio::test]
+    async fn depth_statistics_count_expansion_and_discarded_siblings() {
+        let mut tree = MonteCarloTree::new(TestGame(None), TestEvaluator, RootNoise::None);
+        let mut rng = SmallRng::seed_from_u64(1);
+        tree.do_simulations(1, 1.0, &mut rng).await.unwrap();
+        let before = tree.search_stats();
+        assert_eq!(before.expanded_by_depth, [1, 1]);
+        assert_eq!(before.allocated_by_depth.iter().sum::<u64>(), 2);
+        assert_eq!(before.simulation_leaf_depth.iter().sum::<u64>(), 1);
+        assert!(before.estimated_tree_bytes > 0);
+        tree.advance(0, &TestMove::Win, TestGame(Some(-1.0)))
+            .unwrap();
+        let after = tree.search_stats();
+        assert_eq!(after.expanded_by_depth, [1]);
+        assert_eq!(after.allocated_by_depth.iter().sum::<u64>(), 0);
+        assert_eq!(after.retained_nodes, 1);
+        assert_eq!(after.discarded_nodes, 2);
+        assert_eq!(after.estimated_tree_bytes, 0);
+        assert!(after.simulation_leaf_depth.is_empty());
     }
 
     #[tokio::test]

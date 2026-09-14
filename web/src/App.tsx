@@ -16,7 +16,6 @@ import {
   type Cell,
   type ErrorMessage,
   type HelloMessage,
-  type MoveStats,
   type PositionMessage,
   type SearchSnapshotMessage,
   type SearchStatusMessage,
