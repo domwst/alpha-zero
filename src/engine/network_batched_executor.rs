@@ -180,7 +180,7 @@ pub struct LiveNetworkStats {
 struct Outstanding<'a>(&'a ProducerActivity);
 impl Drop for Outstanding<'_> {
     fn drop(&mut self) {
-        self.0.outstanding.fetch_sub(1, Ordering::AcqRel);
+        self.0.outstanding.fetch_sub(1, Ordering::Relaxed);
         self.0.changed.notify_one();
     }
 }
@@ -192,7 +192,7 @@ pub struct SubmissionHandle<'a, Net: AlphaZeroNet> {
 
 impl<Net: AlphaZeroNet> Drop for SubmissionHandle<'_, Net> {
     fn drop(&mut self) {
-        self.handle.activity.active.fetch_sub(1, Ordering::AcqRel);
+        self.handle.activity.active.fetch_sub(1, Ordering::Relaxed);
         self.handle.activity.changed.notify_one();
     }
 }
@@ -296,7 +296,7 @@ impl<Net: AlphaZeroNet> NetworkBatchedExecutorHandle<Net> {
     }
 
     pub fn submission(&mut self) -> SubmissionHandle<'_, Net> {
-        self.activity.active.fetch_add(1, Ordering::AcqRel);
+        self.activity.active.fetch_add(1, Ordering::Relaxed);
         self.activity.changed.notify_one();
         SubmissionHandle { handle: self }
     }
@@ -314,7 +314,7 @@ impl<Net: AlphaZeroNet> NetworkBatchedExecutorHandle<Net> {
             legal_policy_mask.device() == Device::Cpu,
             "legal policy mask must originate on the CPU"
         );
-        self.activity.outstanding.fetch_add(1, Ordering::AcqRel);
+        self.activity.outstanding.fetch_add(1, Ordering::Relaxed);
         let _outstanding = Outstanding(&self.activity);
         let (response, result) = oneshot::channel();
         self.task_sender
