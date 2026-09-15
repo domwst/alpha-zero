@@ -1,4 +1,7 @@
-use std::{cell::SyncUnsafeCell, ptr, sync::OnceLock};
+use std::{
+    cell::{SyncUnsafeCell, UnsafeCell},
+    ptr,
+};
 
 use anyhow::{Result, ensure};
 use rand::Rng;
@@ -117,14 +120,51 @@ struct NodeState<T: Game> {
     children: Box<[NodeChild<T>]>,
 }
 
+struct UnsafeOnceLock<T> {
+    inner: UnsafeCell<Option<T>>,
+}
+
+impl<T> UnsafeOnceLock<T> {
+    // SAFETY: User must ensure [`Self::get`], [`Self::get_mut`], and
+    // [`Self::set`] are called by a unique owner of the lock instance.
+    unsafe fn new() -> Self {
+        Self {
+            inner: UnsafeCell::new(None),
+        }
+    }
+
+    fn get(&self) -> Option<&T> {
+        // SAFETY: Must be upheld by the caller of [`Self::new`].
+        unsafe { (*self.inner.get()).as_ref() }
+    }
+
+    fn get_mut(&mut self) -> Option<&mut T> {
+        self.inner.get_mut().as_mut()
+    }
+
+    fn set(&self, value: T) -> Result<&T, (&T, T)> {
+        // SAFETY: Must be upheld by the caller of [`Self::new`].
+        unsafe {
+            let r = &*self.inner.get();
+            match r {
+                Some(r) => Err((r, value)),
+                None => Ok((*self.inner.get()).insert(value)),
+            }
+        }
+    }
+}
+
+unsafe impl<T: Sync> Sync for UnsafeOnceLock<T> {}
+unsafe impl<T: Send> Send for UnsafeOnceLock<T> {}
+
 struct MonteCarloNode<T: Game> {
-    node_state: OnceLock<NodeState<T>>,
+    node_state: UnsafeOnceLock<NodeState<T>>,
 }
 
 impl<T: Game> MonteCarloNode<T> {
-    fn new() -> Self {
+    unsafe fn new() -> Self {
         Self {
-            node_state: OnceLock::new(),
+            node_state: unsafe { UnsafeOnceLock::new() },
         }
     }
 }
@@ -252,7 +292,7 @@ where
             assert!(epsilon.is_finite() && (0.0..=1.0).contains(&epsilon));
         }
 
-        let root = MonteCarloNode::new();
+        let root = unsafe { MonteCarloNode::new() };
         Self {
             stats: SearchStats::default(),
             root_game_state: state,
@@ -339,7 +379,7 @@ where
                 .zip(legal_policy)
                 .map(|(r#move, policy)| NodeChild {
                     action: r#move.clone(),
-                    node: MonteCarloNode::new(),
+                    node: unsafe { MonteCarloNode::new() },
                     static_info: MoveStaticInfo {
                         priority: policy,
                         turn_change: r#move.turn_change(),
@@ -355,6 +395,10 @@ where
         })
     }
 
+    fn on_set_failure() -> ! {
+        panic!("set() here should never fail")
+    }
+
     pub async fn do_simulations<R: Rng + Send + ?Sized>(
         &mut self,
         samples: usize,
@@ -363,15 +407,21 @@ where
     ) -> Result<()> {
         assert!(samples > 0, "At least one simulation is required");
         let mut evaluator = self.evaluator.activity();
-        if self.root.node_state.get().is_none() {
-            let state = Self::create_node_state(&mut evaluator, &self.root_game_state).await?;
-            self.stats.expanded::<TGame>(0, state.children.len());
-            assert!(self.root.node_state.set(state).is_ok());
-        }
+        let root_state = match self.root.node_state.get() {
+            Some(state) => state,
+            None => {
+                let state = Self::create_node_state(&mut evaluator, &self.root_game_state).await?;
+                self.stats.expanded::<TGame>(0, state.children.len());
+                self.root
+                    .node_state
+                    .set(state)
+                    .unwrap_or_else(|_| Self::on_set_failure())
+            }
+        };
         if self.root_noise_sample.is_none()
             && let RootNoise::Dirichlet { alpha, .. } = self.root_noise
         {
-            let size = self.root.node_state.get().unwrap().children.len();
+            let size = root_state.children.len();
             let adjustment = if size >= 2 {
                 Dirichlet::new(&vec![alpha; size]).unwrap().sample(rng)
             } else {
@@ -396,8 +446,12 @@ where
                     let state = Self::create_node_state(&mut evaluator, &cur_game_state).await?;
                     self.stats
                         .expanded::<TGame>(state_stack.len(), state.children.len());
-                    assert!(cur.node_state.set(state).is_ok());
-                    (cur.node_state.get().unwrap(), true)
+                    (
+                        cur.node_state
+                            .set(state)
+                            .unwrap_or_else(|_| Self::on_set_failure()),
+                        true,
+                    )
                 };
 
                 if created || node_state.is_terminal {
@@ -488,7 +542,7 @@ where
 
         let previous_nodes: u64 = self.stats.allocated_by_depth.iter().sum::<u64>() + 1;
         self.root_game_state = next_state;
-        self.root = next_root.unwrap_or_else(|| MonteCarloNode::new());
+        self.root = next_root.unwrap_or_else(|| unsafe { MonteCarloNode::new() });
         self.root_noise_sample = None;
         // Only inspect the retained subtree, at the move boundary. No histograms
         // live on nodes; expansion is O(1) and discarded branches need no walk.
