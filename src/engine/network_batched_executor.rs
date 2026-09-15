@@ -205,9 +205,11 @@ impl<Net: AlphaZeroNet> SubmissionHandle<'_, Net> {
     pub(super) fn record_position_encoding(&self, duration: Duration) {
         self.handle.record_position_encoding(duration);
     }
+
     pub(super) fn record_policy_mask_construction(&self, duration: Duration) {
         self.handle.record_policy_mask_construction(duration);
     }
+
     pub(super) fn record_policy_decode(&self, duration: Duration) {
         self.handle.record_policy_decode(duration);
     }
