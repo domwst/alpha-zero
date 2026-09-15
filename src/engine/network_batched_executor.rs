@@ -285,9 +285,9 @@ impl<Net: AlphaZeroNet> Drop for NetworkBatchedExecutorHandle<Net> {
 impl<Net: AlphaZeroNet> NetworkBatchedExecutorHandle<Net> {
     pub fn live_stats(&self) -> LiveNetworkStats {
         let mut stats = self.activity.live.lock().unwrap().clone();
-        stats.active_producers = self.activity.active.load(Ordering::Acquire);
-        stats.outstanding_requests = self.activity.outstanding.load(Ordering::Acquire);
-        stats.in_flight_requests = self.activity.in_flight.load(Ordering::Acquire);
+        stats.active_producers = self.activity.active.load(Ordering::Relaxed);
+        stats.outstanding_requests = self.activity.outstanding.load(Ordering::Relaxed);
+        stats.in_flight_requests = self.activity.in_flight.load(Ordering::Relaxed);
         stats
     }
 
@@ -302,7 +302,7 @@ impl<Net: AlphaZeroNet> NetworkBatchedExecutorHandle<Net> {
     }
 
     pub fn active_producers(&self) -> usize {
-        self.activity.active.load(Ordering::Acquire)
+        self.activity.active.load(Ordering::Relaxed)
     }
 
     async fn submit(&self, input: Tensor, legal_policy_mask: Tensor) -> Result<(Tensor, Tensor)> {
@@ -449,7 +449,7 @@ impl<Net: AlphaZeroNet> NetworkBatchedExecutor<Net> {
             let mut timed_out = false;
             while pending.len()
                 < if active_producer_dispatch {
-                    max_batch.min(activity.active.load(Ordering::Acquire).max(1))
+                    max_batch.min(activity.active.load(Ordering::Relaxed).max(1))
                 } else {
                     max_batch
                 }
