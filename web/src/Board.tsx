@@ -117,6 +117,18 @@ export function Board({
     [],
   );
 
+  // A pinned inspection clears when the user interacts anywhere outside the
+  // board, so a tap elsewhere returns the view to the plain game state.
+  useEffect(() => {
+    if (focus == null) return;
+    const onOutsidePointerDown = (event: PointerEvent) => {
+      const within = (event.target as Element | null)?.closest?.('.board-surface');
+      if (!within) onFocusCell?.(null);
+    };
+    document.addEventListener('pointerdown', onOutsidePointerDown);
+    return () => document.removeEventListener('pointerdown', onOutsidePointerDown);
+  }, [focus]);
+
   const overlayValue = (move: MoveStats): number => {
     if (!snapshot) return 0;
     if (overlay === 'prior') return move.prior;

@@ -92,6 +92,11 @@ for (const engine of engines) {
     };
     await target.dispatchEvent("pointerdown", pointer);
     await page.locator('.board-cell.is-focus[data-row="0"][data-col="0"]').waitFor();
+    // Interacting outside the board dismisses the pinned inspection.
+    await page
+      .getByRole("button", { name: "New game" })
+      .dispatchEvent("pointerdown");
+    await page.waitForFunction(() => !document.querySelector(".board-cell.is-focus"));
     await target.dispatchEvent("pointerup", pointer);
     await target.dispatchEvent("click", { button: 0, detail: 1 });
     assert.equal(played.length, 0, "long press pins inspection without playing");
@@ -135,6 +140,15 @@ for (const engine of engines) {
       });
       for (const [axis, values] of Object.entries(offsets))
         assert(values.every((n) => Math.abs(n) < 1), `${viewport.width}px ${axis} misaligned: ${values}`);
+      const square = await page.evaluate(() => {
+        const cell = document.querySelector(".board-cell[data-row='0'][data-col='0']");
+        const box = cell.getBoundingClientRect();
+        return { w: box.width, h: box.height };
+      });
+      assert.ok(
+        Math.abs(square.w - square.h) < 0.6,
+        `${viewport.width}px: cells must be square (${square.w} x ${square.h})`,
+      );
     }
   });
 }

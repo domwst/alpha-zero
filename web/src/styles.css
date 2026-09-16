@@ -749,9 +749,8 @@ h2 {
   z-index: 1;
   display: grid;
   inline-size: 100%;
-  aspect-ratio: 1;
+  /* Rows size to their cells; each cell squares itself from its own width. */
   grid-template-columns: repeat(19, 1fr);
-  grid-template-rows: repeat(19, minmax(0, 1fr));
   overflow: visible;
   background: var(--ds-board-canvas);
   box-shadow: 0 0 0 1px var(--ds-board-grid);
@@ -802,6 +801,7 @@ h2 {
 .board-cell {
   position: relative;
   display: flex;
+  aspect-ratio: 1;
   min-inline-size: 0;
   align-items: center;
   justify-content: center;
@@ -826,7 +826,12 @@ h2 {
   cursor: pointer;
 }
 
-.board-cell[aria-disabled="false"]:hover,
+@media (hover: hover) {
+  .board-cell[aria-disabled="false"]:hover {
+    background: color-mix(in srgb, var(--ds-color-accent) 12%, transparent);
+  }
+}
+
 .board-cell[aria-disabled="false"]:focus-visible,
 .board-cell.is-aim {
   background: color-mix(in srgb, var(--ds-color-accent) 12%, transparent);
@@ -1025,16 +1030,21 @@ h2 {
   font-size: var(--ds-font-size-eyebrow);
 }
 
-.board-cell:hover .cell-tooltip,
+@media (hover: hover) {
+  .board-cell:hover .cell-tooltip {
+    display: block;
+  }
+
+  .board-with-labels:has(.board-cell:focus-visible, .board-cell.is-focus)
+    .board-cell:not(:focus-visible, .is-focus):hover
+    .cell-tooltip {
+    display: none;
+  }
+}
+
 .board-cell.is-focus .cell-tooltip,
 .board-cell:focus-visible .cell-tooltip {
   display: block;
-}
-
-.board-with-labels:has(.board-cell:focus-visible, .board-cell.is-focus)
-  .board-cell:not(:focus-visible, .is-focus):hover
-  .cell-tooltip {
-  display: none;
 }
 
 .board-legend {
