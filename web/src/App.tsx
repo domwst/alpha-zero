@@ -1,6 +1,6 @@
 import { useSignal } from '@preact/signals';
 import type { JSX } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 
 import { seriesColor, seriesColorIndexes, trackedMoves } from './chartSeries';
 import { formatEta, favorsText, percent, signed } from './format';
@@ -31,7 +31,12 @@ import {
   visitFraction,
 } from './protocol';
 
-type ConnectionState = 'connecting' | 'restoring' | 'connected' | 'disconnected';
+type ConnectionState =
+  | 'connecting'
+  | 'restoring'
+  | 'connected'
+  | 'reconnecting'
+  | 'disconnected';
 
 interface MoveJudgment {
   name: string;
@@ -113,6 +118,18 @@ export function App(): JSX.Element {
   const lastJudgment = useSignal<MoveJudgment | null>(null);
   const [connectionGeneration, setConnectionGeneration] = useState(0);
   const socket = useSignal<WebSocket | null>(null);
+  const reconnectAttempt = useSignal(0);
+  const connectedOnce = useSignal(false);
+  const retryTimer = useRef<number | null>(null);
+
+  const tryReconnectNow = () => {
+    if (retryTimer.current != null) {
+      window.clearTimeout(retryTimer.current);
+      retryTimer.current = null;
+    }
+    reconnectAttempt.value = 0;
+    setConnectionGeneration((v) => v + 1);
+  };
 
   useEffect(() => {
     const resumePosition = position.value;
@@ -121,8 +138,19 @@ export function App(): JSX.Element {
     let awaitingRestoredPosition = true;
     const ws = new WebSocket(websocketUrl());
     socket.value = ws;
-    connection.value = 'connecting';
+    connection.value = reconnectAttempt.value > 0 ? 'reconnecting' : 'connecting';
     error.value = null;
+
+    const scheduleRetry = () => {
+      const attempt = reconnectAttempt.value + 1;
+      reconnectAttempt.value = attempt;
+      const delay =
+        Math.min(500 * 2 ** (attempt - 1), 15000) * (0.75 + Math.random() * 0.5);
+      retryTimer.current = window.setTimeout(() => {
+        retryTimer.current = null;
+        setConnectionGeneration((v) => v + 1);
+      }, delay);
+    };
 
     const sendOnThisSocket = (message: object) => {
       if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message));
@@ -144,6 +172,12 @@ export function App(): JSX.Element {
       }
 
       if (message.type === 'hello') {
+        reconnectAttempt.value = 0;
+        connectedOnce.value = true;
+        if (retryTimer.current != null) {
+          window.clearTimeout(retryTimer.current);
+          retryTimer.current = null;
+        }
         if (
           message.protocol_version !== PROTOCOL_VERSION
           || message.board_size !== BOARD_SIZE
@@ -245,31 +279,24 @@ export function App(): JSX.Element {
       if (!message.recoverable) requestedBudget.value = 0;
     });
     ws.addEventListener('close', () => {
-      if (socket.value === ws) {
-        socket.value = null;
-        connection.value = 'disconnected';
-        if (!error.value) {
-          error.value = {
-            type: 'error',
-            code: 'connection_closed',
-            message: 'The analysis server disconnected.',
-            recoverable: true,
-          };
-        }
-      }
+      if (socket.value !== ws) return;
+      socket.value = null;
+      playInFlight.value = null;
+      // The game state survives a drop: the restore handshake replays it on
+      // the next connection, so retry automatically instead of dead-ending.
+      connection.value = 'reconnecting';
+      scheduleRetry();
     });
     ws.addEventListener('error', () => {
       if (socket.value !== ws) return;
-      error.value = {
-        type: 'error',
-        code: 'connection_failed',
-        message: 'Could not connect to the analysis server.',
-        recoverable: true,
-      };
       playInFlight.value = null;
     });
 
     return () => {
+      if (retryTimer.current != null) {
+        window.clearTimeout(retryTimer.current);
+        retryTimer.current = null;
+      }
       ws.close();
       if (socket.value === ws) socket.value = null;
     };
@@ -292,6 +319,7 @@ export function App(): JSX.Element {
 
   const send = (message: object): boolean => {
     const ws = socket.value;
+    if (connection.value === 'reconnecting') return false;
     if (connection.value !== 'connected' || !ws || ws.readyState !== WebSocket.OPEN) {
       error.value = {
         type: 'error',
@@ -568,13 +596,30 @@ export function App(): JSX.Element {
         <div className={`notice${error.value.recoverable ? '' : ' notice-danger'}`} role="alert">
           <span>{error.value.message}</span>
           {connection.value === 'disconnected' && (
-            <button className="text-button" onClick={() => setConnectionGeneration((v) => v + 1)} type="button">
+            <button className="text-button" onClick={tryReconnectNow} type="button">
               Reconnect
             </button>
           )}
           <button className="notice-close" aria-label="Dismiss error" onClick={() => { error.value = null; }} type="button">×</button>
         </div>
       )}
+
+      {connection.value === 'reconnecting'
+        && (reconnectAttempt.value >= 4 || !connectedOnce.value)
+        && (
+          <div className="notice" role="status">
+            <span>
+              {connectedOnce.value
+                ? 'Lost the connection to the analysis server.'
+                : 'Waiting for the analysis server.'}{' '}
+              Retrying automatically — attempt{' '}
+              {Math.max(1, reconnectAttempt.value)}.
+            </span>
+            <button className="text-button" onClick={tryReconnectNow} type="button">
+              Try now
+            </button>
+          </div>
+        )}
 
       <main className="workspace">
         <div className="board-column">

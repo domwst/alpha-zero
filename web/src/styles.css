@@ -338,6 +338,7 @@ h2 {
 .status-dot,
 .pulse-dot,
 .live-label i {
+  position: relative;
   display: inline-block;
   inline-size: 7px;
   block-size: 7px;
@@ -348,9 +349,22 @@ h2 {
 
 .connection-connecting i,
 .connection-restoring i,
+.connection-reconnecting i,
 .connection-disconnected i {
   background: var(--ds-color-warning);
 }
+
+/* While reconnecting there is no live search, so this is the one pulsing
+   element; it stays on the 7px dot. */
+.motion-on .connection-reconnecting i::after {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: currentColor;
+  content: "";
+  animation: ds-ping 1.6s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
 
 .checkpoint {
   max-inline-size: 17rem;
