@@ -87,7 +87,7 @@ for (const engine of engines)
     assert.equal(await channel.inputValue(), "1");
     await page.getByLabel("Analyze after each move").uncheck();
     const cell = page.locator('.board-cell[data-row="0"][data-col="0"]');
-    await cell.click();
+    // A single click places the move immediately; no arm-and-commit state.
     await cell.click();
     await page.getByRole("heading", { name: /Move 2/ }).waitFor();
     assert.equal(

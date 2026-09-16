@@ -60,6 +60,7 @@ export interface SearchStatusMessage {
   analysis_id: number;
   searched_simulations: number;
   target_simulations: number;
+  carried_visits: number;
   running: boolean;
 }
 
@@ -113,11 +114,9 @@ export function restoreGameCommand(
  * when one exists. Returns null when there is no human move to take back.
  */
 export function undoMoves(position: PositionMessage | null): Cell[] | null {
-  if (!position) return null;
-  const takeBack = position.to_move === position.human_color ? 2 : 1;
-  if (position.stones.length < takeBack) return null;
+  if (!position || position.stones.length === 0) return null;
   return position.stones
-    .slice(0, position.stones.length - takeBack)
+    .slice(0, -1)
     .map(({ row, column }) => ({ row, column }));
 }
 

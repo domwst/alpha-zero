@@ -164,10 +164,11 @@ class AnalysisWorker:
                         activations = stats["activations"]
                     if carried is None:
                         carried = stats.get("carried_visits", 0)
+                    done = completed - carried
                     step_done = stats.get("complete", True)
                     final = step_done and (
                         cancel.is_set()
-                        or completed >= target
+                        or done >= target
                         or stats.get("terminal") is not None
                     )
                     if final and activations:
@@ -176,10 +177,10 @@ class AnalysisWorker:
                     stats.update(
                         complete=final,
                         cancelled=cancel.is_set(),
-                        target_simulations=target,
+                        target_simulations=carried + target,
                         carried_visits=carried,
                         elapsed_ms=elapsed,
-                        simulations_per_second=max(0, completed - carried)
+                        simulations_per_second=done
                         / max(elapsed / 1000, 0.001),
                     )
                     if on_update:
@@ -187,7 +188,7 @@ class AnalysisWorker:
                 if final:
                     return result
                 initial = False
-                step = min(target, completed + 32)
+                step = max(0, min(32, target - (completed - carried)))
         except AnalysisRequestError:
             raise
         except BaseException:

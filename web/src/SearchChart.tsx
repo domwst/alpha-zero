@@ -16,8 +16,8 @@ interface SearchChartProps {
   snapshots: SearchSnapshotMessage[];
   selectedIndex: number | null;
   onSelectIndex: (index: number | null) => void;
-  selectedCell: Cell | null;
-  onSelectMove: (cell: Cell) => void;
+  focusCell: Cell | null;
+  onFocusMove: (cell: Cell) => void;
 }
 
 interface HoverSlice {
@@ -46,8 +46,8 @@ export function SearchChart({
   snapshots,
   selectedIndex,
   onSelectIndex,
-  selectedCell,
-  onSelectMove,
+  focusCell,
+  onFocusMove,
 }: SearchChartProps): JSX.Element {
   const [hoverSlice, setHoverSlice] = useState<HoverSlice | null>(null);
 
@@ -131,7 +131,7 @@ export function SearchChart({
   const hoveredX = hovered ? (hoverSlice?.viewX ?? null) : null;
   const leading = candidates[0];
   const runnerUp = candidates[1];
-  const focusKey = selectedCell ? cellKey(selectedCell) : null;
+  const focusKey = focusCell ? cellKey(focusCell) : null;
   const latestShare = (candidate: typeof leading): number => {
     if (!candidate) return 0;
     return visitFraction(candidate, latest);
@@ -201,7 +201,7 @@ export function SearchChart({
               aria-pressed={focusKey === key}
               className="chart-legend-item"
               key={key}
-              onClick={() => onSelectMove(candidate)}
+              onClick={() => onFocusMove(candidate)}
               type="button"
             >
               <i aria-hidden="true" style={{ background: color }} />

@@ -97,7 +97,7 @@ function GomokuExplorer({
       { cells: number[]; last: Cell | null }[]
     >([]),
     [lastMove, setLastMove] = useState<Cell | null>(null);
-  const [selected, setSelected] = useState<Cell | null>(null),
+  const [focus, setFocus] = useState<Cell | null>(null),
     [overlay, setOverlay] = useState<Overlay>("prior");
   const [policyKind, setPolicyKind] = useState<"prior" | "search" | "sampling">(
     "prior",
@@ -170,7 +170,7 @@ function GomokuExplorer({
       setGame(result);
       setGameKey(`${ref.epoch}/${ref.id}`);
       setPly(0);
-      setSelected(null);
+      setFocus(null);
     } catch (e) {
       if (id === loadId.current) setError(String(e));
     } finally {
@@ -249,7 +249,7 @@ function GomokuExplorer({
     resetAnalysis();
     setCells(next);
     setLastMove(last);
-    setSelected(null);
+    setFocus(null);
     window.history.replaceState(
       null,
       "",
@@ -293,7 +293,7 @@ function GomokuExplorer({
           Math.min(lastPosition, old + (event.key === "ArrowRight" ? 1 : -1)),
         ),
       );
-      setSelected(null);
+      setFocus(null);
     }
     window.addEventListener("keydown", navigate, true);
     return () => window.removeEventListener("keydown", navigate, true);
@@ -325,6 +325,271 @@ function GomokuExplorer({
         </p>
       )}
       <div className="service-game-layout">
+        <section className="service-panel" aria-busy={gameBusy}>
+          <div className="service-toolbar">
+            <h2>
+              {recorded
+                ? game
+                  ? `Game ${gameName(game.game_id)} · ${atTerminal ? "Final position" : `Move ${ply + 1}`}`
+                  : "Select a game"
+                : `Move ${actualPly + 1} · ${toMove} to play`}
+            </h2>
+            {recorded && game && (
+              <div className="service-actions">
+                <button
+                  title="First position"
+                  aria-label="First position"
+                  disabled={!ply || gameBusy}
+                  onClick={() => {
+                    setPly(0);
+                    setFocus(null);
+                  }}
+                >
+                  ⏮
+                </button>
+                <div className="service-step-buttons">
+                  <button
+                    disabled={!ply || gameBusy}
+                    onClick={() => {
+                      setPly(ply - 1);
+                      setFocus(null);
+                    }}
+                  >
+                    Previous
+                  </button>
+                  <button
+                    disabled={ply >= lastPosition || gameBusy}
+                    onClick={() => {
+                      setPly(ply + 1);
+                      setFocus(null);
+                    }}
+                  >
+                    Next
+                  </button>
+                </div>
+                <button
+                  title="Last recorded position"
+                  aria-label="Last recorded position"
+                  disabled={ply >= lastPosition || gameBusy}
+                  onClick={() => {
+                    setPly(lastPosition);
+                    setFocus(null);
+                  }}
+                >
+                  ⏭
+                </button>
+              </div>
+            )}
+          </div>
+          <LoadingStatus pending={gameBusy}>Loading game…</LoadingStatus>
+          <div className="service-toolbar">
+            {recorded ? (
+              <Segments
+                label="Distribution"
+                disabled={atTerminal}
+                value={policyKind}
+                onChange={setPolicyKind}
+                options={[
+                  ["prior", "Network prior"],
+                  ["search", "Training policy"],
+                  ["sampling", "Move sampling"],
+                ]}
+              />
+            ) : (
+              <Segments
+                label="Board overlay"
+                value={overlay}
+                onChange={setOverlay}
+                options={[
+                  ["prior", "Network prior"],
+                  ["visits", "Search visits"],
+                  ["move", "Move probability"],
+                ]}
+              />
+            )}
+            {recorded && (entry || atTerminal) && (
+              <a
+                className="service-button"
+                href={`/analyze?game=gomoku19_five_v1&position=${encodePosition(viewCells)}`}
+              >
+                Explore this position
+              </a>
+            )}
+          </div>
+          <div className="service-position-layout">
+            <Board
+              position={boardPosition}
+              snapshot={currentSnapshot}
+              overlay={recorded ? "prior" : overlay}
+              showPolicy={!!currentSnapshot}
+              temperature={1}
+              focus={focus}
+              onFocusCell={setFocus}
+              canPlay={!recorded && analysis?.result.terminal == null}
+              onPlay={move}
+              policyLabel={
+                recorded
+                  ? policyKind === "prior"
+                    ? "Network prior"
+                    : policyKind === "search"
+                      ? "Training policy"
+                      : "Sampling probability"
+                  : undefined
+              }
+              hideMoveProbability={recorded && policyKind === "sampling"}
+              recordedSampling={
+                recorded
+                  ? diagnostics?.sampling_policy
+                    ? new Map(
+                        legal.map((m, i) => [
+                          cellKey(m),
+                          diagnostics.sampling_policy![i] || 0,
+                        ]),
+                      )
+                    : null
+                  : undefined
+              }
+            />
+            <aside className="service-move-rail">
+              {(entry || atTerminal || !recorded) && (
+                <>
+                  <div className="service-inference service-position-values">
+                    <div>
+                      <strong>{valueText(networkValue)}</strong>
+                      <small>Network value · {toMove}</small>
+                    </div>
+                    <div>
+                      <strong>{valueText(searchValue)}</strong>
+                      <small>Search value · {toMove}</small>
+                    </div>
+                    <div>
+                      <strong>
+                        {currentSnapshot?.total_visits.toLocaleString() ?? "—"}
+                      </strong>
+                      <small>Tree visits</small>
+                    </div>
+                    {!recorded && analysis && (
+                      <div>
+                        <strong>
+                          {Math.round(
+                            analysis.result.simulations_per_second,
+                          ).toLocaleString()}
+                        </strong>
+                        <small>
+                          Simulations/s ·{" "}
+                          {duration(analysis.result.elapsed_ms / 1000)}
+                        </small>
+                      </div>
+                    )}
+                  </div>
+                  {!recorded && (
+                    <progress
+                      className="service-progress"
+                      aria-label="Search progress"
+                      value={Math.max(
+                        0,
+                        (analysis?.result.searched_simulations ?? 0) -
+                          (analysis?.result.carried_visits ?? 0),
+                      )}
+                      max={Math.max(simulations, 1)}
+                    />
+                  )}
+                  {!recorded && analysis?.result.terminal != null && (
+                    <p role="status">
+                      {analysis.result.terminal === 0
+                        ? "Draw"
+                        : `${analysis.result.terminal > 0 ? toMove : toMove === "black" ? "white" : "black"} won`}
+                    </p>
+                  )}
+                </>
+              )}
+
+              {atTerminal && game && (
+                <p role="status">
+                  {game.record.terminal_value == null
+                    ? "Final recorded position · outcome unavailable"
+                    : game.record.terminal_value === 0
+                      ? "Draw"
+                      : `${(game.record.terminal_actor ? game.record.terminal_actor === "First" : toMove === "black") === game.record.terminal_value > 0 ? "Black" : "White"} won`}
+                </p>
+              )}
+              {atTerminal && (
+                <p className="service-runtime">
+                  Game over. No move probabilities or search statistics apply to
+                  this final position.
+                </p>
+              )}
+              {recorded && entry && !distribution && (
+                <p>This distribution was not recorded.</p>
+              )}
+              {stats && (
+                <details>
+                  <summary>Search depth and width</summary>
+                  <div className="service-table-scroll">
+                    <table className="service-depth-table">
+                      <thead>
+                        <tr>
+                          <th scope="col">Depth</th>
+                          <th scope="col">Expanded</th>
+                          <th scope="col">Allocated</th>
+                          <th scope="col">Leaves visited</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {Array.from(
+                          {
+                            length: Math.max(
+                              stats.expanded_by_depth.length,
+                              stats.allocated_by_depth.length,
+                              stats.simulation_leaf_depth.length,
+                            ),
+                          },
+                          (_, i) => (
+                            <tr key={i}>
+                              <td>{i}</td>
+                              <td>{stats.expanded_by_depth[i] || 0}</td>
+                              <td>{stats.allocated_by_depth[i] || 0}</td>
+                              <td>{stats.simulation_leaf_depth[i] || 0}</td>
+                            </tr>
+                          ),
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
+              )}
+            </aside>
+          </div>
+          {recorded && game && (
+            <p>
+              {atTerminal
+                ? "Final position"
+                : `Recorded action: ${
+                    entry?.action
+                      ? moveName({
+                          row: entry.action.x,
+                          column: entry.action.y,
+                        })
+                      : "Unavailable"
+                  }`}{" "}
+              · Policy: {game?.policy_semantics.replaceAll("_", " ")} ·{" "}
+              {game?.provenance}
+            </p>
+          )}
+          {!recorded && (
+            <div aria-busy={busy && !snapshots.length}>
+              <SearchChart
+                key={encodePosition(cells)}
+                snapshots={snapshots}
+                selectedIndex={snapshotIndex}
+                onSelectIndex={setSnapshotIndex}
+                focusCell={focus}
+                onFocusMove={setFocus}
+              />
+            </div>
+          )}
+        </section>
+        
         <aside className="service-panel">
           {recorded ? (
             <ReplayArchive
@@ -376,7 +641,7 @@ function GomokuExplorer({
                       }
                     />
                     <small>
-                      Applies to the next search; completed visits are retained.
+                      Counts new simulations; visits retained from the previous position stay on top.
                     </small>
                   </label>
                   <label className="service-checkbox">
@@ -452,340 +717,6 @@ function GomokuExplorer({
             </>
           )}
         </aside>
-        <section className="service-panel" aria-busy={gameBusy}>
-          <div className="service-toolbar">
-            <h2>
-              {recorded
-                ? game
-                  ? `Game ${gameName(game.game_id)} · ${atTerminal ? "Final position" : `Move ${ply + 1}`}`
-                  : "Select a game"
-                : `Move ${actualPly + 1} · ${toMove} to play`}
-            </h2>
-            {recorded && game && (
-              <div className="service-actions">
-                <button
-                  title="First position"
-                  aria-label="First position"
-                  disabled={!ply || gameBusy}
-                  onClick={() => {
-                    setPly(0);
-                    setSelected(null);
-                  }}
-                >
-                  ⏮
-                </button>
-                <div className="service-step-buttons">
-                  <button
-                    disabled={!ply || gameBusy}
-                    onClick={() => {
-                      setPly(ply - 1);
-                      setSelected(null);
-                    }}
-                  >
-                    Previous
-                  </button>
-                  <button
-                    disabled={ply >= lastPosition || gameBusy}
-                    onClick={() => {
-                      setPly(ply + 1);
-                      setSelected(null);
-                    }}
-                  >
-                    Next
-                  </button>
-                </div>
-                <button
-                  title="Last recorded position"
-                  aria-label="Last recorded position"
-                  disabled={ply >= lastPosition || gameBusy}
-                  onClick={() => {
-                    setPly(lastPosition);
-                    setSelected(null);
-                  }}
-                >
-                  ⏭
-                </button>
-              </div>
-            )}
-          </div>
-          <LoadingStatus pending={gameBusy}>Loading game…</LoadingStatus>
-          <div className="service-toolbar">
-            {recorded ? (
-              <Segments
-                label="Distribution"
-                disabled={atTerminal}
-                value={policyKind}
-                onChange={setPolicyKind}
-                options={[
-                  ["prior", "Network prior"],
-                  ["search", "Training policy"],
-                  ["sampling", "Move sampling"],
-                ]}
-              />
-            ) : (
-              <Segments
-                label="Board overlay"
-                value={overlay}
-                onChange={setOverlay}
-                options={[
-                  ["prior", "Network prior"],
-                  ["visits", "Search visits"],
-                  ["move", "Move probability"],
-                ]}
-              />
-            )}
-            {recorded && (entry || atTerminal) && (
-              <a
-                className="service-button"
-                href={`/analyze?game=gomoku19_five_v1&position=${encodePosition(viewCells)}`}
-              >
-                Explore this position
-              </a>
-            )}
-          </div>
-          <div className="service-position-layout">
-            <Board
-              position={boardPosition}
-              snapshot={currentSnapshot}
-              overlay={recorded ? "prior" : overlay}
-              showPolicy={!!currentSnapshot}
-              temperature={1}
-              selected={selected}
-              onNavigate={setSelected}
-              onSelect={(cell) => {
-                if (
-                  !recorded &&
-                  selected &&
-                  cellKey(cell) === cellKey(selected)
-                )
-                  move(cell);
-                else setSelected(cell);
-              }}
-              policyLabel={
-                recorded
-                  ? policyKind === "prior"
-                    ? "Network prior"
-                    : policyKind === "search"
-                      ? "Training policy"
-                      : "Sampling probability"
-                  : "Network policy"
-              }
-              recordedSampling={
-                recorded
-                  ? diagnostics?.sampling_policy
-                    ? new Map(
-                        legal.map((m, i) => [
-                          cellKey(m),
-                          diagnostics.sampling_policy![i] || 0,
-                        ]),
-                      )
-                    : null
-                  : undefined
-              }
-            />
-            <aside className="service-move-rail">
-              {(entry || atTerminal || !recorded) && (
-                <>
-                  <div className="service-inference service-position-values">
-                    <div>
-                      <strong>{valueText(networkValue)}</strong>
-                      <small>Network value · {toMove}</small>
-                    </div>
-                    <div>
-                      <strong>{valueText(searchValue)}</strong>
-                      <small>Search value · {toMove}</small>
-                    </div>
-                    <div>
-                      <strong>
-                        {currentSnapshot?.total_visits.toLocaleString() ?? "—"}
-                      </strong>
-                      <small>Tree visits</small>
-                    </div>
-                    {!recorded && analysis && (
-                      <div>
-                        <strong>
-                          {Math.round(
-                            analysis.result.simulations_per_second,
-                          ).toLocaleString()}
-                        </strong>
-                        <small>
-                          Simulations/s ·{" "}
-                          {duration(analysis.result.elapsed_ms / 1000)}
-                        </small>
-                      </div>
-                    )}
-                  </div>
-                  {!recorded && analysis && (
-                    <progress
-                      className="service-progress"
-                      aria-label="Search progress"
-                      value={analysis.result.searched_simulations}
-                      max={Math.max(
-                        simulations,
-                        analysis.result.searched_simulations,
-                      )}
-                    />
-                  )}
-                  {!recorded && analysis?.result.terminal != null && (
-                    <p role="status">
-                      {analysis.result.terminal === 0
-                        ? "Draw"
-                        : `${analysis.result.terminal > 0 ? toMove : toMove === "black" ? "white" : "black"} won`}
-                    </p>
-                  )}
-                </>
-              )}
-
-              {atTerminal && game && (
-                <p role="status">
-                  {game.record.terminal_value == null
-                    ? "Final recorded position · outcome unavailable"
-                    : game.record.terminal_value === 0
-                      ? "Draw"
-                      : `${(game.record.terminal_actor ? game.record.terminal_actor === "First" : toMove === "black") === game.record.terminal_value > 0 ? "Black" : "White"} won`}
-                </p>
-              )}
-              {atTerminal ? (
-                <p className="service-runtime">
-                  Game over. No move probabilities or search statistics apply to
-                  this final position.
-                </p>
-              ) : selected ? (
-                <div className="service-selected-move">
-                  <h3>{moveName(selected)}</h3>
-                  <dl>
-                    {recorded
-                      ? (
-                          [
-                            "Network prior",
-                            "Training policy",
-                            "Sampling probability",
-                          ] as const
-                        ).map((label, i) => {
-                          const index = legal.findIndex(
-                            (m) => cellKey(m) === cellKey(selected),
-                          );
-                          const v = [
-                            diagnostics?.network_prior,
-                            entry?.decision.training_policy,
-                            diagnostics?.sampling_policy,
-                          ][i]?.[index];
-                          return (
-                            <div key={label}>
-                              <dt>{label}</dt>
-                              <dd>
-                                {v == null
-                                  ? "Unavailable"
-                                  : `${(v * 100).toFixed(3)}%`}
-                              </dd>
-                            </div>
-                          );
-                        })
-                      : (() => {
-                          const m = currentSnapshot?.moves.find(
-                            (m) => cellKey(m) === cellKey(selected),
-                          );
-                          return (
-                            <>
-                              <div>
-                                <dt>Network prior</dt>
-                                <dd>
-                                  {m ? `${(m.prior * 100).toFixed(3)}%` : "—"}
-                                </dd>
-                              </div>
-                              <div>
-                                <dt>Visits</dt>
-                                <dd>{m?.visits ?? "—"}</dd>
-                              </div>
-                              <div>
-                                <dt>Action value Q</dt>
-                                <dd>{valueText(m?.mean_value)}</dd>
-                              </div>
-                            </>
-                          );
-                        })()}
-                  </dl>
-                  {!recorded && (
-                    <button onClick={() => move(selected)}>
-                      Play {moveName(selected)}
-                    </button>
-                  )}
-                </div>
-              ) : (
-                <p className="service-runtime">
-                  Select a move to inspect its statistics.
-                </p>
-              )}
-              {recorded && entry && !distribution && (
-                <p>This distribution was not recorded.</p>
-              )}
-              {stats && (
-                <details>
-                  <summary>Search depth and width</summary>
-                  <div className="service-table-scroll">
-                    <table className="service-depth-table">
-                      <thead>
-                        <tr>
-                          <th scope="col">Depth</th>
-                          <th scope="col">Expanded</th>
-                          <th scope="col">Allocated</th>
-                          <th scope="col">Leaves visited</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {Array.from(
-                          {
-                            length: Math.max(
-                              stats.expanded_by_depth.length,
-                              stats.allocated_by_depth.length,
-                              stats.simulation_leaf_depth.length,
-                            ),
-                          },
-                          (_, i) => (
-                            <tr key={i}>
-                              <td>{i}</td>
-                              <td>{stats.expanded_by_depth[i] || 0}</td>
-                              <td>{stats.allocated_by_depth[i] || 0}</td>
-                              <td>{stats.simulation_leaf_depth[i] || 0}</td>
-                            </tr>
-                          ),
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </details>
-              )}
-            </aside>
-          </div>
-          {recorded && game && (
-            <p>
-              {atTerminal
-                ? "Final position"
-                : `Recorded action: ${
-                    entry?.action
-                      ? moveName({
-                          row: entry.action.x,
-                          column: entry.action.y,
-                        })
-                      : "Unavailable"
-                  }`}{" "}
-              · Policy: {game?.policy_semantics.replaceAll("_", " ")} ·{" "}
-              {game?.provenance}
-            </p>
-          )}
-          {!recorded && (
-            <div aria-busy={busy && !snapshots.length}>
-              <SearchChart
-                key={encodePosition(cells)}
-                snapshots={snapshots}
-                selectedIndex={snapshotIndex}
-                onSelectIndex={setSnapshotIndex}
-                selectedCell={selected}
-                onSelectMove={setSelected}
-              />
-            </div>
-          )}
-        </section>
       </div>
       {activationTensors.length > 0 && (
         <ActivationViewer

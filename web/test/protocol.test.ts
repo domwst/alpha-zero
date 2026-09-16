@@ -90,18 +90,22 @@ function position(
   };
 }
 
-test('undo on the network turn takes back only the human move', () => {
-  const target = undoMoves(position('black', 'white', [[9, 9], [9, 10], [9, 11]]));
-  assert.deepEqual(target, [{ row: 9, column: 9 }, { row: 9, column: 10 }]);
+test('undo takes back exactly one move on either turn', () => {
+  const networkTurn = undoMoves(position('black', 'white', [[9, 9], [9, 10], [9, 11]]));
+  assert.deepEqual(networkTurn, [{ row: 9, column: 9 }, { row: 9, column: 10 }]);
+  const humanTurn = undoMoves(position('black', 'black', [[9, 9], [9, 10], [9, 11], [9, 12]]));
+  assert.deepEqual(humanTurn, [
+    { row: 9, column: 9 },
+    { row: 9, column: 10 },
+    { row: 9, column: 11 },
+  ]);
 });
 
-test('undo on the human turn takes back the network reply too', () => {
-  const target = undoMoves(position('black', 'black', [[9, 9], [9, 10], [9, 11], [9, 12]]));
-  assert.deepEqual(target, [{ row: 9, column: 9 }, { row: 9, column: 10 }]);
+test('undoing the opening network move restores an empty board', () => {
+  assert.deepEqual(undoMoves(position('white', 'white', [[9, 9]])), []);
 });
 
-test('undo reports nothing when the human has not moved yet', () => {
+test('undo reports nothing when the board is empty or position missing', () => {
   assert.equal(undoMoves(position('black', 'black', [])), null);
-  assert.equal(undoMoves(position('white', 'white', [[9, 9]])), null);
   assert.equal(undoMoves(null), null);
 });

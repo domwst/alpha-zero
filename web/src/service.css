@@ -76,6 +76,11 @@
   gap: 24px;
   align-items: start;
 }
+/* The board panel leads the DOM for tab order; the aside stays in the left
+   column on wide screens and follows the board on narrow ones. */
+.service-game-layout > aside {
+  order: -1;
+}
 .service-actions,
 .service-toolbar,
 .service-pagination {
@@ -330,6 +335,9 @@
   .service-game-layout {
     grid-template-columns: 1fr;
   }
+  .service-game-layout > aside {
+    order: 0;
+  }
   .service-game-list {
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   }
@@ -557,9 +565,6 @@
 .service-main .service-segments button + button {
   margin-inline-start: -1px;
 }
-.service-selected-move {
-  margin-block: 16px;
-}
 .service-activation {
   max-height: none;
 }
@@ -646,17 +651,6 @@
 .service-move-rail {
   min-width: 0;
 }
-.service-selected-move {
-  margin-block: 8px;
-}
-.service-selected-move h3 {
-  margin: 0 0 12px;
-}
-.service-main .service-selected-move dl > div {
-  display: grid;
-  gap: 4px;
-  font-size: 12px;
-}
 .service-position-values {
   margin-block: 8px;
 }
@@ -673,11 +667,6 @@
   }
   .service-main .service-position-layout .board-with-labels {
     max-width: 560px;
-  }
-  .service-selected-move dl {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 12px;
   }
 }
 

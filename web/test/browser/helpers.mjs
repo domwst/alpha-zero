@@ -14,7 +14,7 @@ export const gate = () => {
     release: () => release(),
   };
 };
-export async function fixture(t, engine) {
+export async function fixture(t, engine, { service = true, hasTouch = false } = {}) {
   const root = fileURLToPath(new URL("../../dist/", import.meta.url));
   const server = createServer(async (req, res) => {
     try {
@@ -26,7 +26,7 @@ export async function fixture(t, engine) {
       if (!file.startsWith(root.endsWith(sep) ? root : root + sep))
         throw new Error("Invalid asset");
       let content = await readFile(file);
-      if (extname(file) === ".html")
+      if (service && extname(file) === ".html")
         content = Buffer.from(
           content
             .toString()
@@ -58,6 +58,7 @@ export async function fixture(t, engine) {
   t.after(() => browser.close());
   const page = await browser.newPage({
     viewport: { width: 1440, height: 1000 },
+    hasTouch,
   });
   page.setDefaultTimeout(8000);
   const errors = [];

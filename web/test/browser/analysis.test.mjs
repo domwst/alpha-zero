@@ -65,7 +65,7 @@ for (const engine of engines)
       .waitFor();
     const nextResponse = page.waitForResponse("**/api/v1/analyze/stream");
     const cell = page.locator('.board-cell[data-row="0"][data-col="0"]');
-    await cell.click();
+    // A single click places the move immediately; no arm-and-commit state.
     await cell.click();
     await page.getByRole("heading", { name: /Move 2/ }).waitFor();
     await nextResponse;

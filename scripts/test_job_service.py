@@ -920,7 +920,7 @@ for line in sys.stdin:
  assert 'request_id' not in body
  carried=completed
  time.sleep(.02)
- completed=max(completed,body['simulations'])
+ completed=carried+body['simulations']
  print(json.dumps({'checkpoint':{'model_sha256':'fixture'},'result':{'complete':True,'pid':os.getpid(),'searched_simulations':completed,'carried_visits':carried}}),flush=True)
 """)
             binary.chmod(0o755)
@@ -990,7 +990,7 @@ completed=990
 for line in sys.stdin:
  body=json.loads(line)
  carried=completed
- completed=max(completed,body['simulations'])
+ completed=carried+body['simulations']
  activations=[{'name':body['layers'][0],'values':[1]}] if body['inspect'] else []
  print(json.dumps({'checkpoint':{'model_sha256':'fixture'},'result':{'complete':True,'searched_simulations':completed,'carried_visits':carried,'activations':activations}}),flush=True)
 """)
@@ -1012,7 +1012,9 @@ for line in sys.stdin:
                 self.assertEqual(initial["searched_simulations"], 990)
                 self.assertEqual(initial["carried_visits"], 990)
                 self.assertEqual(initial["activations"][0]["name"], "chosen-layer")
-                self.assertEqual(result["result"]["searched_simulations"], 20000)
+                # 20000 new simulations on top of the 990 retained visits.
+                self.assertEqual(result["result"]["searched_simulations"], 20990)
+                self.assertEqual(result["result"]["target_simulations"], 20990)
                 self.assertTrue(result["result"]["complete"])
                 self.assertEqual(
                     result["result"]["activations"], initial["activations"]

@@ -101,7 +101,7 @@ export function App(): JSX.Element {
   const status = useSignal<SearchStatusMessage | null>(null);
   const snapshots = useSignal<SearchSnapshotMessage[]>([]);
   const inspectedSimulations = useSignal<number | null>(null);
-  const selected = useSignal<Cell | null>(null);
+  const focus = useSignal<Cell | null>(null);
   const overlay = useSignal<Overlay>('visits');
   const policyVisibility = useSignal<PolicyVisibility>('network_turn');
   const temperature = useSignal(0.5);
@@ -179,7 +179,7 @@ export function App(): JSX.Element {
         status.value = null;
         snapshots.value = [];
         inspectedSimulations.value = null;
-        selected.value = null;
+        focus.value = null;
         playInFlight.value = null;
         requestedBudget.value = 0;
         error.value = null;
@@ -213,6 +213,7 @@ export function App(): JSX.Element {
           analysis_id: message.analysis_id,
           searched_simulations: message.searched_simulations,
           target_simulations: message.target_simulations,
+          carried_visits: message.carried_visits,
           running: !message.complete,
         };
         const previous = snapshots.value;
@@ -275,21 +276,14 @@ export function App(): JSX.Element {
   }, [connectionGeneration]);
 
   useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.defaultPrevented) return;
-      if (selected.value) selected.value = null;
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
-
-  useEffect(() => {
     const simulations = budget.value;
     const timer = window.setTimeout(() => {
       const pos = position.value;
       const live = status.value;
       if (!pos || pos.outcome !== null || live?.position_id !== pos.position_id) return;
-      if (!live.running || live.target_simulations === simulations) return;
+      if (!live.running || live.target_simulations - live.carried_visits === simulations) {
+        return;
+      }
       requestedBudget.value = simulations;
       send({ type: 'start_search', position_id: pos.position_id, simulations });
     }, RETARGET_DELAY_MS);
@@ -352,11 +346,19 @@ export function App(): JSX.Element {
   const topMoves = [...(displaySnapshot?.moves ?? [])]
     .sort((left, right) => right.visits - left.visits)
     .slice(0, 5);
-  const selectedMove = selected.value
-    ? displaySnapshot?.moves.find((move) => cellKey(move) === cellKey(selected.value!)) ?? null
-    : null;
-  const progress = currentStatus?.searched_simulations ?? liveSnapshot?.searched_simulations ?? 0;
-  const target = currentStatus?.target_simulations ?? requestedBudget.value;
+  const carriedVisits =
+    currentStatus?.carried_visits ?? liveSnapshot?.carried_visits ?? 0;
+  const progress = Math.max(
+    0,
+    (currentStatus?.searched_simulations
+      ?? liveSnapshot?.searched_simulations
+      ?? 0) - carriedVisits,
+  );
+  const target = Math.max(
+    0,
+    (currentStatus?.target_simulations
+      ?? requestedBudget.value + carriedVisits) - carriedVisits,
+  );
   const remaining = Math.max(0, target - progress);
   const simsPerSecond = liveSnapshot?.simulations_per_second ?? 0;
   const etaSeconds =
@@ -382,11 +384,6 @@ export function App(): JSX.Element {
       : isHumanTurn
         ? 'Your turn'
         : 'Network turn';
-  const canPlaySelected = Boolean(
-    currentPosition
-    && currentPosition.outcome === null
-    && selected.value,
-  );
   const undoTarget = undoMoves(currentPosition);
   const documentTitle = currentPosition
     ? `${turnLabel} — AlphaZero Playground`
@@ -453,18 +450,6 @@ export function App(): JSX.Element {
     }
   };
 
-  const selectOrPlayCell = (cell: Cell) => {
-    if (selected.value && cellKey(selected.value) === cellKey(cell)) {
-      playCell(cell);
-    } else {
-      selected.value = cell;
-    }
-  };
-
-  const playSelected = () => {
-    if (selected.value) playCell(selected.value);
-  };
-
   const letNetworkChoose = () => {
     if (!currentPosition || currentPosition.outcome !== null || isHumanTurn || !liveSnapshot) return;
     if (running) {
@@ -517,8 +502,18 @@ export function App(): JSX.Element {
               : titleCase(connection.value)}
           </span>
           {hello.value && (
-            <span className="checkpoint">
-              {hello.value.checkpoint.architecture} · epoch {hello.value.checkpoint.epoch}
+            <span
+              className="checkpoint"
+              title={`${hello.value.checkpoint.architecture} · epoch ${hello.value.checkpoint.epoch} · ${hello.value.checkpoint.model_digest}`}
+            >
+              <span className="checkpoint-name">
+                <span className="checkpoint-architecture">
+                  {hello.value.checkpoint.architecture}
+                </span>
+                <span className="checkpoint-epoch">
+                  epoch {hello.value.checkpoint.epoch}
+                </span>
+              </span>
               <small>{hello.value.checkpoint.model_digest}</small>
             </span>
           )}
@@ -557,7 +552,7 @@ export function App(): JSX.Element {
               disabled={connection.value !== 'connected'}
               onClick={() => {
                 if (send({ type: 'new_game', human_color: newHumanColor.value })) {
-                  selected.value = null;
+                  focus.value = null;
                   lastJudgment.value = null;
                 }
               }}
@@ -592,48 +587,54 @@ export function App(): JSX.Element {
                 </span>
                 <h2 id="board-title">{turnLabel}</h2>
               </div>
-              <p>Move {(currentPosition?.ply ?? 0) + 1}{selected.value ? ` · ${moveName(selected.value)} selected` : ''}</p>
+              <p>
+                Move {(currentPosition?.ply ?? 0) + 1}
+                {currentPosition?.outcome === null && currentPosition.ply === 0
+                  ? isHumanTurn
+                    ? " · Click an empty intersection to play"
+                    : " · Let it choose, or click an intersection to play a manual move"
+                  : ""}
+              </p>
             </div>
             <div className="search-readout">
               <span className={running ? 'pulse-dot' : 'status-dot'} aria-hidden="true" />
               <strong>{progress.toLocaleString()}</strong>
               <span>/ {target.toLocaleString()} simulations</span>
-              {liveSnapshot && <small>{Math.round(liveSnapshot.simulations_per_second).toLocaleString()} sims/s</small>}
-              {etaSeconds !== null && <small>~{formatEta(etaSeconds)} left</small>}
+              <small>{liveSnapshot ? `${Math.round(liveSnapshot.simulations_per_second).toLocaleString()} sims/s` : "\u00a0"}</small>
+              <small>
+                {etaSeconds !== null
+                  ? `~${formatEta(etaSeconds)} left`
+                  : target > 0 && progress >= target
+                    ? "Complete"
+                    : target > 0
+                      ? "Paused"
+                      : "\u00a0"}
+              </small>
             </div>
           </div>
-          {currentPosition && currentPosition.outcome === null && target > 0 && (
+          {currentPosition && currentPosition.outcome === null && (
             <div
               aria-label="Search progress"
-              aria-valuemax={target}
+              aria-valuemax={Math.max(target, 1)}
               aria-valuemin={0}
-              aria-valuenow={Math.min(progress, target)}
-              className={`search-progress${!running && progress >= target ? ' is-complete' : ''}`}
+              aria-valuenow={Math.min(progress, Math.max(target, 1))}
+              className={`search-progress${!running && target > 0 && progress >= target ? ' is-complete' : ''}`}
               role="progressbar"
             >
-              <span style={{ inlineSize: `${Math.min(100, (progress / target) * 100)}%` }} />
-            </div>
-          )}
-          {currentPosition && currentPosition.outcome === null && currentPosition.ply === 0 && (
-            <div className={`turn-guidance ${isHumanTurn ? 'turn-guidance-human' : 'turn-guidance-network'}`}>
-              <strong>{isHumanTurn ? `You are ${turnColor}.` : `The network is ${turnColor}.`}</strong>
-              <span>
-                {isHumanTurn
-                  ? ' Select an empty cell, then click the selected cell again to play.'
-                  : ` Let it choose after search, or select and click again to make a manual ${turnColor} move.`}
-              </span>
+              <span style={{ inlineSize: `${target > 0 ? Math.min(100, (progress / target) * 100) : 0}%` }} />
             </div>
           )}
           <div className="board-frame">
             {currentPosition ? (
               <Board
-                onNavigate={(cell) => {
-                  selected.value = cell;
+                canPlay={currentPosition.outcome === null}
+                focus={focus.value}
+                onFocusCell={(cell) => {
+                  focus.value = cell;
                 }}
-                onSelect={selectOrPlayCell}
+                onPlay={playCell}
                 overlay={overlay.value}
                 position={currentPosition}
-                selected={selected.value}
                 showPolicy={showMoveGuidance}
                 snapshot={displaySnapshot}
                 temperature={temperature.value}
@@ -662,6 +663,31 @@ export function App(): JSX.Element {
               )}
             </div>
           )}
+          {currentPosition && (
+            <div className="action-row board-actions">
+              <button
+                className={`button${!isHumanTurn ? ' button-primary' : ''}`}
+                disabled={
+                  currentPosition.outcome !== null
+                  || Boolean(isHumanTurn)
+                  || !liveSnapshot
+                  || liveSnapshot.target_simulations === 0
+                }
+                onClick={letNetworkChoose}
+                type="button"
+              >
+                Let network choose
+              </button>
+              <button
+                className="button"
+                disabled={!undoTarget}
+                onClick={undoLastMove}
+                type="button"
+              >
+                Undo move
+              </button>
+            </div>
+          )}
           </section>
 
           {showMoveGuidance && (
@@ -677,12 +703,12 @@ export function App(): JSX.Element {
                   inspectedSimulations.value =
                     index === null ? null : (allSnapshots[index]?.searched_simulations ?? null);
                 }}
-                onSelectMove={(cell) => {
-                  selected.value =
-                    selected.value && cellKey(selected.value) === cellKey(cell) ? null : cell;
+                onFocusMove={(cell) => {
+                  focus.value =
+                    focus.value && cellKey(focus.value) === cellKey(cell) ? null : cell;
                 }}
                 selectedIndex={inspectedIndex}
-                selectedCell={selected.value}
+                focusCell={focus.value}
                 snapshots={allSnapshots}
               />
             </section>
@@ -860,15 +886,12 @@ export function App(): JSX.Element {
                         const key = cellKey(move);
                         const color = dotColorFor(key);
                         return (
-                          <tr
-                            className={selected.value && key === cellKey(selected.value) ? 'selected-row' : ''}
-                            key={key}
-                          >
+                          <tr key={key}>
                             <td>
                               <button
-                                aria-pressed={selected.value != null && key === cellKey(selected.value)}
                                 className="table-move-button"
-                                onClick={() => { selected.value = { row: move.row, column: move.column }; }}
+                                onClick={() => playCell({ row: move.row, column: move.column })}
+                                title="Play this move"
                                 type="button"
                               >
                                 <i
@@ -886,48 +909,12 @@ export function App(): JSX.Element {
                     </tbody>
                   </table>
                 </div>
-                {selectedMove && displaySnapshot && (
-                  <div className="selected-summary">
-                    <span><b>{moveName(selectedMove)}</b> has {selectedMove.visits.toLocaleString()} visits</span>
-                    <span>Q {signed(selectedMove.mean_value, 3)}</span>
-                  </div>
-                )}
               </>
             ) : (
               <div className="move-guidance-hidden">
                 <b>Move guidance hidden</b>
               </div>
             )}
-            <div className="action-row">
-              <button
-                className={`button${isHumanTurn ? ' button-primary' : ''}`}
-                disabled={!canPlaySelected}
-                onClick={playSelected}
-                type="button"
-              >
-                {selected.value
-                  ? isHumanTurn
-                    ? `Play ${moveName(selected.value)}`
-                    : `Play ${moveName(selected.value)} manually as ${turnColor}`
-                  : 'Select a move'}
-              </button>
-              <button
-                className={`button${!isHumanTurn ? ' button-primary' : ''}`}
-                disabled={Boolean(isHumanTurn) || !liveSnapshot || liveSnapshot.target_simulations === 0}
-                onClick={letNetworkChoose}
-                type="button"
-              >
-                Let network choose
-              </button>
-              <button
-                className="button"
-                disabled={!undoTarget}
-                onClick={undoLastMove}
-                type="button"
-              >
-                Undo move
-              </button>
-            </div>
           </section>
 
           <section className="inspector-section judgment-section">
@@ -997,7 +984,14 @@ export function App(): JSX.Element {
           >
             ›
           </button>
-          <output>{(displaySnapshot?.searched_simulations ?? 0).toLocaleString()} sims</output>
+          <output>
+            {Math.max(
+              0,
+              (displaySnapshot?.searched_simulations ?? 0) -
+                (displaySnapshot?.carried_visits ?? 0),
+            ).toLocaleString()}{' '}
+            sims
+          </output>
           <button
             className="text-button"
             disabled={inspectedIndex === null}

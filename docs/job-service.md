@@ -155,7 +155,9 @@ additional simulations, preserving the native worker and its tree. The board can
 change immediately while the next search waits for cancellation; stale snapshots
 cannot overwrite the new position.
 The analysis executable can be upgraded separately with `--analysis-binary`.
-It has a 20,000-simulation cap, a 15-minute request timeout, output limits,
+A request's simulation budget counts new simulations; visits retained from
+the previous position's tree are carried on top of it. It has a
+20,000-simulation cap, a 15-minute request timeout, output limits,
 and a separate memory reservation subtracted from scheduler capacity. GPU analysis
 also requires `--analysis-gpu-memory-mb`. Activation capture runs only on this
 inspection path, not normal self-play/training. The UI fetches one selected layer's

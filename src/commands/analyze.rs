@@ -119,11 +119,16 @@ async fn analyze<'a>(
     });
     let started = Instant::now();
     let carried = search.completed;
-    let target = if terminal.is_some() {
-        1
+    // The requested budget counts NEW simulations; visits retained from the
+    // previous position's tree are carried on top of it. A tree that has never
+    // been expanded still needs one evaluation for its root.
+    let expanded = search.tree.root_snapshot().is_some();
+    let budget = if terminal.is_some() {
+        if expanded { 0 } else { 1 }
     } else {
-        request.simulations.max(1)
+        request.simulations.max(if expanded { 0 } else { 1 })
     };
+    let target = carried + budget;
     let mut updated = Instant::now();
     let response = |search: &Search<'_>, complete: bool, activations: serde_json::Value| {
         let root = search.tree.root_snapshot().unwrap();
@@ -298,8 +303,9 @@ mod tests {
         let repeated = analyze(request(), &net, Device::Cpu, 4, &mut cache, |_| Ok(()))
             .await
             .unwrap();
-        assert_eq!(result["moves"], repeated["moves"]);
+        // The repeated request budgets 2 new simulations on top of the 2 retained.
         assert_eq!(repeated["carried_visits"], 2);
+        assert_eq!(repeated["searched_simulations"], 4);
         let mut larger = request();
         larger.simulations = 4;
         larger.stream = true;
@@ -310,8 +316,8 @@ mod tests {
         })
         .await
         .unwrap();
-        assert_eq!(extended["searched_simulations"], 4);
-        assert_eq!(extended["carried_visits"], 2);
+        assert_eq!(extended["searched_simulations"], 8);
+        assert_eq!(extended["carried_visits"], 4);
         assert_eq!(result["moves"].as_array().unwrap().len(), 361);
         assert!(
             result["activations"]

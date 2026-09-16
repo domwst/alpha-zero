@@ -8,6 +8,14 @@ import {
 } from "./gameViewModel";
 import type { SearchSnapshotMessage } from "./protocol";
 
+/** New simulations run at this position: the target counts these, not carried visits. */
+function newSimulations(result: {
+  searched_simulations: number;
+  carried_visits?: number;
+}): number {
+  return Math.max(0, result.searched_simulations - (result.carried_visits ?? 0));
+}
+
 export function usePositionAnalysis(
   cells: number[],
   recorded: boolean,
@@ -79,7 +87,7 @@ export function usePositionAnalysis(
     }
     if (
       analysis?.result.complete &&
-      analysis.result.searched_simulations >= simulations &&
+      newSimulations(analysis.result) >= simulations &&
       (!inspect || analysis.result.activations.length)
     )
       return;
@@ -219,7 +227,7 @@ export function usePositionAnalysis(
   ]);
   const targetReached =
     !!analysis?.result.complete &&
-    analysis.result.searched_simulations >= simulations &&
+    newSimulations(analysis.result) >= simulations &&
     (!inspect || analysis.result.activations.length > 0);
   function resetAnalysis() {
     stopSearch();

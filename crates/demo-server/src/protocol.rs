@@ -102,6 +102,7 @@ pub enum ServerMessage {
         analysis_id: u64,
         searched_simulations: u32,
         target_simulations: u32,
+        carried_visits: u32,
         running: bool,
     },
     SearchSnapshot {
@@ -160,6 +161,7 @@ mod tests {
             analysis_id: 3,
             searched_simulations: 512,
             target_simulations: 2_000,
+            carried_visits: 250,
             running: true,
         };
         assert_eq!(
@@ -170,6 +172,7 @@ mod tests {
                 "analysis_id": 3,
                 "searched_simulations": 512,
                 "target_simulations": 2_000,
+                "carried_visits": 250,
                 "running": true,
             })
         );
