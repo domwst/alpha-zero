@@ -632,6 +632,33 @@ export function App(): JSX.Element {
                 onFocusCell={(cell) => {
                   focus.value = cell;
                 }}
+                footer={
+                  currentPosition ? (
+                    <div className="action-row">
+                      <button
+                        className={`button${!isHumanTurn ? ' button-primary' : ''}`}
+                        disabled={
+                          currentPosition.outcome !== null
+                          || Boolean(isHumanTurn)
+                          || !liveSnapshot
+                          || liveSnapshot.target_simulations === 0
+                        }
+                        onClick={letNetworkChoose}
+                        type="button"
+                      >
+                        Let network choose
+                      </button>
+                      <button
+                        className="button"
+                        disabled={!undoTarget}
+                        onClick={undoLastMove}
+                        type="button"
+                      >
+                        Undo move
+                      </button>
+                    </div>
+                  ) : null
+                }
                 onPlay={playCell}
                 overlay={overlay.value}
                 position={currentPosition}
@@ -661,31 +688,6 @@ export function App(): JSX.Element {
               ) : (
                 <span className="legend-note">Move guidance is hidden by your settings.</span>
               )}
-            </div>
-          )}
-          {currentPosition && (
-            <div className="action-row board-actions">
-              <button
-                className={`button${!isHumanTurn ? ' button-primary' : ''}`}
-                disabled={
-                  currentPosition.outcome !== null
-                  || Boolean(isHumanTurn)
-                  || !liveSnapshot
-                  || liveSnapshot.target_simulations === 0
-                }
-                onClick={letNetworkChoose}
-                type="button"
-              >
-                Let network choose
-              </button>
-              <button
-                className="button"
-                disabled={!undoTarget}
-                onClick={undoLastMove}
-                type="button"
-              >
-                Undo move
-              </button>
             </div>
           )}
           </section>

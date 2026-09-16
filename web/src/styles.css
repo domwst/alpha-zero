@@ -706,12 +706,6 @@ h2 {
   padding: 1px;
 }
 
-/* Game actions align with the board they act on. */
-.board-actions {
-  inline-size: 100%;
-  max-inline-size: min(56vh, 42.5rem);
-  margin-inline: auto;
-}
 
 .board-skeleton {
   position: relative;
@@ -770,7 +764,13 @@ h2 {
 .board-with-labels {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+/* Shares the label grid's cells column: alignment is structural, not measured. */
+.board-footer {
+  grid-area: 3 / 2;
+  min-inline-size: 0;
 }
 
 .board-labels {

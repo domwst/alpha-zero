@@ -35,6 +35,8 @@ interface BoardProps {
   recordedSampling?: Map<string, number> | null;
   /** Hides the move-probability row when the emphasized prior row already shows it. */
   hideMoveProbability?: boolean;
+  /** Extra controls placed under the board, aligned with the cells column. */
+  footer?: ComponentChildren;
 }
 
 const ARROW_DELTAS: Record<string, [number, number]> = {
@@ -84,6 +86,7 @@ export function Board({
   policyLabel,
   recordedSampling,
   hideMoveProbability = false,
+  footer,
 }: BoardProps): JSX.Element {
   const gridRef = useRef<HTMLDivElement | null>(null);
   const gesture = useRef<{
@@ -459,6 +462,7 @@ export function Board({
           {rows}
         </div>
       </div>
+      {footer != null && <div className="board-footer">{footer}</div>}
     </div>
   );
 }
