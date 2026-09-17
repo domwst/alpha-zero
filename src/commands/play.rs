@@ -57,7 +57,7 @@ impl Agent<BoardState> for HumanAgent {
     }
 }
 
-pub async fn run_human(args: HumanArgs) -> Result<()> {
+pub async fn run_human(args: HumanArgs, batch_grid: &[usize]) -> Result<()> {
     ensure!(
         args.simulations > 0,
         "simulations must be greater than zero"
@@ -71,13 +71,14 @@ pub async fn run_human(args: HumanArgs) -> Result<()> {
     let device = resolve_device(&args.model.device)?;
     let (var_store, network, _) =
         load_network(&args.model.checkpoint_dir, args.model.architecture, device)?;
-    let executor = ExecutorScope::<(), _>::new(
+    let executor = ExecutorScope::new(
         network,
         1,
         1,
         Duration::from_millis(1),
         (Kind::Float, var_store.device()),
-    );
+        batch_grid,
+    )?;
     let evaluator =
         NetworkPositionEvaluator::<GomokuModel, GomokuCodec>::new(executor.evaluator_handle());
     let start = BoardState::new();
@@ -117,19 +118,20 @@ pub async fn run_human(args: HumanArgs) -> Result<()> {
     Ok(())
 }
 
-pub async fn run_policy(args: PolicyArgs) -> Result<()> {
+pub async fn run_policy(args: PolicyArgs, batch_grid: &[usize]) -> Result<()> {
     validate_temperature(args.temperature)?;
 
     let device = resolve_device(&args.model.device)?;
     let (var_store, network, _) =
         load_network(&args.model.checkpoint_dir, args.model.architecture, device)?;
-    let executor = ExecutorScope::<(), _>::new(
+    let executor = ExecutorScope::new(
         network,
         1,
         1,
         Duration::from_millis(1),
         (Kind::Float, var_store.device()),
-    );
+        batch_grid,
+    )?;
     let evaluator =
         NetworkPositionEvaluator::<GomokuModel, GomokuCodec>::new(executor.evaluator_handle());
     let agent = PolicyAgent::<BoardState, _, _, _>::new(

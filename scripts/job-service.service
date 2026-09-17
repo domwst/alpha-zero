@@ -1,0 +1,19 @@
+# Example user service for the compute host. Customize path, binary and budgets.
+# Do not install alongside a legacy supervisor that owns the same run.
+[Unit]
+Description=AlphaZero job execution and analysis service
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/misc/alpha-zero
+ExecStart=%h/misc/alpha-zero/run.sh python -m scripts.job_service.server --root runs/job-service --binary target/release/alz --listen 127.0.0.1 --port 8766 --slots 1 --host-memory-mb 16384 --gpu-memory-mb 0
+Restart=on-failure
+RestartSec=5
+# Detached attempt owners must survive gateway restarts. Pause jobs via the API
+# and wait for receipts before a complete worker shutdown.
+KillMode=process
+TimeoutStopSec=10
+
+[Install]
+WantedBy=default.target

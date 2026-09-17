@@ -11,3 +11,6 @@ pub use kata_nn::*;
 pub use model::*;
 pub use res_nn::*;
 pub use visualize::*;
+
+mod analysis_adapter;
+pub use analysis_adapter::*;

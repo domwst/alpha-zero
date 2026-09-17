@@ -1,0 +1,76 @@
+name: alz-dashboard
+
+services:
+  dashboard:
+    image: alz-dashboard-tunnel:local
+    build:
+      context: .
+      args:
+        DASHBOARD_UID: ${DASHBOARD_UID:-1000}
+        DASHBOARD_GID: ${DASHBOARD_GID:-1000}
+    # Linux host networking lets SSH bind directly to host loopback. No public
+    # port mapping is needed; the existing HTTPS reverse proxy keeps its target.
+    network_mode: host
+    user: "${DASHBOARD_UID:-1000}:${DASHBOARD_GID:-1000}"
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 32
+    mem_limit: 64m
+    volumes:
+      - type: bind
+        source: ${DASHBOARD_SSH_KEY:?Set the absolute SSH key path in .env}
+        target: /run/ssh/identity
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${DASHBOARD_KNOWN_HOSTS:?Set the absolute known_hosts path in .env}
+        target: /run/ssh/known_hosts
+        read_only: true
+        bind:
+          create_host_path: false
+    command:
+      - -NT
+      - -F
+      - /dev/null
+      - -i
+      - /run/ssh/identity
+      - -o
+      - IdentityAgent=none
+      - -o
+      - IdentitiesOnly=yes
+      - -o
+      - BatchMode=yes
+      - -o
+      - StrictHostKeyChecking=yes
+      - -o
+      - UpdateHostKeys=no
+      - -o
+      - UserKnownHostsFile=/run/ssh/known_hosts
+      - -o
+      - ExitOnForwardFailure=yes
+      - -o
+      - ConnectTimeout=15
+      - -o
+      - ServerAliveInterval=15
+      - -o
+      - ServerAliveCountMax=3
+      - -p
+      - ${DASHBOARD_SSH_PORT:-22}
+      - -L
+      - 127.0.0.1:${DASHBOARD_LOCAL_PORT:-8765}:127.0.0.1:${DASHBOARD_REMOTE_PORT:-8766}
+      - ${DASHBOARD_SSH_USER:-root}@${DASHBOARD_SSH_HOST:?Set the pod SSH host in .env}
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, --max-time, "5", "http://127.0.0.1:${DASHBOARD_LOCAL_PORT:-8765}/api/v1/session"]
+      interval: 30s
+      timeout: 6s
+      start_period: 15s
+      retries: 3
+    logging:
+      driver: local
+      options:
+        max-size: 5m
+        max-file: "3"

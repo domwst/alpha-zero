@@ -514,8 +514,9 @@ where
         ServerMessage::SearchStatus {
             position_id: self.position_id,
             analysis_id: self.analysis_id,
-            searched_simulations: self.searched_simulations(),
-            target_simulations: self.target_simulations,
+            searched_simulations: self.current_total_visits(),
+            target_simulations: self.carried_visits + self.target_simulations,
+            carried_visits: self.carried_visits,
             running: self.should_search(),
         }
     }
@@ -544,10 +545,10 @@ where
         Some(ServerMessage::SearchSnapshot {
             position_id: self.position_id,
             analysis_id: self.analysis_id,
-            searched_simulations: searched,
+            searched_simulations: searched + self.carried_visits,
             carried_visits: self.carried_visits,
             total_visits,
-            target_simulations: self.target_simulations,
+            target_simulations: self.carried_visits + self.target_simulations,
             elapsed_ms: self.search_elapsed.as_millis().min(u64::MAX as u128) as u64,
             simulations_per_second: if elapsed_seconds > 0.0 {
                 searched as f64 / elapsed_seconds
@@ -578,7 +579,7 @@ mod tests {
 
     impl PositionEvaluator<BoardState> for UniformEvaluator {
         async fn evaluate<'a>(
-            &'a self,
+            &'a mut self,
             _state: &'a BoardState,
             moves: &'a [GomokuMove],
         ) -> anyhow::Result<PositionEvaluation> {

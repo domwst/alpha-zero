@@ -1,0 +1,725 @@
+:root {
+  --ds-stone-black: #202126;
+  --ds-stone-white: #f0efe9;
+}
+.state-cancelled {
+  color: var(--ds-color-text-muted);
+  background: var(--ds-color-surface-subtle);
+}
+.service-header {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  flex-wrap: wrap;
+  padding: 14px 24px;
+  border-bottom: 1px solid var(--ds-color-border);
+  background: var(--ds-color-surface);
+}
+.service-brand {
+  font-size: 16px;
+  font-weight: 650;
+  color: var(--ds-color-text-primary);
+}
+.service-header nav {
+  display: flex;
+  gap: 20px;
+  flex: 1;
+}
+.service-header a[aria-current="page"] {
+  color: var(--ds-color-accent);
+  text-decoration: underline;
+  text-underline-offset: 7px;
+}
+.service-main {
+  max-width: 1540px;
+  margin: auto;
+  padding: 32px 24px;
+  display: grid;
+  gap: 24px;
+}
+.service-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+.service-heading h1 {
+  margin: 0;
+}
+.service-heading p {
+  margin: 6px 0 0;
+  color: var(--ds-color-text-muted);
+}
+.service-panel {
+  border: 1px solid var(--ds-color-border);
+  background: var(--ds-color-surface);
+  border-radius: 10px;
+  padding: 20px;
+  min-width: 0;
+}
+.service-panel h2 {
+  font-size: 19px;
+  margin: 0 0 16px;
+}
+.service-panel h3 {
+  margin: 24px 0 12px;
+}
+.service-split {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(0, 2fr);
+  gap: 24px;
+  align-items: start;
+}
+.service-game-layout {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+/* The board panel leads the DOM for tab order; the aside stays in the left
+   column on wide screens and follows the board on narrow ones. */
+.service-game-layout > aside {
+  order: -1;
+}
+.service-actions,
+.service-toolbar,
+.service-pagination {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.service-toolbar {
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.service-toolbar h2 {
+  margin: 0;
+}
+.service-pagination {
+  justify-content: space-between;
+  margin-top: 16px;
+  font-size: 12px;
+}
+.service-step-buttons {
+  display: flex;
+  gap: 4px;
+  margin: 0 14px;
+}
+.service-main label,
+.service-login label {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--ds-color-text);
+  margin-bottom: 12px;
+}
+.service-main input,
+.service-main select,
+.service-login input {
+  font: inherit;
+  background: var(--ds-color-surface);
+  color: var(--ds-color-text-primary);
+  border: 1px solid var(--ds-color-border-strong);
+  padding: 8px 10px;
+  border-radius: 5px;
+  min-width: 0;
+  max-width: 100%;
+}
+.service-checkbox {
+  display: flex !important;
+  align-items: center;
+}
+.service-actions label {
+  margin: 0;
+}
+.service-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px 24px;
+  align-items: start;
+}
+.service-form-field {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+.service-input-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+}
+.service-field-heading {
+  display: flex;
+  align-items: center;
+}
+.service-field-heading label {
+  margin-bottom: 0;
+}
+.service-form-hint {
+  margin: 0;
+  color: var(--ds-color-text-muted);
+}
+.service-loading-status {
+  color: var(--ds-color-text-muted);
+  font-size: var(--ds-font-size-label);
+  line-height: 1.4;
+}
+.service-loading-status:empty {
+  display: none;
+}
+.service-loading-status:not(:empty)::before {
+  content: "●";
+  color: var(--ds-color-accent);
+  margin-inline-end: 6px;
+}
+.service-job-form {
+  display: grid;
+  gap: 20px;
+}
+.service-login {
+  max-width: 440px;
+  margin: 24px auto;
+}
+.service-main details {
+  margin-top: 20px;
+}
+.service-main summary {
+  cursor: pointer;
+  font-weight: 650;
+  margin-bottom: 12px;
+}
+.service-job-list a {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--ds-color-border);
+  color: var(--ds-color-text-primary);
+  text-decoration: none;
+}
+.service-job-list a:hover,
+.service-job-list a[aria-current="true"] {
+  background: var(--ds-color-accent-soft);
+}
+.service-job-list small {
+  grid-column: 1/-1;
+  color: var(--ds-color-text-muted);
+  font-size: 12px;
+}
+.service-state {
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.state-running,
+.state-preparing,
+.state-starting,
+.state-finalizing {
+  color: var(--ds-color-accent);
+}
+.state-failed {
+  color: var(--ds-color-danger-text, #e56a67);
+}
+.state-succeeded {
+  color: var(--ds-color-positive-text);
+}
+.service-summary {
+  display: flex;
+  gap: 28px;
+  margin: 12px 0;
+  flex-wrap: wrap;
+}
+.service-summary > div {
+  display: grid;
+  gap: 4px;
+}
+.service-summary strong {
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+}
+.service-summary span {
+  font-size: 12px;
+  color: var(--ds-color-text-muted);
+}
+.service-main dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  border-bottom: 1px solid var(--ds-color-border);
+  padding: 7px 0;
+}
+.service-main dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+.service-table-scroll {
+  overflow: auto;
+}
+.service-main table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.service-main td,
+.service-main th {
+  padding: 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--ds-color-border);
+  white-space: nowrap;
+}
+.service-main .service-depth-table th,
+.service-main .service-depth-table td {
+  padding: var(--ds-space-2) var(--ds-space-1);
+  text-align: end;
+}
+.service-main .service-depth-table th {
+  white-space: normal;
+}
+.service-main .service-depth-table :is(th, td):first-child {
+  text-align: start;
+}
+.service-events {
+  padding-left: 20px;
+  font-size: 12px;
+}
+.service-events li {
+  margin-bottom: 12px;
+}
+.service-events time {
+  margin-right: 12px;
+}
+.service-events pre {
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.service-error,
+.service-notice {
+  padding: 12px;
+  border-left: 3px solid var(--ds-color-accent);
+  background: var(--ds-color-surface-subtle);
+}
+.service-error {
+  border-color: var(--ds-color-danger-text, #e56a67);
+}
+.service-game-list {
+  display: grid;
+  gap: 0;
+  margin: 12px 0;
+}
+.service-game-list button {
+  text-align: left;
+}
+.service-activation {
+  display: block;
+  width: min(100%, 550px);
+  max-height: 550px;
+  min-height: 100px;
+  margin: 24px auto;
+  image-rendering: pixelated;
+}
+.service-activation rect:focus {
+  outline: none;
+  stroke: var(--ds-color-text-primary);
+  stroke-width: 0.08;
+}
+.service-main .board {
+  max-width: 780px;
+  margin: auto;
+}
+@media (max-width: 1000px) {
+  .service-split,
+  .service-game-layout {
+    grid-template-columns: 1fr;
+  }
+  .service-game-layout > aside {
+    order: 0;
+  }
+  .service-game-list {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  }
+}
+@media (max-width: 600px) {
+  .service-main {
+    padding: 20px 14px;
+  }
+  .service-panel {
+    padding: 14px;
+  }
+  .service-header {
+    padding: 12px 14px;
+    gap: 16px;
+  }
+  .service-header nav {
+    order: 3;
+    flex-basis: 100%;
+  }
+  .service-heading {
+    align-items: start;
+    flex-direction: column;
+  }
+  .service-header .service-actions {
+    margin-left: auto;
+  }
+}
+.service-heading h1 {
+  font-size: var(--ds-font-size-page-title);
+  line-height: 1.2;
+  font-weight: 650;
+}
+.service-header a {
+  color: var(--ds-color-text);
+  text-decoration: none;
+}
+.service-header nav a:hover {
+  color: var(--ds-color-accent);
+}
+.service-main button:not(.board-cell),
+.service-login button,
+.service-header > .service-actions > button {
+  min-height: var(--ds-control-height);
+  padding: 7px 12px;
+  border: 1px solid var(--ds-color-border-strong);
+  border-radius: 6px;
+  color: var(--ds-color-text-primary);
+  background: var(--ds-color-surface);
+  font-size: 13px;
+  cursor: pointer;
+  line-height: 1.2;
+}
+.service-main button:not(.board-cell):hover,
+.service-header > .service-actions > button:hover {
+  background: var(--ds-color-surface-subtle);
+}
+.service-main button.primary,
+.service-login button.primary {
+  background: var(--ds-color-accent);
+  color: var(--ds-color-on-accent);
+  border-color: var(--ds-color-accent);
+}
+.service-main button:disabled,
+.service-header button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.service-main button[aria-pressed="true"] {
+  color: var(--ds-color-accent);
+  background: var(--ds-color-accent-soft);
+  border-color: var(--ds-color-accent);
+}
+.service-main .board-with-labels {
+  max-width: 780px;
+  margin: 24px auto;
+}
+.service-main .board {
+  max-width: none;
+  margin: 0;
+}
+.service-panel > p {
+  margin-block: 12px;
+}
+.service-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+.service-main button.primary:hover,
+.service-main button.primary:focus-visible,
+.service-login button.primary:hover {
+  background: var(--ds-color-accent-hover);
+  color: var(--ds-color-on-accent);
+}
+.service-runtime {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ds-color-text-muted);
+}
+
+.service-main a,
+.service-main a:visited {
+  color: var(--ds-color-accent);
+}
+.service-header a:visited {
+  color: var(--ds-color-text);
+}
+.service-header a[aria-current="page"] {
+  color: var(--ds-color-accent);
+}
+.service-job-list a,
+.service-job-list a:visited {
+  color: var(--ds-color-text-primary);
+}
+.service-state {
+  padding: 3px 8px;
+  border-radius: var(--ds-radius-pill, 999px);
+  background: var(--ds-color-surface-subtle);
+  border: 1px solid var(--ds-color-border);
+  align-self: start;
+}
+.state-running,
+.state-preparing,
+.state-starting,
+.state-finalizing {
+  background: var(--ds-color-accent-soft);
+  color: var(--ds-color-accent);
+}
+.state-succeeded {
+  background: var(--ds-color-positive-soft);
+  color: var(--ds-color-positive-text);
+}
+.state-failed {
+  background: var(--ds-color-danger-soft);
+  color: var(--ds-color-danger-text);
+}
+.state-stopping,
+.state-paused {
+  background: var(--ds-color-warning-soft);
+  color: var(--ds-color-warning-text);
+}
+.service-main a.service-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--ds-control-height);
+  padding: 7px 12px;
+  border: 1px solid var(--ds-color-border-strong);
+  border-radius: 6px;
+  color: var(--ds-color-text-primary);
+  background: var(--ds-color-surface);
+  font-size: 13px;
+  text-decoration: none;
+  line-height: 1.2;
+}
+.service-main a.service-button:hover {
+  background: var(--ds-color-surface-subtle);
+}
+.service-section-actions {
+  margin-block: 16px;
+}
+.service-main tbody tr:hover,
+.service-main .service-configuration > div:hover {
+  background: var(--ds-color-surface-subtle);
+}
+.service-inference {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 12px 20px;
+  margin-block: 16px;
+  font-variant-numeric: tabular-nums;
+}
+.service-inference > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.service-inference strong {
+  font-size: 18px;
+}
+.service-inference small,
+.service-game-list small {
+  font-size: 12px;
+  color: var(--ds-color-text-muted);
+}
+.service-progress {
+  display: block;
+  width: 100%;
+  height: 3px;
+  accent-color: var(--ds-color-accent);
+  margin-block: 8px;
+  border: none;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.service-progress::-webkit-progress-bar {
+  background: var(--ds-color-surface-subtle);
+}
+.service-progress::-webkit-progress-value {
+  background: var(--ds-color-accent);
+}
+.service-progress::-moz-progress-bar {
+  background: var(--ds-color-accent);
+}
+.service-game-list button {
+  display: grid;
+  gap: 4px;
+}
+.service-game-list[aria-busy="true"] {
+  opacity: 0.7;
+}
+.service-segments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+}
+.service-main .service-segments button {
+  border-radius: 0;
+}
+.service-main .service-segments button:first-child {
+  border-radius: 6px 0 0 6px;
+}
+.service-main .service-segments button:last-child {
+  border-radius: 0 6px 6px 0;
+}
+.service-main .service-segments button + button {
+  margin-inline-start: -1px;
+}
+.service-activation {
+  max-height: none;
+}
+.service-activation-vector {
+  max-height: 180px;
+}
+.activation-positive {
+  fill: var(--ds-chart-series-1);
+}
+.activation-negative {
+  fill: var(--ds-chart-series-5);
+}
+.activation-coordinates {
+  fill: var(--ds-color-text-muted);
+  font: 0.35px sans-serif;
+  text-anchor: middle;
+}
+.service-activation rect[aria-selected="true"] {
+  stroke: var(--ds-color-text-primary);
+  stroke-width: 0.08;
+}
+@media (max-width: 600px) {
+  .service-header {
+    position: static;
+  }
+  .service-step-buttons {
+    margin-inline: 2px;
+  }
+}
+
+.service-inference-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-block: 12px;
+}
+.service-inference-row > div {
+  flex: 1 1 72px;
+  min-inline-size: max-content;
+}
+.service-inference-row strong {
+  font-size: 14px;
+  white-space: nowrap;
+}
+.service-inference-row small {
+  line-height: 1.3;
+}
+.service-main .service-game-list button {
+  border: 0;
+  border-bottom: 1px solid var(--ds-color-border);
+  border-radius: 0;
+  padding: 7px 8px;
+  gap: 3px;
+  min-height: 0;
+}
+.service-game-list .winner-black::before,
+.service-game-list .winner-white::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1px solid var(--ds-color-text-muted);
+  margin-inline-end: 6px;
+  background: var(--ds-stone-black);
+}
+.service-game-list .winner-white::before {
+  background: var(--ds-stone-white);
+}
+.service-position-layout {
+  display: grid;
+  grid-template-columns:
+    minmax(0, min(560px, max(320px, calc(100dvh - 390px))))
+    240px;
+  justify-content: center;
+  align-items: start;
+  gap: 20px;
+}
+.service-main .service-position-layout .board-with-labels {
+  width: 100%;
+  max-width: min(560px, max(320px, calc(100dvh - 390px)));
+  margin: 8px auto;
+}
+.service-move-rail {
+  min-width: 0;
+}
+.service-position-values {
+  margin-block: 8px;
+}
+.service-main button.info-tip-trigger {
+  padding: 0;
+  min-height: 20px;
+  width: 20px;
+  border-radius: 50%;
+}
+@media (max-width: 700px) {
+  .service-position-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+  .service-main .service-position-layout .board-with-labels {
+    max-width: 560px;
+  }
+}
+
+.service-move-rail .service-position-values {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-block: 8px 20px;
+}
+.service-move-rail .service-position-values strong {
+  font-size: 16px;
+}
+.service-move-rail summary {
+  font-size: 12px;
+}
+
+.service-channel-control {
+  max-width: 100%;
+}
+.service-channel-control label {
+  margin-bottom: 6px;
+}
+.service-channel-control input[type="range"] {
+  width: 180px;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  accent-color: var(--ds-color-accent);
+}
+.service-channel-control input[type="number"] {
+  width: 64px;
+}
+
+.service-activation-scale {
+  width: min(100%, 360px);
+  margin: 16px auto 0;
+  color: var(--ds-color-text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.service-activation-scale svg {
+  display: block;
+  width: 100%;
+  border-radius: 3px;
+}
+.service-activation-scale-ticks {
+  display: flex;
+  justify-content: space-between;
+  margin-block: 5px 2px;
+}
+.service-activation-scale small {
+  font-size: 12px;
+}
+.service-activation-scale[aria-busy="true"] {
+  opacity: 0.5;
+}
