@@ -1,6 +1,7 @@
 import http.client
 import json
 from pathlib import Path
+import sqlite3
 import tempfile
 import threading
 import time
@@ -121,6 +122,48 @@ class AuthPersistenceTests(unittest.TestCase):
 
 
 class StoreTests(unittest.TestCase):
+    def test_exact_checkpoint_continuation_inherits_epoch_history_once(self):
+        source = self.create("source")
+        with self.store.transaction() as db:
+            for epoch in range(3):
+                self.store.event(
+                    db,
+                    source,
+                    None,
+                    "epoch_completed",
+                    {"epoch": epoch, "training": {"value_loss": epoch / 10}},
+                    100 + epoch,
+                )
+        model = self.root / "model.safetensors"
+        model.write_bytes(b"checkpoint")
+        artifact = self.store.artifact(
+            source, None, "checkpoint", model, {"epoch": 1}
+        )
+        spec = SPEC | {"inputs": {"checkpoint": artifact["id"]}}
+        continuation = self.create("continuation", spec=spec)
+        with self.store.transaction() as db:
+            self.assertEqual(
+                self.store.inherit_epoch_history(db, continuation, artifact["id"]), 0
+            )
+        events = [
+            event
+            for event in self.store.events(continuation)
+            if event["kind"] == "epoch_completed"
+        ]
+        self.assertEqual([event["payload"]["epoch"] for event in events], [0, 1])
+        self.assertEqual([event["time"] for event in events], [100, 101])
+        self.assertTrue(
+            all(
+                event["payload"]["inherited_from"]
+                == {
+                    "job_id": source,
+                    "checkpoint_artifact": artifact["id"],
+                    "checkpoint_epoch": 1,
+                }
+                for event in events
+            )
+        )
+
     def test_benchmark_precision_is_applied_before_native_startup(self):
         from scripts.job_service.spec import environment_overrides, validate_spec
 
@@ -148,6 +191,13 @@ class StoreTests(unittest.TestCase):
         return self.store.command(key, {"action": "create", "spec": SPEC, **fields})[
             "job_id"
         ]
+
+    def test_read_transactions_are_query_only(self):
+        with self.store.transaction(write=False) as db:
+            self.assertEqual(db.execute("PRAGMA query_only").fetchone()[0], 1)
+            self.assertEqual(db.execute("PRAGMA journal_mode").fetchone()[0], "wal")
+            with self.assertRaises(sqlite3.OperationalError):
+                db.execute("INSERT INTO settings VALUES ('read-test','1')")
 
     def test_command_retry_and_conflict_are_atomic(self):
         first = self.create()

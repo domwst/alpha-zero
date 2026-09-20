@@ -7,7 +7,7 @@ import {
   type Session,
 } from "./serviceApi";
 import { ComparisonStatistics } from "./ComparisonStatistics";
-import { useJobData } from "./useJobData";
+import { JOBS_PER_PAGE, useJobData } from "./useJobData";
 import { JobForm } from "./JobForm";
 import { EventHistory } from "./EventHistory";
 import { confidenceLevels, type ConfidenceLevel } from "./experimentConfidence";
@@ -175,6 +175,27 @@ export function JobWorkspace({ session }: { session: Session }) {
             </LoadingStatus>
             <span>{data?.total ?? "—"} jobs</span>
           </div>
+          <div className="service-pagination service-job-pagination">
+            <button
+              disabled={!page || (queuePending && loadedPage !== page)}
+              onClick={() => setPage(page - 1)}
+            >
+              Previous
+            </button>
+            <span>
+              Page {page + 1} of{" "}
+              {Math.max(1, Math.ceil((data?.total || 0) / JOBS_PER_PAGE))}
+            </span>
+            <button
+              disabled={
+                (page + 1) * JOBS_PER_PAGE >= (data?.total || 0) ||
+                (queuePending && loadedPage !== page)
+              }
+              onClick={() => setPage(page + 1)}
+            >
+              Next
+            </button>
+          </div>
           {!data ? (
             queuePending ? null : (
               <p>Jobs could not be loaded.</p>
@@ -208,27 +229,6 @@ export function JobWorkspace({ session }: { session: Session }) {
               ))}
             </div>
           )}
-          <div className="service-pagination">
-            <button
-              disabled={!page || (queuePending && loadedPage !== page)}
-              onClick={() => setPage(page - 1)}
-            >
-              Previous
-            </button>
-            <span>
-              Page {page + 1} of{" "}
-              {Math.max(1, Math.ceil((data?.total || 0) / 7))}
-            </span>
-            <button
-              disabled={
-                (page + 1) * 7 >= (data?.total || 0) ||
-                (queuePending && loadedPage !== page)
-              }
-              onClick={() => setPage(page + 1)}
-            >
-              Next
-            </button>
-          </div>
         </section>
         <section className="service-panel">
           {!job ? (

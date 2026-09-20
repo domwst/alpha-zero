@@ -73,8 +73,14 @@ class Store:
         db = sqlite3.connect(self.path, timeout=30, isolation_level=None)
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA foreign_keys=ON")
-        db.execute("PRAGMA journal_mode=WAL")
-        db.execute("PRAGMA synchronous=FULL")
+        if write:
+            # WAL is persistent database state, and synchronous only affects writes.
+            # Reapplying them on dashboard reads can require filesystem writes and
+            # makes otherwise-readable data unavailable when the volume is full.
+            db.execute("PRAGMA journal_mode=WAL")
+            db.execute("PRAGMA synchronous=FULL")
+        else:
+            db.execute("PRAGMA query_only=ON")
         db.execute("BEGIN IMMEDIATE" if write else "BEGIN")
         try:
             yield db
@@ -147,6 +153,53 @@ class Store:
                     f"Input {name}: checkpoint has no registered replay buffer"
                 )
 
+    @staticmethod
+    def inherit_epoch_history(db, job_id, checkpoint_artifact):
+        """Copy chart metrics through the exact checkpoint used for continuation."""
+        artifact = db.execute(
+            "SELECT job_id,metadata FROM artifacts WHERE id=? AND kind='checkpoint'",
+            (checkpoint_artifact,),
+        ).fetchone()
+        if not artifact or not artifact["job_id"] or artifact["job_id"] == job_id:
+            return 0
+        checkpoint_epoch = json.loads(artifact["metadata"]).get("epoch")
+        if not isinstance(checkpoint_epoch, int):
+            return 0
+        recorded = {
+            json.loads(row[0]).get("epoch")
+            for row in db.execute(
+                "SELECT payload FROM events WHERE job_id=? AND kind='epoch_completed'",
+                (job_id,),
+            )
+        }
+        inherited = 0
+        for row in db.execute(
+            "SELECT time,payload FROM events WHERE job_id=? AND kind='epoch_completed' ORDER BY id",
+            (artifact["job_id"],),
+        ):
+            payload = json.loads(row["payload"])
+            epoch = payload.get("epoch")
+            if not isinstance(epoch, int) or epoch > checkpoint_epoch or epoch in recorded:
+                continue
+            Store.event(
+                db,
+                job_id,
+                None,
+                "epoch_completed",
+                payload
+                | {
+                    "inherited_from": {
+                        "job_id": artifact["job_id"],
+                        "checkpoint_artifact": checkpoint_artifact,
+                        "checkpoint_epoch": checkpoint_epoch,
+                    }
+                },
+                row["time"],
+            )
+            recorded.add(epoch)
+            inherited += 1
+        return inherited
+
     def command(self, command_id, request):
         """Idempotency covers effects AND acknowledgement, in the same transaction."""
         if not isinstance(command_id, str) or not 1 <= len(command_id) <= 128:
@@ -188,6 +241,9 @@ class Store:
                     "INSERT INTO jobs(id,experiment_id,title,spec,state,created,updated) VALUES (?,?,?,?,?,?,?)",
                     (job_id, experiment, title, encode(spec), "queued", now, now),
                 )
+                checkpoint = spec["inputs"].get("checkpoint")
+                if spec["kind"] == "self_play" and isinstance(checkpoint, str):
+                    self.inherit_epoch_history(db, job_id, checkpoint)
                 for dependency in request.get("dependencies", []):
                     fraction = (
                         dependency.get("fraction")

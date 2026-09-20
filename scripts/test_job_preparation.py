@@ -205,8 +205,8 @@ class PreparationTests(unittest.TestCase):
     def test_effective_resolves_each_input_once_and_detects_subsequent_changes(self):
         from scripts.job_service.catalog import register_checkpoint
 
-        checkpoint = self.root / "checkpoint"
-        checkpoint.mkdir()
+        checkpoint = self.root / "source" / "checkpoints" / "00000000"
+        checkpoint.mkdir(parents=True)
         (checkpoint / "model.safetensors").write_bytes(b"model")
         import hashlib
 
@@ -214,6 +214,10 @@ class PreparationTests(unittest.TestCase):
             json.dumps(
                 {"epoch": 0, "model_sha256": hashlib.sha256(b"model").hexdigest()}
             )
+        )
+        (checkpoint.parent.parent / "stats").mkdir()
+        (checkpoint.parent.parent / "stats" / "00000000.json").write_text(
+            '{"epoch":0,"training":{"value_loss":0.25}}'
         )
         reference = register_checkpoint(self.store, checkpoint)["id"]
         spec = SPEC | {"inputs": {"checkpoint": reference}}
@@ -225,6 +229,12 @@ class PreparationTests(unittest.TestCase):
             resolve.assert_called_once_with(reference)
         self.assertEqual(
             effective["resolved_inputs"]["checkpoint"]["path"], str(checkpoint)
+        )
+        self.assertEqual(
+            json.loads(
+                (self.root / "jobs" / job / "stats" / "00000000.json").read_text()
+            )["training"]["value_loss"],
+            0.25,
         )
         (checkpoint / "model.safetensors").write_bytes(b"different")
         with self.assertRaisesRegex(ValueError, "content changed"):

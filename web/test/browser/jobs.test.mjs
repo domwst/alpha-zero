@@ -3,6 +3,54 @@ import assert from "node:assert/strict";
 import { engines, fixture, job, gate } from "./helpers.mjs";
 
 for (const engine of engines) {
+  test(`${engine.name()}: job pagination is above a twelve-item page`, async (t) => {
+    const { page, origin } = await fixture(t, engine);
+    const jobs = Array.from({ length: 13 }, (_, i) => job(`job-${i + 1}`));
+    const requests = [];
+    await page.route("**/api/v1/jobs?*", (route) => {
+      const url = new URL(route.request().url());
+      const offset = Number(url.searchParams.get("offset"));
+      const limit = Number(url.searchParams.get("limit"));
+      requests.push({ offset, limit });
+      return route.fulfill({
+        json: { jobs: jobs.slice(offset, offset + limit), total: jobs.length },
+      });
+    });
+    await page.goto(origin + "/experiments");
+    const list = page.locator(".service-job-list");
+    await list.waitFor();
+    assert.deepEqual(requests[0], { offset: 0, limit: 12 });
+    assert.equal(await list.locator("a").count(), 12);
+    assert.equal(
+      await page.locator(".service-panel").first().evaluate((panel) => {
+        const pager = panel.querySelector(".service-job-pagination");
+        const jobs = panel.querySelector(".service-job-list");
+        return !!(
+          pager &&
+          jobs &&
+          pager.compareDocumentPosition(jobs) & Node.DOCUMENT_POSITION_FOLLOWING
+        );
+      }),
+      true,
+    );
+    await page.getByText("Page 1 of 2", { exact: true }).waitFor();
+
+    const secondPage = page.waitForRequest(
+      (request) => {
+        const url = new URL(request.url());
+        return (
+          url.pathname === "/api/v1/jobs" &&
+          url.searchParams.get("offset") === "12" &&
+          url.searchParams.get("limit") === "12"
+        );
+      },
+    );
+    await page.getByRole("button", { name: "Next", exact: true }).click();
+    await secondPage;
+    await page.getByText("Page 2 of 2", { exact: true }).waitFor();
+    assert.equal(await list.locator("a").count(), 1);
+  });
+
   test(`${engine.name()}: summaries and epochs load independently of diagnostic history`, async (t) => {
     const { page, origin } = await fixture(t, engine);
     const current = job("fixture", "comparison");

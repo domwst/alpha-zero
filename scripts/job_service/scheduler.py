@@ -128,6 +128,8 @@ class Scheduler:
             source = resolve(initial)
             metadata = json.loads((source / "metadata.json").read_text())
             target = output / "checkpoints" / f"{metadata['epoch']:08}"
+            source_stats = source.parent.parent / "stats" / f"{metadata['epoch']:08}.json"
+            target_stats = output / "stats" / f"{metadata['epoch']:08}.json"
             if not (output / "initialization.json").exists():
                 if target.exists():
                     with (target / "model.safetensors").open("rb") as f:
@@ -152,6 +154,11 @@ class Scheduler:
                         "model_sha256": metadata["model_sha256"],
                     },
                 )
+            if source_stats.is_file() and not target_stats.exists():
+                target_stats.parent.mkdir(parents=True, exist_ok=True)
+                temporary = target_stats.with_suffix(".json.initializing")
+                shutil.copy2(source_stats, temporary)
+                os.replace(temporary, target_stats)
         binary = self.binary
         if spec.get("binary_artifact"):
             binary = resolve(spec["binary_artifact"])

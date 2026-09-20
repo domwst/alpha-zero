@@ -101,6 +101,10 @@
   margin-top: 16px;
   font-size: 12px;
 }
+.service-job-pagination {
+  margin-top: 0;
+  margin-bottom: 16px;
+}
 .service-step-buttons {
   display: flex;
   gap: 4px;

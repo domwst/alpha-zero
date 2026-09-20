@@ -2,12 +2,15 @@ import { useEffect, useState } from "preact/hooks";
 import { api, type Event, type Job, type JobPage } from "./serviceApi";
 import type { GameStatistics } from "./ComparisonStatistics";
 import type { Participants } from "./experimentLabels";
+import { mergeEpochSummaries } from "./epochSummaries";
 
 type Summary = {
   comparison: GameStatistics | null;
   benchmark: Record<string, any> | null;
   participants: Participants | null;
 };
+
+export const JOBS_PER_PAGE = 12;
 
 /** Independent feeds: diagnostic history is never a dependency of live status or charts. */
 export function useJobData(selected: string | null, page: number) {
@@ -31,7 +34,7 @@ export function useJobData(selected: string | null, page: number) {
     async function poll() {
       try {
         const result = await api<JobPage>(
-          `jobs?offset=${page * 7}&limit=7`,
+          `jobs?offset=${page * JOBS_PER_PAGE}&limit=${JOBS_PER_PAGE}`,
           undefined,
           undefined,
           controller.signal,
@@ -101,8 +104,8 @@ export function useJobData(selected: string | null, page: number) {
           `epoch-summaries?job_id=${encodeURIComponent(selected)}&after=${epochCursor}`,
         );
         if (!controller.signal.aborted && result.events.length) {
-          epochCursor = result.events.at(-1)!.id;
-          setEpochSummaries((old) => [...old, ...result.events]);
+          epochCursor = Math.max(epochCursor, ...result.events.map((event) => event.id));
+          setEpochSummaries((old) => mergeEpochSummaries(old, result.events));
         }
       },
       () => setEpochsPending(false),
