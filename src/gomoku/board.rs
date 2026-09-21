@@ -10,7 +10,7 @@ const N: usize = 19;
 const BYTES: usize = (N * N - 1) / (std::mem::size_of::<u8>() * (8 / 2)) + 1;
 
 #[derive(Serialize, Deserialize, Clone, Hash, PartialEq, Eq)]
-#[repr(align(8))]
+#[repr(align(16))]
 pub struct BoardState {
     #[serde(with = "BigArray")]
     state: [u8; BYTES],
@@ -269,12 +269,17 @@ mod tests {
 
     #[bench]
     fn make_move(b: &mut Bencher) {
+        #[inline(never)]
+        fn make_move_indirect(board: &BoardState, cell: GomokuMove) -> BoardState {
+            board.make_move(&cell)
+        }
+
         let mut board = BoardState::new();
 
         b.iter(|| {
             let cell = GomokuMove::from_xy(0, 0);
             for _ in 0..65536 {
-                board = core::hint::black_box(board.make_move(&cell));
+                board = make_move_indirect(&mut board, cell);
             }
             board.clone()
         });
