@@ -72,6 +72,16 @@ artifact types; replay training may use a checkpoint with a registered replay
 buffer. Checkpoint selectors must refer to jobs that produce the required data.
 
 The native archive is `games/archive/<zero-based-epoch>/<game-id>.json`.
+For a self-play continuation, the game browser combines its own epochs with the
+source job's archive through the selected checkpoint epoch, inclusively. This is
+a logical view: no game files or links are created, and existing continuations
+gain the same history automatically. Ancestry is followed across continuation
+chains with each checkpoint boundary applied; a child's local epoch takes
+precedence as a whole over an inherited epoch. Latest/best selectors inherit only
+after an attempt records the actual selected epoch, never from the parent's
+current latest checkpoint. Parent archives must remain available on disk (or be
+restored from backup). This affects replay browsing, not the training replay buffer.
+
 It contains canonical states, actions, actors, outcomes, raw network priors, root
 visits, training policies, actual sampling probabilities, search statistics,
 model hashes by seat, and game duration. Collection manifests pin game-generation

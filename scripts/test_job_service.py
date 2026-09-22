@@ -772,6 +772,138 @@ class HttpTests(unittest.TestCase):
         _, detail, _ = self.request(f"/api/v1/jobs/{old}")
         self.assertTrue(detail["has_games"])
 
+    def archive_job(self, name, checkpoint=None):
+        spec = SPEC | {"inputs": {"checkpoint": checkpoint} if checkpoint else {}}
+        return self.store.command(name, {"action": "create", "spec": spec})["job_id"]
+
+    def archive_checkpoint(self, job, epoch):
+        model = self.server.app.root / f"{job}-{epoch}.safetensors"
+        model.write_bytes(b"checkpoint")
+        return self.store.artifact(job, None, "checkpoint", model, {"epoch": epoch})[
+            "id"
+        ]
+
+    def archive_epoch(self, job, epoch, label):
+        directory = self.server.app.archive(job) / f"{epoch:08}"
+        directory.mkdir(parents=True)
+        (directory / "manifest.json").write_text(json.dumps({"label": label}))
+        path = directory / "00000000.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "label": label,
+                    "record": {"plies": [{"actor": "First"}], "terminal_value": 0},
+                }
+            )
+        )
+        return path
+
+    def test_continuation_replays_are_zero_copy_bounded_and_available_over_http(self):
+        parent = self.archive_job("parent")
+        originals = [self.archive_epoch(parent, e, f"Parent {e}") for e in range(4)]
+        child = self.archive_job("child", self.archive_checkpoint(parent, 1))
+        status, page, _ = self.request(f"/api/v1/games?job_id={child}&limit=1")
+        self.assertEqual(status, 200)
+        self.assertEqual(page["total"], 2)
+        self.assertEqual(page["epochs"], ["00000001", "00000000"])
+        self.assertEqual(page["epoch_labels"]["00000000"], "Parent 0")
+        self.assertEqual(page["games"][0]["epoch"], "00000001")
+        _, next_page, _ = self.request(f"/api/v1/games?job_id={child}&limit=1&offset=1")
+        self.assertEqual(next_page["games"][0]["epoch"], "00000000")
+        _, filtered, _ = self.request(f"/api/v1/games?job_id={child}&epoch=00000000")
+        self.assertEqual(filtered["total"], 1)
+        _, game, _ = self.request(
+            f"/api/v1/game?job_id={child}&epoch=00000000&id=00000000"
+        )
+        self.assertEqual(game["label"], "Parent 0")
+        status, _, _ = self.request(
+            f"/api/v1/game?job_id={child}&epoch=00000002&id=00000000"
+        )
+        self.assertEqual(status, 400)
+        _, detail, _ = self.request(f"/api/v1/jobs/{child}")
+        self.assertTrue(detail["has_games"])
+        _, catalog, _ = self.request("/api/v1/game-jobs")
+        self.assertIn(child, [job["id"] for job in catalog["jobs"]])
+        self.assertEqual(
+            self.server.app.game_paths(child), [originals[1], originals[0]]
+        )
+        self.assertFalse(self.server.app.archive(child).exists())
+
+    def test_replay_ancestry_chains_local_precedence_and_cycles(self):
+        parent = self.archive_job("parent")
+        for epoch in range(4):
+            self.archive_epoch(parent, epoch, f"parent-{epoch}")
+        child = self.archive_job("child", self.archive_checkpoint(parent, 1))
+        local = self.archive_epoch(child, 1, "local")
+        self.archive_epoch(child, 2, "child-2")
+        grandchild = self.archive_job("grandchild", self.archive_checkpoint(child, 2))
+        self.archive_epoch(grandchild, 3, "grandchild-3")
+        paths = self.server.app.game_paths(grandchild)
+        self.assertEqual(
+            [p.parent.name for p in paths], [f"{e:08}" for e in (3, 2, 1, 0)]
+        )
+        self.assertEqual(paths[2], local)
+        early = self.archive_job("early", self.archive_checkpoint(child, 0))
+        self.assertEqual(
+            [p.parent.name for p in self.server.app.game_paths(early)], ["00000000"]
+        )
+        # Old migrated archives may already contain symlinks; do not duplicate them.
+        link = self.server.app.archive(child) / "00000000"
+        link.symlink_to(
+            self.server.app.archive(parent) / "00000000", target_is_directory=True
+        )
+        self.assertEqual(len(self.server.app.game_paths(grandchild)), 4)
+        cycle = self.archive_checkpoint(child, 1)
+        with self.store.transaction() as db:
+            db.execute(
+                "UPDATE jobs SET spec=? WHERE id=?",
+                (
+                    json.dumps(SPEC | {"inputs": {"checkpoint": cycle}}),
+                    parent,
+                ),
+            )
+        self.assertEqual(len(self.server.app.game_paths(grandchild)), 4)
+        # A different job kind with checkpoint inputs does not imply continuation.
+        with self.store.transaction() as db:
+            db.execute(
+                "UPDATE jobs SET spec=? WHERE id=?",
+                (
+                    json.dumps(
+                        SPEC
+                        | {
+                            "kind": "historical_training",
+                            "inputs": {"checkpoint": cycle},
+                        }
+                    ),
+                    early,
+                ),
+            )
+        self.assertEqual(self.server.app.game_paths(early), [])
+
+    def test_dynamic_replay_parent_uses_pinned_epoch_not_current_latest(self):
+        parent = self.archive_job("parent")
+        for epoch in range(3):
+            self.archive_epoch(parent, epoch, f"epoch-{epoch}")
+        self.archive_checkpoint(parent, 2)
+        child = self.archive_job("child", {"job_id": parent, "selection": "latest"})
+        self.assertEqual(self.server.app.game_paths(child), [])
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT INTO attempts(id,job_id,number,state,created,effective) VALUES (?,?,?,?,?,?)",
+                (
+                    "resolved",
+                    child,
+                    1,
+                    "succeeded",
+                    0,
+                    json.dumps({"resolved_inputs": {"checkpoint": {"epoch": 1}}}),
+                ),
+            )
+        self.assertEqual(
+            [p.parent.name for p in self.server.app.game_paths(child)],
+            ["00000001", "00000000"],
+        )
+
     def test_live_progress_does_not_depend_on_historical_event_pages(self):
         job = self.store.command("live", {"action": "create", "spec": SPEC})["job_id"]
         with self.store.transaction() as db:

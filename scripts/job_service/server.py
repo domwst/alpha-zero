@@ -55,13 +55,85 @@ class Application:
                 raise ValueError("Unknown job")
         return self.root / "jobs" / job_id / "games" / "archive"
 
-    def game_paths(self, job_id, epoch=None):
-        archive = self.archive(job_id)
+    def archive_directories(self, job_id):
+        """A zero-copy view of local epochs and the checkpoint's bounded ancestry."""
+        lineage = []
+        visited = set()
+        limit = None
+        with self.store.transaction(write=False) as db:
+            while job_id not in visited:
+                row = db.execute(
+                    "SELECT spec FROM jobs WHERE id=?", (job_id,)
+                ).fetchone()
+                if row is None:
+                    if not lineage:
+                        raise ValueError("Unknown job")
+                    break
+                visited.add(job_id)
+                lineage.append((job_id, limit))
+                spec = json.loads(row["spec"])
+                if spec["kind"] != "self_play":
+                    break
+                reference = spec.get("inputs", {}).get("checkpoint")
+                if isinstance(reference, str):
+                    artifact = db.execute(
+                        "SELECT job_id,metadata FROM artifacts WHERE id=? AND kind='checkpoint'",
+                        (reference,),
+                    ).fetchone()
+                    if not artifact:
+                        break
+                    parent = artifact["job_id"]
+                    epoch = json.loads(artifact["metadata"]).get("epoch")
+                elif isinstance(reference, dict):
+                    # A latest/best selector must use its recorded resolution,
+                    # never the parent's current (possibly newer) checkpoint.
+                    parent = reference.get("job_id")
+                    epoch = None
+                    for attempt in db.execute(
+                        "SELECT effective FROM attempts WHERE job_id=? ORDER BY number",
+                        (job_id,),
+                    ):
+                        resolved = json.loads(attempt["effective"]).get(
+                            "resolved_inputs", {}
+                        )
+                        checkpoint = resolved.get("checkpoint", {})
+                        if type(checkpoint.get("epoch")) is int:
+                            epoch = checkpoint["epoch"]
+                            break
+                else:
+                    break
+                if not parent or type(epoch) is not int or epoch < 0:
+                    break
+                limit = epoch if limit is None else min(limit, epoch)
+                job_id = parent
+        directories = {}
+        for owner, limit in lineage:
+            archive = self.root / "jobs" / owner / "games" / "archive"
+            for path in archive.glob("*"):
+                if (
+                    re.fullmatch(r"[0-9]{8}", path.name)
+                    and path.is_dir()
+                    and (limit is None or int(path.name) <= limit)
+                ):
+                    # A local epoch wins as a whole: never mix divergent games
+                    # with identical IDs from different branches of training.
+                    directories.setdefault(path.name, path)
+        return directories
+
+    def game_paths(self, job_id, epoch=None, *, directories=None):
         if epoch is not None and not re.fullmatch(r"[0-9]{8}", epoch):
             raise ValueError("Invalid epoch")
-        directory = archive / epoch if epoch else archive
+        if directories is None:
+            directories = self.archive_directories(job_id)
+        selected = directories.values()
+        if epoch is not None:
+            selected = [directories[epoch]] if epoch in directories else []
         return sorted(
-            directory.glob("[0-9a-f]*.json" if epoch else "*/[0-9a-f]*.json"),
+            (
+                path
+                for directory in selected
+                for path in directory.glob("[0-9a-f]*.json")
+            ),
             key=lambda p: (-int(p.parent.name), p.name),
         )
 
@@ -69,7 +141,10 @@ class Application:
         cached = self.archive_availability.get(job_id)
         if cached and (cached[1] or time.monotonic() - cached[0] < 10):
             return cached[1]
-        found = next(self.archive(job_id).glob("*/[0-9a-f]*.json"), None) is not None
+        found = any(
+            next(directory.glob("[0-9a-f]*.json"), None) is not None
+            for directory in self.archive_directories(job_id).values()
+        )
         self.archive_availability[job_id] = (time.monotonic(), found)
         return found
 
@@ -458,16 +533,11 @@ class Handler(BaseHTTPRequestHandler):
             elif url.path == "/api/v1/games":
                 job = query["job_id"][0]
                 epoch = query.get("epoch", [None])[0]
-                archive = self.app.archive(job)
-                directories = sorted(
-                    (
-                        p
-                        for p in archive.glob("*")
-                        if p.is_dir() and re.fullmatch(r"[0-9]{8}", p.name)
-                    ),
-                    reverse=True,
-                )
-                paths = self.app.game_paths(job, epoch)
+                directory_map = self.app.archive_directories(job)
+                directories = [
+                    directory_map[key] for key in sorted(directory_map, reverse=True)
+                ]
+                paths = self.app.game_paths(job, epoch, directories=directory_map)
                 offset = max(0, int(query.get("offset", ["0"])[0]))
                 limit = min(25, max(1, int(query.get("limit", ["10"])[0])))
                 self.reply(
@@ -499,9 +569,10 @@ class Handler(BaseHTTPRequestHandler):
                     r"[0-9a-f]{1,64}", game_id
                 ):
                     raise ValueError("Invalid game identity")
-                path = (
-                    self.app.archive(query["job_id"][0]) / epoch / (game_id + ".json")
-                )
+                directories = self.app.archive_directories(query["job_id"][0])
+                if epoch not in directories:
+                    raise ValueError("Unknown game epoch")
+                path = directories[epoch] / (game_id + ".json")
                 self.reply(200, json.loads(path.read_text()))
             elif url.path == "/api/v1/schema":
                 from .spec import COMMON, KINDS
