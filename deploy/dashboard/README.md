@@ -1,63 +1,38 @@
-# Local dashboard connection
+# Local historical dashboard
 
-Docker Compose manages the local SSH tunnel to the GPU pod. The web backend,
-scheduler, database, and training workers stay on the pod; stopping this container
-disconnects the local dashboard without stopping training.
-
-The tunnel binds **127.0.0.1:8765**, forwarding to the pod's **127.0.0.1:8766**.
-The existing HTTPS reverse proxy can keep the same upstream. This configuration
-uses [Linux host networking](https://docs.docker.com/reference/compose-file/services/#network_mode).
-
-## Setup
-
-From this directory:
+Docker Compose serves the final RunPod experiment archive on **127.0.0.1:8765**.
+The existing reverse proxy for `https://dashboard.oleja.dev` can keep this upstream.
+No SSH tunnel, remote pod, GPU, or training worker is required.
 
 ```sh
-cp .env.example .env
-# Edit .env with the pod connection and absolute local SSH paths.
-docker compose config --quiet
-docker compose build
-docker compose up -d --wait --wait-timeout 60
-```
-
-The `.env` file is ignored by Git. It contains connection settings and file paths;
-the key is mounted read-only at runtime and excluded from the image build context.
-Set UID/GID to the private key owner's numeric IDs. Keep the key's existing private
-permissions. SSH checks the server against the supplied verified `known_hosts` file.
-
-If migrating from the old user service, first build and test Compose on a spare
-port, then stop the old listener and start the normal Compose project:
-
-```sh
-DASHBOARD_LOCAL_PORT=8769 docker compose -p alz-dashboard-preview up -d --wait --wait-timeout 60
-DASHBOARD_LOCAL_PORT=8769 docker compose -p alz-dashboard-preview down
-systemctl --user stop alz-experiment-dashboard.service
-docker compose up -d --wait --wait-timeout 60
-systemctl --user disable alz-experiment-dashboard.service
-```
-
-If startup fails, restore the previous listener with `docker compose down` followed
-by `systemctl --user enable --now alz-experiment-dashboard.service`.
-
-## Operations
-
-```sh
+docker compose up -d --build --wait --wait-timeout 60
 docker compose ps
-docker compose logs -f
-docker compose restart
-docker compose down
+docker compose logs --tail 50
 ```
 
-SSH keepalives detect lost connections; Docker restarts an exited tunnel. The HTTP
-health check reports whether the pod's dashboard is reachable. An unhealthy HTTP
-check alone does not restart the container: a backend outage requires inspecting
-the pod service. Docker starts the container again after a daemon restart unless
-it was explicitly stopped. Docker itself must be enabled at host boot.
+Run these commands from this directory. Optional UID/GID/port overrides are shown
+in `.env.example`; old SSH variables in an existing `.env` are unused.
 
-After changing pods, update `.env` and the verified host-key file, then run
-`docker compose up -d --force-recreate --wait --wait-timeout 60`. Changes to the public
-domain belong in the pod service's exact `--origin` setting and the HTTPS proxy.
+The container mounts `scripts/` and `web/dist/` read-only, and uses
+`runs/dashboard-local/data/` for SQLite and historical games. Build frontend
+assets with `npm --prefix web run build` from the repository root when needed.
+The archive backend uses `--read-only`: login and all API mutations are disabled,
+and no scheduler or analysis worker is started. SQLite may still create WAL and
+session files, so the data mount is writable. The independent interactive demo
+continues to serve its own checkpoint.
 
-The current public origin is `https://dashboard.oleja.dev`. Configure the pod
-service with `--origin https://dashboard.oleja.dev`; the old domain is not an
-accepted origin. The local tunnel remains bound to `127.0.0.1`.
+## Retained data and restoration
+
+`data/jobs.sqlite3` retains all experiment, event, and epoch history. Each job's
+`games/archive/` contains the original replay JSON and manifests. Preserve relative
+symlinks between job archives. Model weights, checkpoint metadata, result files,
+and logs are also retained. Optimizer state, binary replay buffers, imported source
+datasets, and old deployment/build snapshots are in the user's external backup.
+
+The artifact catalog retains original `/workspace/...` paths and hashes for
+provenance; it does not imply those training artifacts are available locally.
+Resume training only after restoring the complete archived training environment.
+Cleanup inventories and integrity receipts live in `runs/dashboard-local/`.
+
+The former tunnel deployment remains available in Git history. Do not restart the
+old user-systemd SSH tunnel alongside this container.

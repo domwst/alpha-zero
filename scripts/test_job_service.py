@@ -2,6 +2,8 @@ import http.client
 import json
 from pathlib import Path
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -568,6 +570,27 @@ class StoreTests(unittest.TestCase):
         )
 
 
+class ArchiveStartupTests(unittest.TestCase):
+    def test_archive_requires_existing_data_and_rejects_workers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "must-not-create"
+            for extra, message in (
+                ([], "existing jobs.sqlite3"),
+                (["--binary", "alz"], "cannot be combined"),
+                (["--analysis-checkpoint", "checkpoint"], "cannot be combined"),
+                (["--analysis-binary", "alz"], "cannot be combined"),
+                (["--set-password"], "cannot be combined"),
+            ):
+                result = subprocess.run(
+                    [sys.executable, "-m", "scripts.job_service.server",
+                     "--root", str(root), "--read-only", *extra],
+                    capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(result.returncode, 2)
+                self.assertIn(message, result.stderr)
+                self.assertFalse(root.exists())
+
+
 class HttpTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -613,6 +636,33 @@ class HttpTests(unittest.TestCase):
         )
         conn.close()
         return status, data, response_headers
+
+    def test_read_only_archive_rejects_even_authenticated_mutations(self):
+        token, session = self.server.app.auth.login("long test password")
+        self.server.app.read_only = True
+        status, body, _ = self.request(
+            "/api/v1/session", headers={"Cookie": f"alz_session={token}"}
+        )
+        self.assertEqual(status, 200)
+        self.assertFalse(body["authenticated"])
+        self.assertFalse(body["login_enabled"])
+        for path, body in (
+            ("/api/v1/login", {"password": "long test password"}),
+            (
+                "/api/v1/commands",
+                {"command_id": "blocked", "request": {"action": "create", "spec": SPEC}},
+            ),
+        ):
+            status, data, _ = self.request(
+                path,
+                body,
+                {"Cookie": f"alz_session={token}", "X-CSRF-Token": session["csrf"]},
+            )
+            self.assertEqual(status, 403)
+            self.assertIn("read-only", data["error"])
+        status, data, _ = self.request("/api/v1/jobs")
+        self.assertEqual(status, 200)
+        self.assertEqual(data["total"], 0)
 
     def test_artifact_choices_include_series_title_without_exposing_paths(self):
         job = self.store.command(

@@ -24,7 +24,15 @@ from .store import Conflict, Store, encode
 
 class Application:
     def __init__(
-        self, store, root, assets, auth, origin, scheduler=None, analysis=None
+        self,
+        store,
+        root,
+        assets,
+        auth,
+        origin,
+        scheduler=None,
+        analysis=None,
+        read_only=False,
     ):
         self.store, self.root, self.assets = (
             store,
@@ -32,6 +40,7 @@ class Application:
             Path(assets).resolve(),
         )
         self.archive_availability = {}
+        self.read_only = read_only
         self.auth, self.origin, self.scheduler, self.analysis = (
             auth,
             origin.rstrip("/"),
@@ -227,6 +236,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         try:
+            if self.app.read_only:
+                raise PermissionError("Historical archive is read-only")
             if self.headers.get("Origin") != self.app.origin:
                 raise PermissionError("Request origin does not match this application")
             body = self.body()
@@ -362,13 +373,14 @@ class Handler(BaseHTTPRequestHandler):
             url = urlsplit(self.path)
             query = parse_qs(url.query)
             if url.path == "/api/v1/session":
-                session = self.app.auth.get(self.token())
+                session = None if self.app.read_only else self.app.auth.get(self.token())
                 self.reply(
                     200,
                     {
                         "authenticated": bool(session),
                         **(session or {}),
-                        "login_enabled": bool(self.app.auth.password_hash),
+                        "login_enabled": bool(self.app.auth.password_hash)
+                        and not self.app.read_only,
                     },
                     headers={"Set-Cookie": self.session_cookie(self.token())}
                     if session
@@ -584,7 +596,18 @@ def main():
     parser.add_argument("--analysis-gpu-memory-mb", type=int, default=0)
     parser.add_argument("--analysis-host-memory-mb", type=int, default=2048)
     parser.add_argument("--set-password", action="store_true")
+    parser.add_argument(
+        "--read-only",
+        action="store_true",
+        help="Serve historical data without login, mutations, training, or analysis",
+    )
     args = parser.parse_args()
+    if args.read_only and (
+        args.binary or args.analysis_binary or args.analysis_checkpoint or args.set_password
+    ):
+        parser.error("--read-only cannot be combined with workers or --set-password")
+    if args.read_only and not (args.root / "jobs.sqlite3").is_file():
+        parser.error("--read-only requires an existing jobs.sqlite3 archive")
     args.root.mkdir(parents=True, exist_ok=True)
     password = args.root / "admin-password.hash"
     if args.set_password:
@@ -637,12 +660,15 @@ def main():
         args.root,
         args.assets,
         Auth(
-            password.read_text().strip() if password.exists() else None,
+            password.read_text().strip()
+            if password.exists() and not args.read_only
+            else None,
             sessions_path=args.root / "admin-sessions.sqlite3",
         ),
         args.origin or f"http://{args.listen}:{args.port}",
         scheduler,
         analysis,
+        read_only=args.read_only,
     )
     server = ThreadingHTTPServer((args.listen, args.port), Handler)
     server.app = app
