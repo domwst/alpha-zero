@@ -829,6 +829,32 @@ class HttpTests(unittest.TestCase):
         )
         self.assertFalse(self.server.app.archive(child).exists())
 
+    def test_mixed_format_inherited_replays(self):
+        from scripts.job_service import replays
+
+        parent = self.archive_job("mixed-parent")
+        old = self.archive_epoch(parent, 0, "old")
+        newer = self.archive_epoch(parent, 1, "new")
+        game = json.loads(newer.read_text()) | {
+            "schema_version": 1,
+            "game_id": "00000000",
+        }
+        replays.save(newer.parent, game)
+        child = self.archive_job("mixed-child", self.archive_checkpoint(parent, 1))
+        status, page, _ = self.request(f"/api/v1/games?job_id={child}")
+        self.assertEqual(status, 200)
+        self.assertEqual(page["total"], 2)
+        self.assertEqual([g["id"] for g in page["games"]], ["00000000"] * 2)
+        newer.unlink()
+        for epoch, label in ((0, "old"), (1, "new")):
+            status, restored, _ = self.request(
+                f"/api/v1/game?job_id={child}&epoch={epoch:08}&id=00000000"
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(restored["label"], label)
+        self.assertTrue(old.exists())
+        self.assertFalse(self.server.app.archive(child).exists())
+
     def test_replay_ancestry_chains_local_precedence_and_cycles(self):
         parent = self.archive_job("parent")
         for epoch in range(4):

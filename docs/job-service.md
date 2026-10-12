@@ -8,9 +8,11 @@ existing processes.
 
 ## Ownership and storage
 
-The stdlib-only job service supports Python 3.12 and newer; its local formatter
-configuration preserves that syntax. The separate torch development environment
-uses Python 3.14.
+The job service supports Python 3.12 and newer; its local formatter configuration
+preserves that syntax. Replay storage requires `msgpack` and `zstandard`: install
+`deploy/dashboard/requirements.txt` in the service's Python environment (the Docker
+image already does this). The separate torch development environment uses Python
+3.14 and includes both packages through `uv sync --frozen`.
 
 Run the service on the **compute host**, with its database and outputs on persistent
 storage. The browser can be anywhere. A local SSH tunnel can expose the pod's
@@ -18,10 +20,10 @@ loopback listener at `127.0.0.1:8766`; the scheduler must not depend on a laptop
 remaining awake. This first implementation manages one Linux host and its GPU
 memory pool, rather than scheduling across multiple hosts.
 
-The deployed local tunnel is managed by [Docker Compose](../deploy/dashboard/README.md),
-with a loopback listener at `127.0.0.1:8765`. This replaces the local
-`alz-experiment-dashboard.service` user unit. The web backend and scheduler still
-run on the compute host; the local container only provides the SSH connection.
+The local historical dashboard is managed by [Docker Compose](../deploy/dashboard/README.md),
+with a loopback listener at `127.0.0.1:8765`. It serves the retained data directly
+in read-only mode, without an SSH tunnel, compute host, or scheduler. Training
+deployments use the compute-host ownership model described below.
 
 `--root` contains:
 
@@ -71,7 +73,11 @@ including after a host migration. Input roles are checked against registered
 artifact types; replay training may use a checkpoint with a registered replay
 buffer. Checkpoint selectors must refer to jobs that produce the required data.
 
-The native archive is `games/archive/<zero-based-epoch>/<game-id>.json`.
+New games use `games/archive/<zero-based-epoch>/<game-id>.msgpack.zst`.
+Readers and native self-play/comparison recovery also accept the original `.json`
+files; mixed directories are supported, with compressed files preferred for
+duplicate IDs. The HTTP API still returns JSON. See [replay storage](replay-storage.md)
+for the wire format and an optional, verified conversion of existing archives.
 For a self-play continuation, the game browser combines its own epochs with the
 source job's archive through the selected checkpoint epoch, inclusively. This is
 a logical view: no game files or links are created, and existing continuations

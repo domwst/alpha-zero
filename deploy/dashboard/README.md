@@ -24,7 +24,9 @@ continues to serve its own checkpoint.
 ## Retained data and restoration
 
 `data/jobs.sqlite3` retains all experiment, event, and epoch history. Each job's
-`games/archive/` contains the original replay JSON and manifests. Preserve relative
+`games/archive/` contains compressed `.msgpack.zst` replays and JSON manifests.
+Old `.json` replays remain readable, including archives restored from backup.
+Preserve relative
 symlinks between job archives. Model weights, checkpoint metadata, result files,
 and logs are also retained. Optimizer state, binary replay buffers, imported source
 datasets, and old deployment/build snapshots are in the user's external backup.

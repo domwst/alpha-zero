@@ -20,6 +20,7 @@ from urllib.parse import parse_qs, urlsplit
 from .auth import Auth
 from .scheduler import Scheduler
 from .store import Conflict, Store, encode
+from . import replays
 
 
 class Application:
@@ -129,12 +130,8 @@ class Application:
         if epoch is not None:
             selected = [directories[epoch]] if epoch in directories else []
         return sorted(
-            (
-                path
-                for directory in selected
-                for path in directory.glob("[0-9a-f]*.json")
-            ),
-            key=lambda p: (-int(p.parent.name), p.name),
+            (path for directory in selected for path in replays.game_paths(directory)),
+            key=lambda p: (-int(p.parent.name), replays.game_id(p)),
         )
 
     def has_games(self, job_id):
@@ -142,7 +139,7 @@ class Application:
         if cached and (cached[1] or time.monotonic() - cached[0] < 10):
             return cached[1]
         found = any(
-            next(directory.glob("[0-9a-f]*.json"), None) is not None
+            replays.has_games(directory)
             for directory in self.archive_directories(job_id).values()
         )
         self.archive_availability[job_id] = (time.monotonic(), found)
@@ -228,7 +225,7 @@ class Application:
     @staticmethod
     @lru_cache(maxsize=512)
     def game_summary(path, mtime_ns):
-        game = json.loads(path.read_text())
+        game = replays.load(path)
         plies = game["record"]["plies"]
         # MatchRecord terminal_value is from the player to move AFTER the last ply.
         value = game["record"].get("terminal_value")
@@ -554,10 +551,15 @@ class Handler(BaseHTTPRequestHandler):
                         },
                         "games": [
                             {
-                                "id": p.stem,
+                                "id": replays.game_id(p),
                                 "epoch": p.parent.name,
                                 "job_id": job,
-                                **self.app.game_summary(p, p.stat().st_mtime_ns),
+                                **self.app.game_summary(
+                                    p,
+                                    replays.find_game(p.parent, replays.game_id(p))
+                                    .stat()
+                                    .st_mtime_ns,
+                                ),
                             }
                             for p in paths[offset : offset + limit]
                         ],
@@ -572,8 +574,8 @@ class Handler(BaseHTTPRequestHandler):
                 directories = self.app.archive_directories(query["job_id"][0])
                 if epoch not in directories:
                     raise ValueError("Unknown game epoch")
-                path = directories[epoch] / (game_id + ".json")
-                self.reply(200, json.loads(path.read_text()))
+                path = replays.find_game(directories[epoch], game_id)
+                self.reply(200, replays.load(path))
             elif url.path == "/api/v1/schema":
                 from .spec import COMMON, KINDS
 

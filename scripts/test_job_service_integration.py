@@ -14,6 +14,7 @@ import uuid
 
 from scripts.job_service.scheduler import Scheduler
 from scripts.job_service.store import Store
+from scripts.job_service import replays
 
 
 @unittest.skipUnless(
@@ -102,7 +103,7 @@ class NativeWorkflowTests(unittest.TestCase):
         self.wait_for(job, "paused")
         output = self.root / "jobs" / job
         archive = output / "games" / "archive" / "00000000"
-        original = {p.name: p.read_bytes() for p in archive.glob("[0-9]*.json")}
+        original = {p.name: p.read_bytes() for p in replays.game_paths(archive)}
         self.assertEqual(len(original), 2)
         receipt = json.loads((archive / "receipt.json").read_text())
         self.command({"action": "resume", "job_id": job})
@@ -149,10 +150,16 @@ class NativeWorkflowTests(unittest.TestCase):
         self.command({"action": "pause", "job_id": battle, "mode": "boundary"})
         self.wait_for(battle, "paused")
         battle_output = self.root / "jobs" / battle
+        battle_archive = battle_output / "games" / "archive" / "00000000"
+        # A resumed job may contain old JSON games alongside new compressed ones.
+        first_saved = next(iter(replays.game_paths(battle_archive)))
+        legacy = first_saved.with_name(replays.game_id(first_saved) + ".json")
+        legacy.write_text(json.dumps(replays.load(first_saved)))
+        first_saved.unlink()
         saved = {
             p: p.read_bytes()
-            for p in (battle_output / "games" / "archive" / "00000000").glob(
-                "[0-9]*.json"
+            for p in replays.game_paths(
+                battle_output / "games" / "archive" / "00000000"
             )
         }
         self.assertTrue(saved)

@@ -186,8 +186,7 @@ pub async fn run(args: BattleArgs, batch_grid: &[usize]) -> Result<()> {
                 let second_seed = derive_seed(args.seed, game as u64, 1);
 
                 if let Some(dir) = &archive_dir {
-                    let path = dir.join(format!("{game:08}.json"));
-                    if path.exists() {
+                    if let Some(path) = alz::engine::archive::find(dir, &format!("{game:08}")) {
                         let saved = alz::engine::archive::load::<BoardState>(&path, first_seed)?;
                         let mut log = game_log(
                             game,

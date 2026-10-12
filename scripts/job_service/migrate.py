@@ -15,6 +15,7 @@ from .catalog import register_checkpoint, register_history
 from .importer import identity, import_snapshot, retain_source, converted_battle_game
 from .store import Store
 from .worker import atomic_json
+from .replays import save as save_replay
 
 
 def verified_copy(source, destination, shared=None):
@@ -119,7 +120,7 @@ def migrate(root, snapshot_path, inventory_path, namespace="legacy"):
             directory.mkdir(parents=True, exist_ok=True)
             for game in report["games"]:
                 archive = converted_battle_game(game, report, digest)
-                atomic_json(directory / (archive["game_id"] + ".json"), archive)
+                save_replay(directory, archive)
             atomic_json(
                 directory / "manifest.json",
                 {

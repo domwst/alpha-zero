@@ -301,6 +301,8 @@ def converted_game(rows, semantics, source_sha256):
 
 
 def import_rows(store, root, job_id, path, semantics="unknown_legacy_policy"):
+    from . import replays
+
     with store.transaction(write=False) as db:
         if not db.execute("SELECT 1 FROM jobs WHERE id=?", (job_id,)).fetchone():
             raise ValueError("Unknown destination job")
@@ -319,13 +321,16 @@ def import_rows(store, root, job_id, path, semantics="unknown_legacy_policy"):
         partition = f"{int(rows[0]['source_epoch']):08}"
         directory = Path(root) / "jobs" / job_id / "games" / "archive" / partition
         directory.mkdir(parents=True, exist_ok=True)
-        target = directory / (game_id + ".json")
-        if target.exists():
-            if json.loads(target.read_text()) != archive:
+        try:
+            target = replays.find_game(directory, game_id)
+        except FileNotFoundError:
+            target = None
+        if target is not None:
+            if replays.normalize(replays.load(target)) != replays.normalize(archive):
                 raise ValueError("Existing game differs; refusing to overwrite it")
             duplicates += 1
             return
-        atomic_json(target, archive)
+        replays.save(directory, archive)
         if partition not in published_manifests:
             atomic_json(
                 directory / "manifest.json",

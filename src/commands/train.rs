@@ -589,8 +589,7 @@ async fn collect_epoch_games_in(
         let handle = executor.evaluator_handle();
         async move {
             if let Some(dir) = &archive_dir {
-                let path = dir.join(format!("{game_index:08}.json"));
-                if path.exists() {
+                if let Some(path) = alz::engine::archive::find(dir, &format!("{game_index:08}")) {
                     let saved = alz::engine::archive::load::<BoardState>(&path, game_seed)?;
                     return Ok::<_, anyhow::Error>(saved.record);
                 }
