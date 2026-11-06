@@ -727,3 +727,91 @@
 .service-activation-scale[aria-busy="true"] {
   opacity: 0.5;
 }
+
+/* --- Review 2026-10-12: shell, overview, filters, tabs, cards, timeline --- */
+.service-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.service-filters label {
+  margin: 0;
+  display: inline-grid;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--ds-color-text-muted);
+}
+.service-filters input,
+.service-filters select {
+  min-height: var(--ds-control-height);
+  padding: 6px 8px;
+}
+.service-filters .service-search {
+  flex: 1 1 160px;
+}
+.service-game-timeline {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0 0;
+}
+.service-game-timeline input[type="range"] {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  accent-color: var(--ds-color-accent);
+}
+.service-game-timeline .service-actions {
+  gap: 6px;
+}
+.service-trajectory {
+  display: block;
+  width: 100%;
+  height: 110px;
+  cursor: crosshair;
+  touch-action: pan-y;
+}
+.service-trajectory text {
+  font-family: var(--ds-font-data);
+  font-size: 11px;
+  fill: var(--ds-color-text-muted);
+}
+.service-trajectory .line {
+  fill: none;
+  stroke: var(--ds-chart-series-1);
+  stroke-width: 1.8;
+}
+.service-trajectory .black-area {
+  fill: var(--ds-stone-black);
+  opacity: 0.18;
+}
+.service-trajectory .white-area {
+  fill: var(--ds-stone-white);
+  opacity: 0.35;
+}
+.service-trajectory .cursor {
+  stroke: var(--ds-color-text-primary);
+  stroke-dasharray: 2 3;
+}
+.service-trajectory .played {
+  fill: var(--ds-chart-series-5);
+}
+.service-ply-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-family: var(--ds-font-data);
+  font-size: 11px;
+}
+.service-main .service-ply-strip button {
+  min-height: 0;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: var(--ds-color-surface-subtle);
+  font-size: 11px;
+}
+.service-main .service-ply-strip button[aria-current="true"] {
+  background: var(--ds-color-accent);
+  color: var(--ds-color-on-accent);
+}

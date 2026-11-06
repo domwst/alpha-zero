@@ -134,6 +134,8 @@ export type ArchivePage = {
   epoch_labels: Record<string, string>;
   offset: number;
   epoch: string;
+  winner?: string;
+  sort?: string;
 };
 export const PAGE_SIZE = 10;
 export function analysisSnapshot(a: Analysis): SearchSnapshotMessage {

@@ -26,7 +26,7 @@ export function ReplayArchive({
   gameBusy: boolean;
   gameKey: string;
   onJobChange: (id: string) => void;
-  choosePage: (epoch: string, offset: number) => void;
+  choosePage: (epoch: string, offset: number, winner?: string, sort?: string) => void;
   load: (ref: GameRef) => void;
 }) {
   return (
@@ -70,6 +70,38 @@ export function ReplayArchive({
                 ))}
             </select>
           </label>
+          <div className="service-filters">
+            <label>
+              Winner
+              <select
+                disabled={listBusy || !page?.epoch}
+                title={page?.epoch ? undefined : "Select an epoch to filter games"}
+                value={page?.winner || ""}
+                onChange={(e) => choosePage(page!.epoch, 0, e.currentTarget.value, page?.sort)}
+              >
+                <option value="">Any outcome</option>
+                <option value="first">Black won</option>
+                <option value="second">White won</option>
+                <option value="draw">Draw</option>
+              </select>
+            </label>
+            <label>
+              Order
+              <select
+                disabled={listBusy || !page?.epoch}
+                title={page?.epoch ? undefined : "Select an epoch to sort games"}
+                value={page?.sort || "newest"}
+                onChange={(e) => choosePage(page!.epoch, 0, page?.winner, e.currentTarget.value)}
+              >
+                <option value="newest">Game order</option>
+                <option value="longest">Longest first</option>
+                <option value="shortest">Shortest first</option>
+              </select>
+            </label>
+          </div>
+          {!page?.epoch && (
+            <p className="service-runtime">Pick an epoch to filter by outcome or sort by length.</p>
+          )}
           <div className="service-game-list" aria-busy={listBusy}>
             {page?.games.map((r) => (
               <button

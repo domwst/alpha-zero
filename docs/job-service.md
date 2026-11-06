@@ -187,7 +187,9 @@ Kata network variants; the legacy ResNet reports that inspection is unsupported.
   resource observations, and event history. Logged-in controls schedule/pause/
   resume/cancel jobs and pause queue admission.
 - `/games?job=<id>`: paginated recorded games, selected epoch and ply, saved
-  distributions, and links into branch exploration.
+  distributions, a move timeline with Black's winning chances from the recorded
+  network values, autoplay, and links into branch exploration. Within one epoch
+  the list can be filtered by outcome and sorted by length.
 - `/analyze` (`/play` redirects here): shared board exploration, search, manual alternative
   moves, undo, and activation/channel inspection. Position links include game
   identity and a game-defined state encoding.
@@ -196,6 +198,10 @@ Native analysis uses `PositionEnvelope { game_type, state }`; the game adapter
 owns state validation and semantics. The implemented view/adapter is Gomoku. Go
 will need its own rules, history/ko state, non-board actions and rendering adapter;
 it does not need changes to the job database or worker protocol.
+
+`GET /api/v1/games` accepts `winner=first|second|draw` and
+`sort=newest|longest|shortest` when a single `epoch` is given; the per-epoch
+winner/length index is built on first use and cached until the directory changes.
 
 Useful public endpoints are `GET /api/v1/jobs?offset=0&limit=25`,
 `jobs/<id>`, `events?job_id=<id>&after=<cursor>`, `artifacts`, `games`, `game`,

@@ -41,6 +41,9 @@ class Application:
             Path(assets).resolve(),
         )
         self.archive_availability = {}
+        self.game_index_cache = {}
+        self.game_index_locks = {}
+        self.game_index_guard = threading.Lock()
         self.read_only = read_only
         self.auth, self.origin, self.scheduler, self.analysis = (
             auth,
@@ -133,6 +136,83 @@ class Application:
             (path for directory in selected for path in replays.game_paths(directory)),
             key=lambda p: (-int(p.parent.name), replays.game_id(p)),
         )
+
+    GAME_SORTS = ("newest", "longest", "shortest")
+    GAME_WINNERS = {"first": "First", "second": "Second", "draw": "Draw"}
+
+    def game_index(self, directory):
+        """Winner and length of every game in one epoch directory, cached
+        until the directory changes. Only used for sorted or filtered pages,
+        which are limited to a single epoch."""
+        key = str(directory)
+        with self.game_index_guard:
+            lock = self.game_index_locks.setdefault(key, threading.Lock())
+        # Concurrent requests for the same epoch wait for one build instead of
+        # each decoding every replay.
+        with lock:
+            stamp = directory.stat().st_mtime_ns
+            cached = self.game_index_cache.get(key)
+            if cached and cached[0] == stamp:
+                return cached[1]
+            index = {}
+            for path in replays.game_paths(directory):
+                identifier = replays.game_id(path)
+                index[identifier] = self.game_summary(
+                    path, replays.find_game(directory, identifier).stat().st_mtime_ns
+                )
+            self.game_index_cache[key] = (stamp, index)
+            return index
+
+    def game_page(self, job_id, epoch, offset, limit, winner=None, sort="newest"):
+        if sort not in self.GAME_SORTS:
+            raise ValueError("Unknown game sort")
+        if winner is not None and winner not in self.GAME_WINNERS:
+            raise ValueError("Unknown winner filter")
+        directory_map = self.archive_directories(job_id)
+        directories = [directory_map[key] for key in sorted(directory_map, reverse=True)]
+        paths = self.game_paths(job_id, epoch, directories=directory_map)
+        narrowed = winner is not None or sort != "newest"
+        if narrowed and epoch is None:
+            raise ValueError("Sorting or filtering games requires a single epoch")
+        if narrowed and paths:
+            index = self.game_index(paths[0].parent)
+            if winner is not None:
+                wanted = self.GAME_WINNERS[winner]
+                paths = [p for p in paths if index[replays.game_id(p)]["winner"] == wanted]
+            if sort != "newest":
+                paths.sort(
+                    key=lambda p: (
+                        -index[replays.game_id(p)]["plies"]
+                        if sort == "longest"
+                        else index[replays.game_id(p)]["plies"],
+                        replays.game_id(p),
+                    )
+                )
+        return {
+            "total": len(paths),
+            "epochs": [p.name for p in directories],
+            "epoch_labels": {
+                p.name: json.loads((p / "manifest.json").read_text()).get(
+                    "label", f"Epoch {int(p.name) + 1}"
+                )
+                for p in directories
+                if (p / "manifest.json").exists()
+            },
+            "games": [
+                {
+                    "id": replays.game_id(p),
+                    "epoch": p.parent.name,
+                    "job_id": job_id,
+                    **self.game_summary(
+                        p,
+                        replays.find_game(p.parent, replays.game_id(p))
+                        .stat()
+                        .st_mtime_ns,
+                    ),
+                }
+                for p in paths[offset : offset + limit]
+            ],
+        }
 
     def has_games(self, job_id):
         cached = self.archive_availability.get(job_id)
@@ -528,42 +608,16 @@ class Handler(BaseHTTPRequestHandler):
                     {"jobs": [j for j in candidates if self.app.has_games(j["id"])]},
                 )
             elif url.path == "/api/v1/games":
-                job = query["job_id"][0]
-                epoch = query.get("epoch", [None])[0]
-                directory_map = self.app.archive_directories(job)
-                directories = [
-                    directory_map[key] for key in sorted(directory_map, reverse=True)
-                ]
-                paths = self.app.game_paths(job, epoch, directories=directory_map)
-                offset = max(0, int(query.get("offset", ["0"])[0]))
-                limit = min(25, max(1, int(query.get("limit", ["10"])[0])))
                 self.reply(
                     200,
-                    {
-                        "total": len(paths),
-                        "epochs": [p.name for p in directories],
-                        "epoch_labels": {
-                            p.name: json.loads((p / "manifest.json").read_text()).get(
-                                "label", f"Epoch {int(p.name) + 1}"
-                            )
-                            for p in directories
-                            if (p / "manifest.json").exists()
-                        },
-                        "games": [
-                            {
-                                "id": replays.game_id(p),
-                                "epoch": p.parent.name,
-                                "job_id": job,
-                                **self.app.game_summary(
-                                    p,
-                                    replays.find_game(p.parent, replays.game_id(p))
-                                    .stat()
-                                    .st_mtime_ns,
-                                ),
-                            }
-                            for p in paths[offset : offset + limit]
-                        ],
-                    },
+                    self.app.game_page(
+                        query["job_id"][0],
+                        query.get("epoch", [None])[0],
+                        max(0, int(query.get("offset", ["0"])[0])),
+                        min(25, max(1, int(query.get("limit", ["10"])[0]))),
+                        winner=query.get("winner", [None])[0] or None,
+                        sort=query.get("sort", ["newest"])[0] or "newest",
+                    ),
                 )
             elif url.path == "/api/v1/game":
                 epoch, game_id = query["epoch"][0], query["id"][0]

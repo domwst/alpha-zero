@@ -716,6 +716,39 @@ class HttpTests(unittest.TestCase):
         )
         self.assertEqual(result["events"], [])
 
+    def test_games_sort_and_filter_within_one_epoch(self):
+        job = self.store.command("sorted", {"action": "create", "spec": SPEC})["job_id"]
+        directory = self.server.app.archive(job) / "00000000"
+        directory.mkdir(parents=True)
+        for index, (plies, actor, value) in enumerate(
+            ((9, "Second", -1), (25, "First", -1), (12, "Second", 0))
+        ):
+            (directory / f"{index:08}.json").write_text(
+                json.dumps(
+                    {
+                        "record": {
+                            "plies": [{"actor": "First"}] * plies,
+                            "terminal_actor": actor,
+                            "terminal_value": value,
+                        }
+                    }
+                )
+            )
+        _, page, _ = self.request(
+            f"/api/v1/games?job_id={job}&epoch=00000000&sort=longest"
+        )
+        self.assertEqual([g["plies"] for g in page["games"]], [25, 12, 9])
+        _, page, _ = self.request(
+            f"/api/v1/games?job_id={job}&epoch=00000000&winner=first&sort=shortest"
+        )
+        self.assertEqual([(g["plies"], g["winner"]) for g in page["games"]], [(9, "First")])
+        self.assertEqual(page["total"], 1)
+        status, error, _ = self.request(f"/api/v1/games?job_id={job}&sort=longest")
+        self.assertEqual(status, 400)
+        self.assertIn("single epoch", error["error"])
+        status, _, _ = self.request(f"/api/v1/games?job_id={job}&epoch=00000000&sort=bogus")
+        self.assertEqual(status, 400)
+
     def test_unknown_page_serves_the_app_with_a_404_status(self):
         (self.server.app.assets / "index.html").write_text(
             "<head></head><body>app</body>"
