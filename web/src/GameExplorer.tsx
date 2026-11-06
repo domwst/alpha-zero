@@ -25,7 +25,7 @@ import { InfoTip } from "./InfoTip";
 import { LoadingStatus } from "./LoadingStatus";
 import { SearchChart } from "./SearchChart";
 import { api, duration, type Session } from "./serviceApi";
-import { moveName, cellKey, type Cell } from "./protocol";
+import { moveName, cellKey, demoPositionUrl, type Cell } from "./protocol";
 
 // This board view is the Gomoku adapter. Other games supply their own state,
 // legal actions (including non-board actions), URLs, and renderer here.
@@ -200,6 +200,16 @@ function GomokuExplorer({
     toMove = actualPly % 2 ? "white" : "black";
   const previousAction =
     recorded && ply > 0 ? game?.record.plies[ply - 1]?.action : null;
+  // The moves that led here, when they account for every stone on the board.
+  const playedMoves = recorded && game
+    ? game.record.plies.slice(0, ply).flatMap((entry) =>
+        entry.action ? [{ row: entry.action.x, column: entry.action.y }] : [],
+      )
+    : [];
+  const demoLink =
+    session.demo_url && recorded && game && playedMoves.length === ply && ply === actualPly
+      ? demoPositionUrl(session.demo_url, playedMoves)
+      : null;
   const boardPosition = position(
     viewCells,
     actualPly,
@@ -421,6 +431,17 @@ function GomokuExplorer({
                 >
                   ⏭
                 </button>
+                {demoLink && (
+                  <a
+                    className="service-button"
+                    href={demoLink}
+                    rel="noopener"
+                    target="_blank"
+                    title="Continue from this position in the interactive demo, playing the side to move against the demo's own network (not the one that played this game)"
+                  >
+                    Play from here ↗
+                  </a>
+                )}
               </div>
             )}
           </div>

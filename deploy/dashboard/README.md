@@ -13,7 +13,8 @@ docker compose logs --tail 50
 Run these commands from this directory. Optional UID/GID/port overrides are shown
 in `.env.example`; old SSH variables in an existing `.env` are unused.
 `DASHBOARD_DEMO_URL` (default `https://gomoku.oleja.dev`) is passed as
-`--demo-url` so the dashboard header links to the interactive demo.
+`--demo-url` so the dashboard header links to the interactive demo and recorded
+games offer `Play from here ↗` links into it.
 
 The container mounts `scripts/` and `web/dist/` read-only, and uses
 `runs/dashboard-local/data/` for SQLite and historical games. Build frontend

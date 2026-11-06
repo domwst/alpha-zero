@@ -1,6 +1,6 @@
 import { useSignal } from '@preact/signals';
 import type { JSX } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 
 import { seriesColor, seriesColorIndexes, trackedMoves } from './chartSeries';
 import { formatEta, favorsText, percent, signed } from './format';
@@ -20,6 +20,7 @@ import { usePopover } from './usePopover';
 import {
   type Cell,
   type ErrorMessage,
+  type GameLink,
   type HelloMessage,
   type MoveStats,
   type PositionMessage,
@@ -30,7 +31,9 @@ import {
   BOARD_SIZE,
   PROTOCOL_VERSION,
   cellKey,
+  gameFragment,
   moveName,
+  parseGameFragment,
   restoreGameCommand,
   undoMoves,
   temperatureProbabilities,
@@ -113,6 +116,15 @@ function byStrength(left: MoveStats, right: MoveStats): number {
   return right.visits - left.visits || right.prior - left.prior;
 }
 
+/** Keeps the address bar on the current game, so it can be copied or reloaded. */
+function writeGameFragment(game: PositionMessage | null) {
+  if (!game) return;
+  const fragment = gameFragment(game.stones, game.human_color);
+  const hash = fragment ? `#${fragment}` : '';
+  if (window.location.hash === hash) return;
+  history.replaceState(history.state, '', `${window.location.pathname}${window.location.search}${hash}`);
+}
+
 function websocketUrl(): string {
   const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   return `${scheme}//${window.location.host}/api/ws`;
@@ -190,6 +202,16 @@ export function App(): JSX.Element {
   const playInFlight = useSignal<number | null>(null);
   const error = useSignal<ErrorMessage | null>(null);
   const lastJudgment = useSignal<MoveJudgment | null>(null);
+  // A game opened from the address bar waits here until the server restores it.
+  const openedLink = useMemo(() => parseGameFragment(window.location.hash), []);
+  const pendingLink = useRef<GameLink | null>(openedLink?.ok ? openedLink.link : null);
+  const restoringLink = useRef(false);
+  const linkNotice = useSignal<string | null>(
+    openedLink && !openedLink.ok
+      ? `This link isn't a playable game: ${openedLink.reason}. Started a new game instead.`
+      : null,
+  );
+  const linkCopied = useSignal(false);
   const [connectionGeneration, setConnectionGeneration] = useState(0);
   const socket = useSignal<WebSocket | null>(null);
   const reconnectAttempt = useSignal(0);
@@ -216,7 +238,10 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     const resumePosition = position.value;
-    const restoreMessage = restoreGameCommand(resumePosition, newHumanColor.value);
+    const link = resumePosition ? null : pendingLink.current;
+    const restoreMessage = link
+      ? { type: 'restore_game' as const, human_color: link.humanColor, moves: link.moves }
+      : restoreGameCommand(resumePosition, newHumanColor.value);
     let handshakeAccepted = false;
     let awaitingRestoredPosition = true;
     const ws = new WebSocket(websocketUrl());
@@ -281,6 +306,7 @@ export function App(): JSX.Element {
         if (!resumePosition) budget.value = message.default_search_simulations;
         if (resumePosition) connection.value = 'restoring';
         sendOnThisSocket(restoreMessage);
+        restoringLink.current = link !== null;
         return;
       }
 
@@ -293,6 +319,9 @@ export function App(): JSX.Element {
         }
         connection.value = 'connected';
         position.value = message;
+        pendingLink.current = null;
+        restoringLink.current = false;
+        writeGameFragment(message);
         status.value = null;
         snapshots.value = [];
         inspectedSimulations.value = null;
@@ -383,6 +412,18 @@ export function App(): JSX.Element {
       }
 
       playInFlight.value = null;
+      if (restoringLink.current) {
+        // The server refused the linked moves, e.g. play that continues after
+        // five in a row. Fall back instead of retrying the same restore.
+        restoringLink.current = false;
+        pendingLink.current = null;
+        linkNotice.value = `This link isn't a playable game: ${message.message}. ${
+          awaitingRestoredPosition ? 'Started a new game instead.' : 'Kept the current game.'
+        }`;
+        if (awaitingRestoredPosition) sendOnThisSocket(restoreGameCommand(null, newHumanColor.value));
+        else writeGameFragment(position.value);
+        return;
+      }
       if (
         message.code === 'invalid_command'
         && autoReplied.value !== null
@@ -420,6 +461,33 @@ export function App(): JSX.Element {
       if (socket.value === ws) socket.value = null;
     };
   }, [connectionGeneration]);
+
+  useEffect(() => {
+    const openLinkedGame = () => {
+      const parsed = parseGameFragment(window.location.hash);
+      const current = position.value;
+      if (!parsed?.ok) {
+        if (parsed) linkNotice.value = `This link isn't a playable game: ${parsed.reason}. Kept the current game.`;
+        writeGameFragment(current);
+        return;
+      }
+      const { moves, humanColor } = parsed.link;
+      if (!current) {
+        pendingLink.current = parsed.link;
+        return;
+      }
+      if (gameFragment(moves, humanColor) === gameFragment(current.stones, current.human_color)) return;
+      if (send({ type: 'restore_game', human_color: humanColor, moves })) {
+        restoringLink.current = true;
+        lastJudgment.value = null;
+        linkNotice.value = null;
+      } else {
+        writeGameFragment(current);
+      }
+    };
+    window.addEventListener('hashchange', openLinkedGame);
+    return () => window.removeEventListener('hashchange', openLinkedGame);
+  }, []);
 
   useEffect(() => {
     const simulations = budget.value;
@@ -697,6 +765,16 @@ export function App(): JSX.Element {
         : (allSnapshots[next]?.searched_simulations ?? null);
   };
 
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      linkCopied.value = true;
+      window.setTimeout(() => { linkCopied.value = false; }, 2000);
+    } catch {
+      linkNotice.value = 'Copying is blocked here; copy the address bar to share this position.';
+    }
+  };
+
   const undoLastMove = () => {
     if (!currentPosition || !undoTarget) return;
     lastJudgment.value = null;
@@ -822,6 +900,13 @@ export function App(): JSX.Element {
             </button>
           )}
           <button className="notice-close" aria-label="Dismiss error" onClick={() => { error.value = null; }} type="button">×</button>
+        </div>
+      )}
+
+      {linkNotice.value && (
+        <div className="notice" role="status">
+          <span>{linkNotice.value}</span>
+          <button className="notice-close" aria-label="Dismiss" onClick={() => { linkNotice.value = null; }} type="button">×</button>
         </div>
       )}
 
@@ -954,6 +1039,17 @@ export function App(): JSX.Element {
                         type="button"
                       >
                         Undo move
+                      </button>
+                      <button
+                        className="button"
+                        onClick={copyLink}
+                        title="Copy a link that opens this game at the current position"
+                        type="button"
+                      >
+                        <span className="stable-label">
+                          <span className={linkCopied.value ? '' : 'is-shown'}>Copy link</span>
+                          <span className={linkCopied.value ? 'is-shown' : ''}>Link copied</span>
+                        </span>
                       </button>
                       <label className="auto-reply" title="When on, the network plays its move as soon as its search finishes. Turn off to inspect the search before each reply.">
                         <input

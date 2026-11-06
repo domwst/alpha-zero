@@ -200,7 +200,9 @@ Kata network variants; the legacy ResNet reports that inspection is unsupported.
   network values, autoplay, and links into branch exploration. Within one epoch
   the list can be filtered by outcome and sorted by length.
 - The header links to the interactive demo when the service is started with
-  `--demo-url https://…`; read-only archives show an archive banner and hide the
+  `--demo-url https://…`, and recorded games then offer `Play from here ↗`, which
+  opens the position on screen in the demo with the visitor playing the side to
+  move; read-only archives show an archive banner and hide the
   queue notice. The Analysis entry is hidden when no analysis checkpoint is
   configured and nobody is logged in.
 - `/analyze` (`/play` redirects here): shared board exploration, search, manual alternative

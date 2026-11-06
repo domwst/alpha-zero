@@ -118,11 +118,28 @@ watchdog provides the same hard-stop guarantee if a native inference call does n
 ## Reconnect and restart recovery
 
 Protocol version 2 initializes every WebSocket from a browser-supplied move sequence. On the first
-connection that sequence is empty. On reconnect, the browser sends the last server-confirmed moves
+connection that sequence comes from the address bar (see below) and is otherwise empty. On
+reconnect, the browser sends the last server-confirmed moves
 and human color while continuing to display the existing board. The server validates and replays the
 moves from an empty board before publishing the restored position.
 
 Only game state is restored. The MCTS tree, root visits, search snapshots, and last-move
 analysis are discarded, and the browser starts a fresh search using its current budget. This works
-across a dropped connection or server process restart while the page remains open; reloading the page
-still starts a new game because game state is not stored in browser storage.
+across a dropped connection or server process restart while the page remains open, and because the
+address bar always holds the current game, reloading the page resumes it too.
+
+## Game links
+
+The URL fragment carries the game: `#moves=K10.K9.J10&as=white` lists the moves in the board's own
+coordinates (columns A–T without I, rank 1 at the bottom) and the side the visitor plays; without
+`as`, the visitor plays the side to move. A fresh game as Black has no fragment. The fragment never
+reaches the server or proxy logs. The page rewrites it with `history.replaceState` after every
+position, so the address bar can be copied or reloaded at any time, and `Copy link` next to `Undo
+move` copies it. A link pasted into an open tab changes only the fragment; the page restores that
+game over the live connection. Links that name an off-board point or a point twice are rejected in
+the browser, and moves the server refuses (play after five in a row) fall back once to a new game
+with a notice instead of retrying.
+
+The research dashboard links into this format: a recorded game's `Play from here ↗` opens the
+position on screen with the visitor playing the side to move, against the demo's own checkpoint
+rather than the network that played the game.

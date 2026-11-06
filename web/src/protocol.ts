@@ -167,3 +167,70 @@ export function temperatureProbabilities(
   moves.forEach((move, index) => result.set(cellKey(move), (weights[index] ?? 0) / sum));
   return result;
 }
+
+// Game links ---------------------------------------------------------------
+
+/**
+ * A game carried in the demo's URL fragment, e.g. `#moves=K10.K9.J10&as=white`:
+ * the moves in order, in the board's own coordinates, and the side the person
+ * opening the link plays. The fragment never reaches the server or its logs.
+ */
+export interface GameLink {
+  moves: Cell[];
+  humanColor: StoneColor;
+}
+
+export type ParsedGameLink = { ok: true; link: GameLink } | { ok: false; reason: string };
+
+export function sideToMove(moveCount: number): StoneColor {
+  return moveCount % 2 ? 'white' : 'black';
+}
+
+export function parseMoveName(token: string): Cell | null {
+  const match = /^([A-Za-z])(\d{1,2})$/.exec(token.trim());
+  if (!match) return null;
+  const column = COLUMNS.indexOf(match[1]!.toUpperCase());
+  const rank = Number(match[2]);
+  if (column < 0 || rank < 1 || rank > BOARD_SIZE) return null;
+  return { row: BOARD_SIZE - rank, column };
+}
+
+/** Fragment without `#`; empty for a fresh game played as Black. */
+export function gameFragment(moves: readonly Cell[], humanColor: StoneColor): string {
+  const params = new URLSearchParams();
+  if (moves.length > 0) params.set('moves', moves.map(moveName).join('.'));
+  if (moves.length > 0 || humanColor !== 'black') params.set('as', humanColor);
+  return params.toString();
+}
+
+/** Null when the fragment carries no game; otherwise the game or why it is unusable. */
+export function parseGameFragment(fragment: string): ParsedGameLink | null {
+  const params = new URLSearchParams(fragment.replace(/^#/, ''));
+  if (!params.has('moves') && !params.has('as')) return null;
+
+  const tokens = (params.get('moves') ?? '').split(/[.,\s]+/).filter(Boolean);
+  if (tokens.length > BOARD_SIZE * BOARD_SIZE) {
+    return { ok: false, reason: 'it has more moves than the board has points' };
+  }
+  const moves: Cell[] = [];
+  const occupied = new Set<string>();
+  for (const [index, token] of tokens.entries()) {
+    const cell = parseMoveName(token);
+    if (!cell) return { ok: false, reason: `move ${index + 1}, “${token}”, is not a board point` };
+    if (occupied.has(cellKey(cell))) {
+      return { ok: false, reason: `move ${index + 1}, ${moveName(cell)}, is played twice` };
+    }
+    occupied.add(cellKey(cell));
+    moves.push(cell);
+  }
+  const side = params.get('as');
+  const humanColor = side === 'black' || side === 'white' ? side : sideToMove(moves.length);
+  return { ok: true, link: { moves, humanColor } };
+}
+
+/** Demo address that opens a position with the side to move played by the visitor. */
+export function demoPositionUrl(demoUrl: string, moves: readonly Cell[]): string {
+  const url = new URL(demoUrl);
+  url.hash = gameFragment(moves, sideToMove(moves.length));
+  return url.toString();
+}

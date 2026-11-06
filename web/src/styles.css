@@ -2407,6 +2407,21 @@ figcaption strong {
   transition: inline-size var(--ds-duration-slow) var(--ds-ease-standard);
 }
 
+/* Labels that swap in place (e.g. "Copy link" / "Link copied") keep the
+   width of the longest, so neighbouring controls do not move. */
+.stable-label {
+  display: inline-grid;
+}
+
+.stable-label > span {
+  grid-area: 1 / 1;
+  visibility: hidden;
+}
+
+.stable-label > .is-shown {
+  visibility: visible;
+}
+
 .auto-reply {
   display: inline-flex;
   align-items: center;

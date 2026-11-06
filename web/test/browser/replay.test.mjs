@@ -54,39 +54,43 @@ const game = {
   record: { plies, terminal_actor: "Second", terminal_value: -1 },
 };
 
+async function serveReplay(p, session = { authenticated: false }) {
+  await p.route("**/api/v1/session", (r) =>
+    r.fulfill({ json: session }),
+  );
+  await p.route("**/api/v1/analysis", (r) =>
+    r.fulfill({ json: { available: false } }),
+  );
+  await p.route("**/api/v1/game-jobs", (r) =>
+    r.fulfill({
+      json: { jobs: [{ id: "fixture", title: "Replay fixture" }] },
+    }),
+  );
+  await p.route("**/api/v1/games?*", (r) =>
+    r.fulfill({
+      json: {
+        games: [
+          {
+            id: "0",
+            epoch: "00000000",
+            job_id: "fixture",
+            plies: 9,
+            winner: "First",
+          },
+        ],
+        epochs: ["00000000"],
+        epoch_labels: {},
+        total: 1,
+      },
+    }),
+  );
+  await p.route("**/api/v1/game?*", (r) => r.fulfill({ json: game }));
+}
+
 for (const engine of engines)
   test(`${engine.name()}: terminal replay layout`, async (t) => {
     const { page: p, origin } = await fixture(t, engine);
-    await p.route("**/api/v1/session", (r) =>
-      r.fulfill({ json: { authenticated: false } }),
-    );
-    await p.route("**/api/v1/analysis", (r) =>
-      r.fulfill({ json: { available: false } }),
-    );
-    await p.route("**/api/v1/game-jobs", (r) =>
-      r.fulfill({
-        json: { jobs: [{ id: "fixture", title: "Replay fixture" }] },
-      }),
-    );
-    await p.route("**/api/v1/games?*", (r) =>
-      r.fulfill({
-        json: {
-          games: [
-            {
-              id: "0",
-              epoch: "00000000",
-              job_id: "fixture",
-              plies: 9,
-              winner: "First",
-            },
-          ],
-          epochs: ["00000000"],
-          epoch_labels: {},
-          total: 1,
-        },
-      }),
-    );
-    await p.route("**/api/v1/game?*", (r) => r.fulfill({ json: game }));
+    await serveReplay(p);
     for (const width of [1440, 650]) {
       await p.setViewportSize({ width, height: 1000 });
       await p.goto(origin + "/games?job=fixture");
@@ -157,4 +161,22 @@ for (const engine of engines)
       );
       assert.deepEqual(await bounds(), before);
     }
+  });
+
+for (const engine of engines)
+  test(`${engine.name()}: replay positions open in the demo`, async (t) => {
+    const { page: p, origin } = await fixture(t, engine);
+    await serveReplay(p, { authenticated: false, demo_url: "https://demo.example/" });
+    await p.goto(origin + "/games?job=fixture");
+    await p.locator(".service-game-list button").first().click();
+    const link = p.getByRole("link", { name: "Play from here ↗" });
+    await link.waitFor();
+    assert.equal(await link.getAttribute("href"), "https://demo.example/");
+    assert.equal(await link.getAttribute("target"), "_blank");
+    const panel = p.locator(".service-panel").filter({ has: link });
+    for (let i = 0; i < 2; i++) await panel.getByRole("button", { name: "Next", exact: true }).click();
+    await p.waitForFunction(
+      () => document.querySelector("a.service-button[target]")?.getAttribute("href")
+        === "https://demo.example/#moves=A19.A18&as=black",
+    );
   });

@@ -3,8 +3,10 @@ import assert from "node:assert/strict";
 import { engines, fixture } from "./helpers.mjs";
 
 async function demo(t, engine, options = {}) {
-  const { page, origin } = await fixture(t, engine, { service: false, ...options });
+  const { hash = "", refuseLinkedRestore = false, ...fixtureOptions } = options;
+  const { page, origin } = await fixture(t, engine, { service: false, ...fixtureOptions });
   const played = [];
+  const restores = [];
   const newGames = [];
   const searches = [];
   const replies = [];
@@ -18,7 +20,20 @@ async function demo(t, engine, options = {}) {
     });
     socket.onMessage((raw) => {
       const message = JSON.parse(raw);
-      if (message.type === "restore_game") position();
+      if (message.type === "restore_game") {
+        restores.push({ human_color: message.human_color, moves: message.moves });
+        if (refuseLinkedRestore && message.moves.length > 0) {
+          send({
+            type: "error", code: "invalid_command",
+            message: "restore contains moves after the game ended", recoverable: true,
+          });
+          return;
+        }
+        stones = message.moves.map((cell, ply) => ({ ...cell, color: ply % 2 ? "white" : "black" }));
+        humanColor = message.human_color;
+        positionId++;
+        position();
+      }
       if (message.type === "new_game") {
         newGames.push(message.human_color);
         humanColor = message.human_color;
@@ -71,14 +86,14 @@ async function demo(t, engine, options = {}) {
       c_puct: 1, snapshot_interval_ms: 100,
     });
   });
-  await page.goto(origin);
+  await page.goto(origin + hash);
   await page.getByText("Complete", { exact: true }).waitFor();
   const cell = (row, col) => page.locator(`.board-cell[data-row="${row}"][data-col="${col}"]`);
   const waitForMoves = async (count) => {
     await page.waitForFunction((n) => document.querySelectorAll(".board-cell .stone").length === n, count);
     assert.equal(played.length, count);
   };
-  return { page, played, newGames, searches, replies, cell, waitForMoves };
+  return { page, played, newGames, searches, replies, restores, cell, waitForMoves };
 }
 
 for (const engine of engines) {
@@ -224,6 +239,52 @@ for (const engine of engines) {
     await page.waitForFunction(() => document.querySelectorAll(".board-cell .stone").length === 2);
     assert.deepEqual(replies.map((reply) => reply.instant), [true]);
     assert.equal(await page.locator('[role="alert"]').count(), 0);
+  });
+
+  test(`${engine.name()}: a game link restores the game and the address bar follows it`, async (t) => {
+    const { page, restores, cell } = await demo(t, engine, { hash: "#moves=K10.K9&as=black" });
+    const stoneCount = (n) =>
+      page.waitForFunction((count) => document.querySelectorAll(".board-cell .stone").length === count, n);
+    assert.deepEqual(restores[0], {
+      human_color: "black",
+      moves: [{ row: 9, column: 9 }, { row: 10, column: 9 }],
+    });
+    await stoneCount(2);
+
+    await cell(0, 0).click();
+    await stoneCount(3);
+    await page.waitForFunction(() => location.hash === "#moves=K10.K9.A19&as=black");
+
+    await page.evaluate(() => {
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: { writeText: async (text) => { window.copied = text; } },
+      });
+    });
+    await page.getByRole("button", { name: "Copy link" }).click();
+    await page.getByText("Link copied", { exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => window.copied), await page.evaluate(() => location.href));
+
+    // A link pasted into the same tab changes only the fragment, without a reload.
+    await page.evaluate(() => { location.hash = "#moves=D4&as=white"; });
+    await stoneCount(1);
+    assert.deepEqual(restores.at(-1), { human_color: "white", moves: [{ row: 15, column: 3 }] });
+  });
+
+  test(`${engine.name()}: unusable game links fall back to a new game`, async (t) => {
+    const { page, restores } = await demo(t, engine, { hash: "#moves=K10.K10" });
+    await page.getByText("This link isn't a playable game: move 2, K10, is played twice. Started a new game instead.").waitFor();
+    assert.deepEqual(restores.map((restore) => restore.moves.length), [0]);
+    await page.waitForFunction(() => location.hash === "");
+  });
+
+  test(`${engine.name()}: a link the server refuses falls back once`, async (t) => {
+    const { page, restores } = await demo(t, engine, { hash: "#moves=K10.K9", refuseLinkedRestore: true });
+    await page
+      .getByText("This link isn't a playable game: restore contains moves after the game ended. Started a new game instead.")
+      .waitFor();
+    assert.deepEqual(restores.map((restore) => restore.moves.length), [2, 0], "no retry loop");
+    assert.equal(await page.locator(".board-cell .stone").count(), 0);
   });
 
   test(`${engine.name()}: demo coordinates align with cells at desktop and narrow sizes`, async (t) => {
