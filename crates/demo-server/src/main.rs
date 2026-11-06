@@ -99,6 +99,10 @@ struct Args {
 
     #[arg(long, default_value_t = 0)]
     seed: u64,
+
+    /// Public address of the research dashboard, linked from the page header.
+    #[arg(long)]
+    dashboard_url: Option<String>,
 }
 
 #[derive(Clone)]
@@ -202,6 +206,7 @@ async fn main() -> Result<()> {
         c_puct: args.c_puct,
         search_chunk_size: args.search_chunk_size,
         snapshot_interval: Duration::from_millis(args.snapshot_interval_ms),
+        dashboard_url: args.dashboard_url.clone(),
     };
     session_config.validate()?;
     let (shutdown_sender, shutdown_receiver) = watch::channel(false);

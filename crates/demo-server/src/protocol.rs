@@ -42,6 +42,9 @@ pub enum ClientMessage {
     ChooseNetworkMove {
         position_id: u64,
         temperature: f32,
+        /// Sample the network's raw policy instead of the search's visits.
+        #[serde(default)]
+        instant: bool,
     },
 }
 
@@ -86,6 +89,9 @@ pub enum ServerMessage {
         default_search_simulations: u32,
         c_puct: f32,
         snapshot_interval_ms: u64,
+        /// Public address of the research dashboard, when configured.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        dashboard_url: Option<String>,
     },
     Position {
         position_id: u64,
@@ -102,6 +108,7 @@ pub enum ServerMessage {
         analysis_id: u64,
         searched_simulations: u32,
         target_simulations: u32,
+        carried_visits: u32,
         running: bool,
     },
     SearchSnapshot {
@@ -155,11 +162,32 @@ mod tests {
             }
         );
 
+        for (json, instant) in [
+            (
+                r#"{"type":"choose_network_move","position_id":7,"temperature":0.5}"#,
+                false,
+            ),
+            (
+                r#"{"type":"choose_network_move","position_id":7,"temperature":0.5,"instant":true}"#,
+                true,
+            ),
+        ] {
+            assert_eq!(
+                serde_json::from_str::<ClientMessage>(json).unwrap(),
+                ClientMessage::ChooseNetworkMove {
+                    position_id: 7,
+                    temperature: 0.5,
+                    instant,
+                }
+            );
+        }
+
         let message = ServerMessage::SearchStatus {
             position_id: 7,
             analysis_id: 3,
             searched_simulations: 512,
             target_simulations: 2_000,
+            carried_visits: 250,
             running: true,
         };
         assert_eq!(
@@ -170,6 +198,7 @@ mod tests {
                 "analysis_id": 3,
                 "searched_simulations": 512,
                 "target_simulations": 2_000,
+                "carried_visits": 250,
                 "running": true,
             })
         );
@@ -190,6 +219,7 @@ mod tests {
             default_search_simulations: 2_000,
             c_puct: 1.0,
             snapshot_interval_ms: 100,
+            dashboard_url: None,
         };
         let json = serde_json::to_value(message).unwrap();
 

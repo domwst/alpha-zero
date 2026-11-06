@@ -2,6 +2,10 @@
 
 The objective is end-to-end self-play throughput, measured as completed network evaluations and games per second. GPU utilization is diagnostic rather than the optimization target: this network is small enough for CPU-side MCTS and batch formation to dominate.
 
+Planned measurements live in the [experiment backlog](experiment-backlog.md).
+The proposed controller and inspection interfaces are recorded in
+[execution and analysis design](execution-and-analysis-design.md).
+
 ## Reproducibility controls
 
 - Build and run through `./run.sh`, which uses the locked Python/PyTorch environment and embeds the matching Torch library path.
@@ -9,6 +13,8 @@ The objective is end-to-end self-play throughput, measured as completed network 
 - Give every run a unique directory and execute it through `scripts/run_profiled.sh`.
 - Set an explicit seed. Training derives independent deterministic streams for each game, epoch shuffle, and rendered-game selection.
 - Keep batch size, concurrent games, and batch timeout fixed within a measured run.
+- When measuring an adaptive policy, fix its limits and algorithm for the run and
+  record effective concurrency, real/padded batch sizes, and dispatch reasons.
 - Warm CUDA and convolution selection before recording a benchmark.
 - Repeat finalists at least three times and compare medians, not the single best observation.
 

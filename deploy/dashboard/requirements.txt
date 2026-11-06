@@ -1,0 +1,2 @@
+msgpack==1.2.2
+zstandard==0.25.0

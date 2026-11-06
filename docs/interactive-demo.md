@@ -13,8 +13,30 @@ temperature-adjusted move probability independently. Hovering or focusing a lega
 all three values, its visit count, and mean action value. Search snapshots are retained in the
 browser so the evolution chart and board can be scrubbed without stopping live search.
 
-Move guidance can be shown always, only on the network's turn, or never. The setting applies to board
-markers and tooltips, candidate ranking, search history, and last-move policy details. Select an empty
+By default the network waits for `Let network choose`, so its search can be
+inspected before each reply; turn on **Auto-reply** (under the board, remembered in
+the browser) to have it answer as soon as its search finishes. Either way one reply is
+requested per position: the button reads `Network is replying…` while the server
+answers, and the automatic reply waits for a snapshot whose positive target was
+reached, not the instant snapshot of carried visits that follows every move. While "who's
+ahead" is shown, a Black/White bar above the board shows winning chances derived from
+the search value (the network value before any search), always from Black's
+side so it does not flip with the side to move; raw V and Q stay in the Position
+panel. The search-history scrubber sits under the evolution chart it controls.
+`New game` starts immediately with the colour chosen in the adjacent popover
+(Black moves first); the candidate table shows visit shares as bars, and hovering
+a row highlights that move on the board. Pass `--dashboard-url https://…` to the
+server to show a "Research dashboard" link in the header.
+
+**Show on your turn** has one switch per group of analysis: who's ahead (win bar, V and Q), the
+rating of your last move, and where to move (board markers and tooltips, candidate ranking, search
+history); hovering a switch lists exactly what it reveals. By default only where to move is off.
+The network's turn shows everything unless "Hide on the network's turn too" is ticked, and a
+finished game counts as the network's turn. The setting is remembered in the browser. Hidden
+analysis keeps a same-size placeholder, so the page does not shift between turns, and `Peek`
+reveals it for the current position only. What the hint squares measure (network prior, visit
+fraction, or move probability at the current temperature) is switched in the legend under the
+board and remembered in the browser. Select an empty
 cell once to inspect it and activate the selected cell again to play it. No cell is selected initially,
 search never changes selection, and a submitted move keeps the selection as a pending marker until
 the resulting position arrives and replaces it with the played stone. Arrow keys move the selection
@@ -69,6 +91,13 @@ The first two limits are operator-controlled through `--max-search-simulations` 
 `--max-sessions`. A position's budget counts new simulations; visits inherited by subtree reuse are
 reported separately as carried work.
 
+A budget of 0 is instant play. `start_search` with `"simulations": 0` asks only for the
+position's network evaluation (one forward pass, no simulation), reported as a complete snapshot
+with priors and no visits, and `choose_network_move` with `"instant": true` samples the raw priors
+at the requested temperature instead of search visits. The browser then ranks candidates by prior,
+derives move probabilities from priors, disables the Visits metric, and replaces the search chart
+with a short note. Older clients never send either, so the protocol version is unchanged.
+
 ## Cancellation model
 
 The session actor owns its tree for the full connection. While a search chunk is awaiting network
@@ -89,11 +118,28 @@ watchdog provides the same hard-stop guarantee if a native inference call does n
 ## Reconnect and restart recovery
 
 Protocol version 2 initializes every WebSocket from a browser-supplied move sequence. On the first
-connection that sequence is empty. On reconnect, the browser sends the last server-confirmed moves
+connection that sequence comes from the address bar (see below) and is otherwise empty. On
+reconnect, the browser sends the last server-confirmed moves
 and human color while continuing to display the existing board. The server validates and replays the
 moves from an empty board before publishing the restored position.
 
 Only game state is restored. The MCTS tree, root visits, search snapshots, and last-move
 analysis are discarded, and the browser starts a fresh search using its current budget. This works
-across a dropped connection or server process restart while the page remains open; reloading the page
-still starts a new game because game state is not stored in browser storage.
+across a dropped connection or server process restart while the page remains open, and because the
+address bar always holds the current game, reloading the page resumes it too.
+
+## Game links
+
+The URL fragment carries the game: `#moves=K10.K9.J10&as=white` lists the moves in the board's own
+coordinates (columns A–T without I, rank 1 at the bottom) and the side the visitor plays; without
+`as`, the visitor plays the side to move. A fresh game as Black has no fragment. The fragment never
+reaches the server or proxy logs. The page rewrites it with `history.replaceState` after every
+position, so the address bar can be copied or reloaded at any time, and `Copy link` next to `Undo
+move` copies it. A link pasted into an open tab changes only the fragment; the page restores that
+game over the live connection. Links that name an off-board point or a point twice are rejected in
+the browser, and moves the server refuses (play after five in a row) fall back once to a new game
+with a notice instead of retrying.
+
+The research dashboard links into this format: a recorded game's `Play from here ↗` opens the
+position on screen with the visitor playing the side to move, against the demo's own checkpoint
+rather than the network that played the game.

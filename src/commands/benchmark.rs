@@ -82,11 +82,12 @@ struct SelfPlayResult<'a> {
     network: &'a NetworkBatchStats,
 }
 
-pub async fn run(mode: BenchmarkMode) -> Result<()> {
+pub async fn run(mode: BenchmarkMode, batch_grid: &[usize]) -> Result<()> {
     match mode {
+        BenchmarkMode::Executor(args) => super::benchmark_executor::run(args, batch_grid).await,
         BenchmarkMode::Inference(args) => run_inference(args),
         BenchmarkMode::Training(args) => run_training(args),
-        BenchmarkMode::SelfPlay(args) => run_self_play(args).await,
+        BenchmarkMode::SelfPlay(args) => run_self_play(args, batch_grid).await,
     }
 }
 
@@ -268,7 +269,7 @@ fn training_iteration(
     Ok(f32::try_from(&value_loss)? as f64 + f32::try_from(&policy_loss)? as f64)
 }
 
-async fn run_self_play(args: SelfPlayBenchmarkArgs) -> Result<()> {
+async fn run_self_play(args: SelfPlayBenchmarkArgs, batch_grid: &[usize]) -> Result<()> {
     ensure!(args.games > 0, "games must be greater than zero");
     ensure!(
         args.simulations > 0,
@@ -290,7 +291,16 @@ async fn run_self_play(args: SelfPlayBenchmarkArgs) -> Result<()> {
     let device = resolve_device(&args.device)?;
     let var_store = nn::VarStore::new(device);
     let model_spec = ModelSpec::from(args.architecture);
-    let network = GomokuModel::new(var_store.root(), &model_spec);
+    let (var_store, network) = if let Some(path) = &args.checkpoint_dir {
+        let (store, network, _) =
+            super::common::load_network(path, Some(args.architecture), device)?;
+        (store, network)
+    } else {
+        let network = GomokuModel::new(var_store.root(), &model_spec);
+        (var_store, network)
+    };
+    let _variables = var_store;
+    alz::engine::telemetry::event("configured", serde_json::to_value(&args)?)?;
 
     if args.warmup_batches > 0 {
         let input = Tensor::zeros(
@@ -307,7 +317,9 @@ async fn run_self_play(args: SelfPlayBenchmarkArgs) -> Result<()> {
     }
 
     let settings = SelfPlaySettings {
-        top_p: 1.0,
+        batch_grid,
+        top_p: args.top_p,
+        temperature_schedule: crate::cli::SelfPlayTemperatureSchedule::Paired,
         games: args.games,
         simulations: args.simulations,
         c_puct: args.c_puct,
@@ -358,6 +370,7 @@ async fn run_self_play(args: SelfPlayBenchmarkArgs) -> Result<()> {
         average_policy_decode_us: games.batch_stats.average_policy_decode_us(),
         network: &games.batch_stats,
     };
+    alz::engine::telemetry::event("benchmark_completed", serde_json::to_value(&result)?)?;
     emit_result(&result, args.output.as_deref())
 }
 

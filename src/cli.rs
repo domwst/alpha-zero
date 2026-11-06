@@ -48,12 +48,17 @@ impl TrainingPerformanceArgs {
     arg_required_else_help = true
 )]
 pub struct Cli {
+    /// Physical inference batch buckets; omit to run unpadded batches.
+    #[arg(long, global = true, value_delimiter = ',')]
+    pub inference_batch_grid: Vec<usize>,
     #[command(subcommand)]
     pub command: Command,
 }
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Pinned-checkpoint JSON-lines analysis worker; accepts canonical positions on stdin.
+    Analyze(AnalysisArgs),
     /// Train from the latest complete snapshot, or initialize a new run.
     Train(TrainArgs),
     /// Train a fresh model on a fixed saved replay buffer, with a held-out game split.
@@ -275,6 +280,10 @@ pub struct TrainReplayArgs {
 
 #[derive(Debug, Args, Serialize)]
 pub struct TrainArgs {
+    /// Move-selection schedule: paired preserves the original 1.0 -> 0.7 schedule;
+    /// sharp uses 1.0 on moves 1-5, 0.7 on move 6, 0.6 on move 7, then 0.5.
+    #[arg(long, value_enum, default_value = "paired")]
+    pub temperature_schedule: SelfPlayTemperatureSchedule,
     /// Reconstruct early epochs from this self-play run's checkpoints and stats, without generating games.
     #[arg(long, requires = "replay_history_epochs")]
     pub replay_history_dir: Option<PathBuf>,
@@ -282,7 +291,8 @@ pub struct TrainArgs {
     /// Number of initial epochs to replay in order; later epochs generate new self-play games.
     #[arg(long, requires = "replay_history_dir")]
     pub replay_history_epochs: Option<usize>,
-    /// Nucleus cutoff applied after temperature, only to move sampling. Preserve boundary ties.
+    /// Experimental nucleus cutoff after temperature, only for move sampling.
+    /// Default 1.0 disables filtering; lower values reproduce research runs. Preserve boundary ties.
     #[arg(long, default_value_t = 1.0)]
     pub top_p: f64,
 
@@ -379,6 +389,13 @@ pub struct TrainArgs {
     pub heartbeat_seconds: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum SelfPlayTemperatureSchedule {
+    Paired,
+    Sharp,
+}
+
 #[derive(Debug, Args)]
 pub struct BenchmarkArgs {
     #[command(subcommand)]
@@ -387,6 +404,8 @@ pub struct BenchmarkArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum BenchmarkMode {
+    /// Repeatable active-producer and batch-grid benchmark with output parity checks.
+    Executor(crate::commands::benchmark_executor::ExecutorBenchmarkArgs),
     /// Measure forward inference including host/device transfers and output synchronization.
     Inference(InferenceBenchmarkArgs),
     /// Measure training steps on synthetic inputs or a saved replay dataset.
@@ -457,6 +476,12 @@ pub struct TrainingBenchmarkArgs {
 
 #[derive(Debug, Args, Serialize)]
 pub struct SelfPlayBenchmarkArgs {
+    /// Experimental nucleus cutoff; 1.0 disables filtering (the production default).
+    #[arg(long, default_value_t = 1.0)]
+    pub top_p: f64,
+    /// Pin existing weights instead of initializing a synthetic network.
+    #[arg(long)]
+    pub checkpoint_dir: Option<PathBuf>,
     #[command(flatten)]
     pub device: DeviceArgs,
 
@@ -689,6 +714,7 @@ mod tests {
                 super::BenchmarkMode::Inference(args) => args.architecture,
                 super::BenchmarkMode::Training(args) => args.architecture,
                 super::BenchmarkMode::SelfPlay(args) => args.architecture,
+                super::BenchmarkMode::Executor(_) => unreachable!(),
             };
             assert_eq!(architecture, selected);
         }
@@ -795,4 +821,12 @@ mod tests {
         };
         assert_eq!(args.batch_size, 256);
     }
+}
+
+#[derive(Debug, Args)]
+pub struct AnalysisArgs {
+    #[command(flatten)]
+    pub model: ModelArgs,
+    #[arg(long, default_value_t = 20000)]
+    pub max_simulations: usize,
 }

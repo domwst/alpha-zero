@@ -167,6 +167,36 @@ impl GomokuModel {
     }
 }
 
+impl GomokuModel {
+    pub fn inspect(
+        &self,
+        input: &Tensor,
+        selected: &[String],
+    ) -> anyhow::Result<Vec<crate::engine::inspection::ActivationMap>> {
+        match self {
+            Self::LegacyResNetV1(_) => {
+                anyhow::bail!("Activation capture is not implemented for the legacy ResNet")
+            }
+            Self::KataV1(network) => network.inspect(input, selected),
+            Self::KataGeluV1(network)
+            | Self::KataGeluBoardMaskValue64x2V1(network)
+            | Self::KataGeluB16C32Value64x2V1(network)
+            | Self::KataGeluB16C32G3Value64x2V1(network)
+            | Self::KataGeluB10C48Value64x2V1(network)
+            | Self::KataValue64V1(network)
+            | Self::KataValue64x2V1(network)
+            | Self::KataGeluValue64V1(network)
+            | Self::KataGeluValue64x2V1(network)
+            | Self::KataPoolV1(network)
+            | Self::KataGeluPoolV1(network)
+            | Self::KataPoolValue64V1(network)
+            | Self::KataPoolValue64x2V1(network)
+            | Self::KataGeluPoolValue64V1(network)
+            | Self::KataGeluPoolValue64x2V1(network) => network.inspect(input, selected),
+        }
+    }
+}
+
 impl AlphaZeroNet for GomokuModel {
     fn forward_t(&self, input: &Tensor, is_training: bool) -> NetworkOutput {
         match self {

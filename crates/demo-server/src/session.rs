@@ -33,6 +33,8 @@ pub struct SessionConfig {
     pub c_puct: f32,
     pub search_chunk_size: u32,
     pub snapshot_interval: Duration,
+    /// Public address of the research dashboard, linked from the header.
+    pub dashboard_url: Option<String>,
 }
 
 impl SessionConfig {
@@ -92,6 +94,7 @@ where
             default_search_simulations: config.default_search_simulations,
             c_puct: config.c_puct,
             snapshot_interval_ms: config.snapshot_interval.as_millis() as u64,
+            dashboard_url: config.dashboard_url,
         },
     )
     .await?;
@@ -212,6 +215,9 @@ struct GameSession<Evaluator: PositionEvaluator<BoardState>> {
     analysis_id: u64,
     carried_visits: u32,
     target_simulations: u32,
+    /// The client asked for this position's evaluation; with a target of zero
+    /// that is all it gets: the network's priors and value, without search.
+    evaluate_root: bool,
     search_elapsed: Duration,
 }
 
@@ -233,6 +239,7 @@ where
             analysis_id: 1,
             carried_visits: 0,
             target_simulations: 0,
+            evaluate_root: false,
             search_elapsed: Duration::ZERO,
         }
     }
@@ -270,20 +277,32 @@ where
             .saturating_sub(self.carried_visits)
     }
 
-    fn should_search(&self) -> bool {
-        self.outcome().is_none() && self.searched_simulations() < self.target_simulations
+    fn root_evaluated(&self) -> bool {
+        self.tree.get_network_state_estimation().is_some()
     }
 
+    fn should_search(&self) -> bool {
+        self.outcome().is_none()
+            && (self.searched_simulations() < self.target_simulations
+                || (self.evaluate_root && !self.root_evaluated()))
+    }
+
+    /// Zero when only the root's evaluation is outstanding.
     fn next_chunk_size(&self) -> u32 {
-        (self.target_simulations - self.searched_simulations()).min(self.config.search_chunk_size)
+        self.target_simulations
+            .saturating_sub(self.searched_simulations())
+            .min(self.config.search_chunk_size)
     }
 
     async fn run_search_chunk(&mut self, chunk: u32) -> Result<()> {
-        ensure!(chunk > 0, "search chunk must be positive");
         let started = Instant::now();
-        self.tree
-            .do_simulations(chunk as usize, self.config.c_puct, &mut self.rng)
-            .await?;
+        if chunk == 0 {
+            self.tree.expand_root().await?;
+        } else {
+            self.tree
+                .do_simulations(chunk as usize, self.config.c_puct, &mut self.rng)
+                .await?;
+        }
         self.search_elapsed += started.elapsed();
         Ok(())
     }
@@ -315,13 +334,14 @@ where
             } => {
                 self.ensure_current_position(position_id)?;
                 ensure!(
-                    (1..=self.config.max_search_simulations).contains(&simulations),
-                    "requested {simulations} simulations; allowed range is 1..={}",
+                    simulations <= self.config.max_search_simulations,
+                    "requested {simulations} simulations; allowed range is 0..={}",
                     self.config.max_search_simulations
                 );
                 ensure!(self.outcome().is_none(), "the game is already over");
                 self.analysis_id += 1;
                 self.target_simulations = simulations;
+                self.evaluate_root = true;
                 let mut messages = vec![self.search_status()];
                 if let Some(snapshot) = self.search_snapshot() {
                     messages.push(snapshot);
@@ -350,6 +370,7 @@ where
             ClientMessage::ChooseNetworkMove {
                 position_id,
                 temperature,
+                instant,
             } => {
                 self.ensure_current_position(position_id)?;
                 ensure!(
@@ -360,12 +381,22 @@ where
                     temperature.is_finite() && (0.0..=5.0).contains(&temperature),
                     "temperature must be finite and between 0 and 5"
                 );
-                ensure!(
-                    self.searched_simulations() >= self.target_simulations
-                        && self.target_simulations > 0,
-                    "search has not reached its target"
-                );
-                let policy = self.tree.get_policy();
+                let policy = if instant {
+                    self.tree
+                        .root_snapshot()
+                        .context("the position has not been evaluated yet")?
+                        .moves
+                        .iter()
+                        .map(|r#move| r#move.prior)
+                        .collect()
+                } else {
+                    ensure!(
+                        self.searched_simulations() >= self.target_simulations
+                            && self.target_simulations > 0,
+                        "search has not reached its target"
+                    );
+                    self.tree.get_policy()
+                };
                 let sampling_policy = apply_temperature(&policy, temperature);
                 let move_index = sample_policy(&sampling_policy, &mut self.rng);
                 let moves = self.legal_moves()?;
@@ -398,6 +429,7 @@ where
         self.analysis_id += 1;
         self.carried_visits = 0;
         self.target_simulations = 0;
+        self.evaluate_root = false;
         self.search_elapsed = Duration::ZERO;
     }
 
@@ -448,6 +480,7 @@ where
         self.analysis_id += 1;
         self.carried_visits = 0;
         self.target_simulations = 0;
+        self.evaluate_root = false;
         self.search_elapsed = Duration::ZERO;
         Ok(())
     }
@@ -482,6 +515,7 @@ where
         self.analysis_id += 1;
         self.carried_visits = self.current_total_visits();
         self.target_simulations = 0;
+        self.evaluate_root = false;
         self.search_elapsed = Duration::ZERO;
         Ok(())
     }
@@ -514,8 +548,9 @@ where
         ServerMessage::SearchStatus {
             position_id: self.position_id,
             analysis_id: self.analysis_id,
-            searched_simulations: self.searched_simulations(),
-            target_simulations: self.target_simulations,
+            searched_simulations: self.current_total_visits(),
+            target_simulations: self.carried_visits + self.target_simulations,
+            carried_visits: self.carried_visits,
             running: self.should_search(),
         }
     }
@@ -544,10 +579,10 @@ where
         Some(ServerMessage::SearchSnapshot {
             position_id: self.position_id,
             analysis_id: self.analysis_id,
-            searched_simulations: searched,
+            searched_simulations: searched + self.carried_visits,
             carried_visits: self.carried_visits,
             total_visits,
-            target_simulations: self.target_simulations,
+            target_simulations: self.carried_visits + self.target_simulations,
             elapsed_ms: self.search_elapsed.as_millis().min(u64::MAX as u128) as u64,
             simulations_per_second: if elapsed_seconds > 0.0 {
                 searched as f64 / elapsed_seconds
@@ -578,13 +613,32 @@ mod tests {
 
     impl PositionEvaluator<BoardState> for UniformEvaluator {
         async fn evaluate<'a>(
-            &'a self,
+            &'a mut self,
             _state: &'a BoardState,
             moves: &'a [GomokuMove],
         ) -> anyhow::Result<PositionEvaluation> {
             Ok(PositionEvaluation {
                 value: 0.0,
                 legal_policy: vec![1.0 / moves.len() as f32; moves.len()],
+            })
+        }
+    }
+
+    /// Prefers one legal move by a wide margin, so a temperature of zero must pick it.
+    #[derive(Clone)]
+    struct FavoriteMoveEvaluator(usize);
+
+    impl PositionEvaluator<BoardState> for FavoriteMoveEvaluator {
+        async fn evaluate<'a>(
+            &'a mut self,
+            _state: &'a BoardState,
+            moves: &'a [GomokuMove],
+        ) -> anyhow::Result<PositionEvaluation> {
+            let mut policy = vec![0.1 / moves.len() as f32; moves.len()];
+            policy[self.0] += 0.9;
+            Ok(PositionEvaluation {
+                value: 0.25,
+                legal_policy: policy,
             })
         }
     }
@@ -602,6 +656,7 @@ mod tests {
             c_puct: 1.0,
             search_chunk_size: 8,
             snapshot_interval: Duration::from_millis(100),
+            dashboard_url: None,
         }
     }
 
@@ -721,6 +776,102 @@ mod tests {
         assert_eq!(session.human_color, StoneColor::Black);
         assert!(session.stones.is_empty());
         assert_eq!(session.current_total_visits(), 0);
+    }
+
+    #[tokio::test]
+    async fn evaluation_only_search_reports_priors_without_visits() {
+        let mut session = GameSession::new(UniformEvaluator, config(), 1);
+        let response = session
+            .try_handle_command(ClientMessage::StartSearch {
+                position_id: 1,
+                simulations: 0,
+            })
+            .unwrap();
+        // Nothing is evaluated yet, so only the status goes out at once.
+        assert!(matches!(
+            response.as_slice(),
+            [ServerMessage::SearchStatus { running: true, .. }]
+        ));
+        assert!(session.should_search());
+        assert_eq!(session.next_chunk_size(), 0);
+
+        session.run_search_chunk(0).await.unwrap();
+        assert!(!session.should_search());
+        let ServerMessage::SearchSnapshot {
+            total_visits,
+            target_simulations,
+            complete,
+            moves,
+            ..
+        } = session.search_snapshot().unwrap()
+        else {
+            panic!("expected a search snapshot");
+        };
+        assert_eq!(total_visits, 0);
+        assert_eq!(target_simulations, 0);
+        assert!(complete);
+        assert!(
+            moves
+                .iter()
+                .all(|r#move| r#move.prior > 0.0 && r#move.visits == 0)
+        );
+    }
+
+    #[tokio::test]
+    async fn instant_reply_follows_the_network_policy() {
+        let favorite = 5;
+        let mut session = GameSession::new(FavoriteMoveEvaluator(favorite), config(), 1);
+        session
+            .try_handle_command(ClientMessage::Play {
+                position_id: 1,
+                row: 9,
+                column: 9,
+            })
+            .unwrap();
+        assert_ne!(session.to_move(), session.human_color);
+
+        let early = session.try_handle_command(ClientMessage::ChooseNetworkMove {
+            position_id: 2,
+            temperature: 0.0,
+            instant: true,
+        });
+        assert!(
+            early.is_err(),
+            "an instant reply needs the position's evaluation"
+        );
+
+        session
+            .try_handle_command(ClientMessage::StartSearch {
+                position_id: 2,
+                simulations: 0,
+            })
+            .unwrap();
+        session.run_search_chunk(0).await.unwrap();
+        let searched = session.try_handle_command(ClientMessage::ChooseNetworkMove {
+            position_id: 2,
+            temperature: 0.0,
+            instant: false,
+        });
+        assert!(
+            searched.is_err(),
+            "a search reply still needs a reached search target"
+        );
+
+        let (row, column) = session.legal_moves().unwrap()[favorite].to_xy();
+        session
+            .try_handle_command(ClientMessage::ChooseNetworkMove {
+                position_id: 2,
+                temperature: 0.0,
+                instant: true,
+            })
+            .unwrap();
+        let reply = session.stones.last().unwrap();
+        assert_eq!((reply.row as usize, reply.column as usize), (row, column));
+        assert_eq!(reply.color, StoneColor::White);
+        assert!(
+            !session.evaluate_root,
+            "the next position waits for its own request"
+        );
     }
 
     #[test]

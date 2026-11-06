@@ -22,3 +22,8 @@
 /reports/**/*.html
 /reports/**/upload-receipt*.json
 /reports/**/plotly-*.min.js
+
+# Heavy one-off artifacts stay local; only their written summaries are committed.
+/reports/replay-storage-20260922/results.json
+/reports/replay-storage-20260922/float-diagnostics.json
+/docs/ux-review-*/

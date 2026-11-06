@@ -1,5 +1,11 @@
 # Experiment tooling
 
+The replacement scheduler, API and analysis gateway live in `job_service/`.
+Run them as modules (`./run.sh python -m scripts.job_service.server`); see
+[operation and migration](../docs/job-service.md). The local connection is managed
+by [Docker Compose](../deploy/dashboard/README.md). The tools below remain for
+legacy data import, rollback, and historical reproduction.
+
 Run Python tools from the repository root with `python3 scripts/<tool>.py`.
 Use `--help` for arguments. Data, logs, binaries, connection files, and generated
 reports belong in ignored `runs/` (or `validated/` for pinned trainer binaries).
@@ -27,12 +33,15 @@ reports belong in ignored `runs/` (or `validated/` for pinned trainer binaries).
   `build_nucleus_report.py`: replay analysis and standalone report generation.
   Source assets are in `report_assets/`; reproduction instructions accompany
   [the curated report](../reports/nucleus-replay-audit-20260909/README.md).
+  Nucleus sampling is now an archived research direction; see the
+  [decision and playing-strength evidence](../reports/nucleus-self-play-20260914/README.md).
+  These generators and their assets are retained to reproduce the report.
 - `migrate_experiment_metadata.py`: idempotent display-metadata backfill;
   see [the format and migration guide](../docs/experiment-metadata.md).
 - `archive/`: historical experiment recipes and deployment/handoff scripts.
   Keep these for reproducibility, not as the default deployment workflow.
 
-The `experiment-dashboard.service` template expects a local connection file at
+The legacy `experiment-dashboard.service` template expects a local connection file at
 `runs/dashboard-connection.json`; customize it before installation. Connection
 files and SSH identities must not be committed. Changing this template does not
 change an already installed service.
@@ -70,3 +79,18 @@ cargo fmt --all -- --check
 Python HTTP tests need permission to bind loopback sockets. CUDA checks are
 explicit opt-in deployment tasks; do not run them against an occupied GPU merely
 to validate dashboard changes.
+
+
+## Current and historical tooling boundary
+
+New job execution goes through `job_service/`; new dashboard behavior lives in
+`JobWorkspace`, `GameExplorer`, and their focused UI modules. `job_service` migration
+modules remain supported readers of retained historical inputs. The legacy
+supervisors, collectors and static dashboard are retained for reproducing prior
+runs and rollback; do not use them as templates for new scheduling behavior.
+The standalone game demo still uses `App`, and old exported dashboard snapshots
+still use `Experiments`, so the explicit legacy web entrypoint remains intentional.
+
+The benchmark drivers in `benchmarks/` and recipes in `archive/` are reproducible
+experiment inputs, not temporary deployment output. Machine-specific bundles,
+receipts and browser screenshots remain ignored under `runs/`.

@@ -1,0 +1,23 @@
+{
+  "verified_at_unix": 1790066226.1663878,
+  "seconds": 31.905656900256872,
+  "unique_games": 198414,
+  "journal_lines": 198414,
+  "all_target_hashes_verified": true,
+  "remaining_game_json_files": 0,
+  "archive_symlinks_preserved": 55,
+  "other_retained_files_unchanged": 6590,
+  "other_retained_changes": [],
+  "database_counts": {
+    "jobs": 106,
+    "events": 247568,
+    "artifacts": 548,
+    "experiments": 54
+  },
+  "source_bytes": 54211662779,
+  "target_bytes": 7675837509,
+  "source_allocated": 54605611008,
+  "target_allocated": 8099127296,
+  "saved_allocated_bytes": 46506483712,
+  "journal_bytes": 135938620
+}

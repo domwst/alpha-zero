@@ -91,6 +91,12 @@
 .experiment-chart .chart-grid { stroke: var(--ds-color-border); stroke-width: 1; }
 .experiment-chart .train-line { stroke: var(--ds-chart-series-1); stroke-width: 2; }
 .experiment-chart .validation-line { stroke: var(--ds-chart-series-2); stroke-width: 2; stroke-dasharray: 5 3; }
+.experiment-chart .dummy-line { stroke: var(--ds-chart-series-3); stroke-width: 2; stroke-dasharray: 2 4; }
+.experiment-chart .dummy-point { fill: var(--ds-chart-series-3); }
+.experiment-legend .dummy-series { color: var(--ds-chart-series-3); }
+.experiment-legend .dummy-series::before { border-color: var(--ds-chart-series-3); border-top-style: dotted; }
+.experiment-chart .experiment-legend { flex-wrap: wrap; }
+.chart-dummy-value { border-inline-start: 2px solid var(--ds-chart-series-3); padding-inline-start: var(--ds-space-3); }
 .experiment-chart .train-point { fill: var(--ds-chart-series-1); }
 .experiment-chart .validation-point { fill: var(--ds-chart-series-2); }
 .experiment-chart figcaption { color: var(--ds-color-text-muted); font-size: var(--ds-font-size-label); }

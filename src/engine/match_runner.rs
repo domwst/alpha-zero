@@ -4,7 +4,7 @@ use anyhow::{Result, ensure};
 
 use super::{Game, MoveParameters, TerminationState, TurnChange};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Seat {
     First,
     Second,
@@ -26,13 +26,17 @@ pub struct Turn<'a, TGame: Game> {
     pub ply: usize,
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DecisionDiagnostics {
+    pub network_prior: Option<Vec<f32>>,
+    pub root_visits: Option<Vec<u32>>,
+    pub search_value: Option<f32>,
+    pub search: Option<super::SearchStats>,
     pub value_estimate: Option<f32>,
     pub sampling_policy: Option<Vec<f32>>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct MoveDecision {
     pub move_index: usize,
     pub training_policy: Option<Vec<f32>>,
@@ -159,6 +163,11 @@ where
     }
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(bound(
+    serialize = "TGame: serde::Serialize, TGame::Move: serde::Serialize",
+    deserialize = "TGame: serde::Deserialize<'de>, TGame::Move: serde::Deserialize<'de>"
+))]
 pub struct MatchPly<TGame: Game> {
     pub state: TGame,
     pub action: TGame::Move,
@@ -167,6 +176,11 @@ pub struct MatchPly<TGame: Game> {
     pub decision: MoveDecision,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(bound(
+    serialize = "TGame: serde::Serialize, TGame::Move: serde::Serialize",
+    deserialize = "TGame: serde::Deserialize<'de>, TGame::Move: serde::Deserialize<'de>"
+))]
 pub struct MatchRecord<TGame: Game> {
     pub plies: Vec<MatchPly<TGame>>,
     pub terminal_state: TGame,
@@ -265,6 +279,7 @@ where
         })?;
 
         let previous_state = std::mem::replace(&mut state, next_state);
+        super::telemetry::move_made(ply + 1, &decision);
         plies.push(MatchPly {
             state: previous_state,
             action,
