@@ -759,6 +759,10 @@ class Handler(BaseHTTPRequestHandler):
                     self.app.jobs(
                         limit=min(100, max(1, int(query.get("limit", ["25"])[0]))),
                         offset=max(0, int(query.get("offset", ["0"])[0])),
+                        kind=query.get("kind", [None])[0] or None,
+                        state=query.get("state", [None])[0] or None,
+                        search=(query.get("q", [""])[0] or "").strip()[:200] or None,
+                        experiment_id=query.get("experiment_id", [None])[0] or None,
                     ),
                 )
             elif url.path == "/api/v1/overview":

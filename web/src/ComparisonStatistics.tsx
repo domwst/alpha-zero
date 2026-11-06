@@ -1,6 +1,6 @@
 import type { JSX } from 'preact';
 import { useState } from 'preact/hooks';
-import { networkLabel } from './experimentLabels';
+import { networkLabel, shortNetworkLabel } from './experimentLabels';
 import type { Participants } from './experimentLabels';
 import { scoreInterval } from './experimentConfidence';
 import type { ConfidenceLevel, MatchCounts } from './experimentConfidence';
@@ -66,8 +66,8 @@ export function ComparisonStatistics({ participants, data, confidence, formatDur
   const [filter, setFilter] = useState<LengthFilter>('all');
   const lengths = data.lengths[filter], completion = data.completion;
   const outcomeOptions: [LengthFilter, string][] = [['all', 'All games'],
-    ['first_checkpoint', `${networkLabel(participants, 'first')} wins`],
-    ['second_checkpoint', `${networkLabel(participants, 'second')} wins`], ['draws', 'Draws']];
+    ['first_checkpoint', `${shortNetworkLabel(participants, 'first')} wins`],
+    ['second_checkpoint', `${shortNetworkLabel(participants, 'second')} wins`], ['draws', 'Draws']];
   return <div className="experiment-game-statistics">
     {partial && <><h3>Completed games by checkpoint</h3><div className="experiment-table-scroll"><table className="experiment-table experiment-results experiment-live-results">
       <thead><tr><th>Checkpoint</th><th>Wins</th><th>Draws</th><th>Losses</th><th>Score</th><th>{confidence}% interval</th></tr></thead>
@@ -75,7 +75,7 @@ export function ComparisonStatistics({ participants, data, confidence, formatDur
         const seats = data.seat_results[`${side}_checkpoint`];
         const totals = { wins: seats.first.wins + seats.second.wins, draws: seats.first.draws + seats.second.draws, losses: seats.first.losses + seats.second.losses };
         const interval = scoreInterval(totals, confidence);
-        return <tr key={side}><td><strong>{networkLabel(participants, side)}</strong></td>
+        return <tr key={side}><td><strong title={networkLabel(participants, side)}>{shortNetworkLabel(participants, side)}</strong></td>
           <td><span className="experiment-result-label">Wins</span>{totals.wins}</td>
           <td><span className="experiment-result-label">Draws</span>{totals.draws}</td>
           <td><span className="experiment-result-label">Losses</span>{totals.losses}</td>
@@ -93,7 +93,7 @@ export function ComparisonStatistics({ participants, data, confidence, formatDur
       <tbody>{(['first', 'second'] as const).flatMap(side => (['first', 'second'] as const).map(seat => {
         const totals = data.seat_results[`${side}_checkpoint`][seat], interval = scoreInterval(totals, confidence);
         return <tr key={`${side}-${seat}`}>
-          <td><strong>{networkLabel(participants, side)}</strong></td><td>{seat === 'first' ? 'First' : 'Second'}</td>
+          <td><strong title={networkLabel(participants, side)}>{shortNetworkLabel(participants, side)}</strong></td><td>{seat === 'first' ? 'First' : 'Second'}</td>
           <td><span className="experiment-result-label">Games</span>{totals.games}</td>
           <td><span className="experiment-result-label">Wins</span>{totals.wins}</td>
           <td><span className="experiment-result-label">Draws</span>{totals.draws}</td>

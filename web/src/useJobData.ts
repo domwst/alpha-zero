@@ -12,14 +12,41 @@ type Summary = {
 
 export const JOBS_PER_PAGE = 12;
 
+export type JobFilters = {
+  kind: string;
+  state: string;
+  search: string;
+  experiment: string;
+};
+export const EMPTY_FILTERS: JobFilters = { kind: "", state: "", search: "", experiment: "" };
+
+/** Query string for one page of jobs; filters are omitted when empty so the
+ *  default request is unchanged. */
+export function jobsQuery(page: number, filters: JobFilters = EMPTY_FILTERS): string {
+  const params = new URLSearchParams({
+    offset: String(page * JOBS_PER_PAGE),
+    limit: String(JOBS_PER_PAGE),
+  });
+  if (filters.kind) params.set("kind", filters.kind);
+  if (filters.state) params.set("state", filters.state);
+  if (filters.search.trim()) params.set("q", filters.search.trim());
+  if (filters.experiment) params.set("experiment_id", filters.experiment);
+  return `jobs?${params}`;
+}
+
 /** Independent feeds: diagnostic history is never a dependency of live status or charts. */
-export function useJobData(selected: string | null, page: number) {
+export function useJobData(
+  selected: string | null,
+  page: number,
+  filters: JobFilters = EMPTY_FILTERS,
+) {
   const [data, setData] = useState<JobPage | null>(null);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [epochSummaries, setEpochSummaries] = useState<Event[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [queuePending, setQueuePending] = useState(true),
-    [loadedPage, setLoadedPage] = useState<number | null>(null);
+    [loadedPage, setLoadedPage] = useState<number | null>(null),
+    [loadedQuery, setLoadedQuery] = useState<string | null>(null);
   const [detailPending, setDetailPending] = useState(true),
     [epochsPending, setEpochsPending] = useState(true),
     [summaryPending, setSummaryPending] = useState(true);
@@ -34,7 +61,7 @@ export function useJobData(selected: string | null, page: number) {
     async function poll() {
       try {
         const result = await api<JobPage>(
-          `jobs?offset=${page * JOBS_PER_PAGE}&limit=${JOBS_PER_PAGE}`,
+          jobsQuery(page, filters),
           undefined,
           undefined,
           controller.signal,
@@ -42,6 +69,7 @@ export function useJobData(selected: string | null, page: number) {
         if (!controller.signal.aborted) {
           setData(result);
           setLoadedPage(page);
+          setLoadedQuery(jobsQuery(page, filters));
         }
       } catch (e) {
         if (!controller.signal.aborted) setError(String(e));
@@ -57,7 +85,7 @@ export function useJobData(selected: string | null, page: number) {
       controller.abort();
       clearTimeout(timer);
     };
-  }, [page, revision]);
+  }, [page, revision, filters.kind, filters.state, filters.search, filters.experiment]);
 
   useEffect(() => {
     setSelectedJob(null);
@@ -134,6 +162,7 @@ export function useJobData(selected: string | null, page: number) {
     epochsPending,
     summaryPending,
     loadedPage,
+    loadedQuery,
     refresh,
     error,
     setError,

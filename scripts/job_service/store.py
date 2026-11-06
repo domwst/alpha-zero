@@ -376,13 +376,43 @@ class Store:
             )
             return response
 
-    def snapshot(self, limit=25, offset=0, job_id=None):
+    def snapshot(
+        self,
+        limit=25,
+        offset=0,
+        job_id=None,
+        kind=None,
+        state=None,
+        search=None,
+        experiment_id=None,
+    ):
+        """One page of jobs, newest first, optionally narrowed by kind, state,
+        series or a case-insensitive title/identifier search. The total
+        counts the narrowed set so pagination stays consistent."""
+        clauses, params = ["(? IS NULL OR j.id=?)"], [job_id, job_id]
+        if kind:
+            clauses.append("json_extract(j.spec,'$.kind')=?")
+            params.append(kind)
+        if state:
+            clauses.append("j.state=?")
+            params.append(state)
+        if experiment_id:
+            clauses.append("j.experiment_id=?")
+            params.append(experiment_id)
+        if search:
+            clauses.append(
+                "(instr(lower(j.title),?)>0 OR instr(lower(e.title),?)>0 OR j.id=? OR j.experiment_id=?)"
+            )
+            params.extend([search.lower(), search.lower(), search, search])
+        where = " AND ".join(clauses)
+        source = "FROM jobs j LEFT JOIN experiments e ON e.id=j.experiment_id"
         with self.transaction(write=False) as db:
             jobs = [
                 dict(r)
                 for r in db.execute(
-                    "SELECT * FROM jobs WHERE (? IS NULL OR id=?) ORDER BY created DESC,id DESC LIMIT ? OFFSET ?",
-                    (job_id, job_id, limit, offset),
+                    f"SELECT j.*, e.title AS experiment_title {source} WHERE {where} "
+                    "ORDER BY j.created DESC,j.id DESC LIMIT ? OFFSET ?",
+                    (*params, limit, offset),
                 )
             ]
             for job in jobs:
@@ -419,7 +449,9 @@ class Store:
             return {
                 "schema_version": 1,
                 "jobs": jobs,
-                "total": db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0],
+                "total": db.execute(
+                    f"SELECT COUNT(*) {source} WHERE {where}", params
+                ).fetchone()[0],
                 "scheduler_paused": bool(paused and json.loads(paused[0])),
                 "server_time": time.time(),
             }

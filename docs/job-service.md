@@ -186,10 +186,15 @@ Kata network variants; the legacy ResNet reports that inspection is unsupported.
   strength of every completed comparison plotted by checkpoint epoch against the
   recurring baseline (95% Wilson intervals), training runs with their value-loss
   curves, and the most recent comparisons.
-- `/experiments`: newest-first paginated queue, job attempts, timing, stage,
-  progress, losses, self-play statistics, confidence intervals, game outcomes,
-  resource observations, and event history. Logged-in controls schedule/pause/
-  resume/cancel jobs and pause queue admission.
+- `/experiments`: newest-first paginated queue with search, kind, state and
+  series filters (`?q=`, `?kind=`, `?state=`, `?experiment=`); the selected job
+  shows a summary header, its lineage (source checkpoint, continuations, and the
+  comparisons that used its checkpoints), and three tabs: Overview (progress,
+  epoch metric cards with the full chart, playing strength with A/B aliases and
+  intervals, benchmark results, where its checkpoints stand), Attempts & events
+  (attempt timeline and table, last recorded telemetry, event history), and
+  Configuration. Live telemetry is shown inline only while a job is active.
+  Logged-in controls schedule/pause/resume/cancel jobs and pause queue admission.
 - `/games?job=<id>`: paginated recorded games, selected epoch and ply, saved
   distributions, a move timeline with Black's winning chances from the recorded
   network values, autoplay, and links into branch exploration. Within one epoch
@@ -214,7 +219,9 @@ epoch through the comparison's own input reference, the search settings that
 affect strength (`simulations`, temperatures, `c_puct`) so the overview only
 connects or pools matches played under equal settings, and per-epoch losses for
 every training run); it is cached until the job table, the event log or the
-artifact catalog changes. `GET /api/v1/games` accepts `winner=first|second|draw` and
+artifact catalog changes. `GET /api/v1/jobs` accepts `kind`, `state`, `q` (title, series or
+identifier search) and `experiment_id`, and reports `experiment_title` on each
+job. `GET /api/v1/games` accepts `winner=first|second|draw` and
 `sort=newest|longest|shortest` when a single `epoch` is given; the per-epoch
 winner/length index is built on first use and cached until the directory changes.
 `GET /api/v1/session` reports `read_only` and the configured `demo_url`.

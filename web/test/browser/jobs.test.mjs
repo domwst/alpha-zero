@@ -107,15 +107,20 @@ for (const engine of engines) {
       "opening job details must not fetch journal pages",
     );
     const historyRequest = page.waitForRequest("**/api/v1/event-history?*");
+    await page.getByRole("tab", { name: "Attempts & events" }).click();
     await page.getByText("Event history", { exact: true }).click();
     await historyRequest;
     await page
       .getByText("Loading historical events…", { exact: true })
       .waitFor();
     assert.equal(historyCalls, 1);
+    // The summary on the overview tab was loaded independently of the gated
+    // history page and stays available while that page is still pending.
+    await page.getByRole("tab", { name: "Overview" }).click();
     assert(
       await page.getByRole("heading", { name: "Playing strength" }).isVisible(),
     );
+    await page.getByRole("tab", { name: "Attempts & events" }).click();
     slow.release();
     await page
       .getByText("Loading historical events…", { exact: true })

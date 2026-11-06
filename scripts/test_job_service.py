@@ -716,6 +716,35 @@ class HttpTests(unittest.TestCase):
         )
         self.assertEqual(result["events"], [])
 
+    def test_job_filters_narrow_the_page_and_its_total(self):
+        for title, state in (("alpha run", "queued"), ("beta run", "queued")):
+            job = self.store.command(
+                title,
+                {
+                    "action": "create",
+                    "spec": SPEC,
+                    "title": title,
+                    "experiment_title": f"{title} series",
+                },
+            )["job_id"]
+            if state != "queued":
+                self.store.command(f"{title}-cancel", {"action": "cancel", "job_id": job})
+        _, page, _ = self.request("/api/v1/jobs?q=BETA")
+        self.assertEqual([j["title"] for j in page["jobs"]], ["beta run"])
+        self.assertEqual(page["total"], 1)
+        self.assertEqual(page["jobs"][0]["experiment_title"], "beta run series")
+        _, page, _ = self.request("/api/v1/jobs?kind=comparison")
+        self.assertEqual(page["jobs"], [])
+        self.assertEqual(page["total"], 0)
+        _, page, _ = self.request("/api/v1/jobs?kind=self_play&state=queued")
+        self.assertEqual(page["total"], 2)
+        experiment = page["jobs"][0]["experiment_id"]
+        _, page, _ = self.request(f"/api/v1/jobs?experiment_id={experiment}")
+        self.assertEqual(page["total"], 1)
+        _, session, _ = self.request("/api/v1/session")
+        self.assertFalse(session["read_only"])
+        self.assertIsNone(session["demo_url"])
+
     def test_overview_resolves_comparison_checkpoints_and_run_epochs(self):
         run = self.store.command("run", {"action": "create", "spec": SPEC, "title": "Run"})[
             "job_id"
