@@ -6,6 +6,8 @@ async function demo(t, engine, options = {}) {
   const { page, origin } = await fixture(t, engine, { service: false, ...options });
   const played = [];
   const newGames = [];
+  const searches = [];
+  const replies = [];
   let stones = [], positionId = 1, humanColor = "black";
   await page.routeWebSocket("**/api/ws", (socket) => {
     const send = (message) => socket.send(JSON.stringify(message));
@@ -33,11 +35,21 @@ async function demo(t, engine, options = {}) {
         positionId++;
         position();
       }
+      if (message.type === "choose_network_move") {
+        replies.push(message);
+        const free = Array.from({ length: 361 }, (_, i) => ({ row: Math.floor(i / 19), column: i % 19 }))
+          .find((cell) => !stones.some((s) => s.row === cell.row && s.column === cell.column));
+        stones = [...stones, { ...free, color: stones.length % 2 ? "white" : "black" }];
+        positionId++;
+        position();
+      }
       if (message.type === "start_search") {
+        searches.push(message.simulations);
         const legal = Array.from({ length: 361 }, (_, i) => ({
           row: Math.floor(i / 19), column: i % 19,
         })).filter((cell) => !stones.some((s) => s.row === cell.row && s.column === cell.column));
-        const visits = message.simulations - 1;
+        // Zero simulations is an evaluation only: priors, no visits.
+        const visits = Math.max(0, message.simulations - 1);
         send({
           type: "search_snapshot", position_id: positionId, analysis_id: 1,
           searched_simulations: message.simulations, target_simulations: message.simulations,
@@ -66,7 +78,7 @@ async function demo(t, engine, options = {}) {
     await page.waitForFunction((n) => document.querySelectorAll(".board-cell .stone").length === n, count);
     assert.equal(played.length, count);
   };
-  return { page, played, newGames, cell, waitForMoves };
+  return { page, played, newGames, searches, replies, cell, waitForMoves };
 }
 
 for (const engine of engines) {
@@ -193,6 +205,25 @@ for (const engine of engines) {
     await page.reload();
     await page.locator(".metric-switch").waitFor();
     assert.equal(await metric("Probability").isChecked(), true, "the metric is remembered");
+  });
+
+  test(`${engine.name()}: a zero budget replies instantly from the network policy`, async (t) => {
+    const { page, searches, replies, cell, waitForMoves } = await demo(t, engine);
+    await page.locator(".range-control input").first().evaluate((input) => {
+      input.value = "0";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await page.locator(".search-readout").getByText("Instant", { exact: true }).waitFor();
+    assert.equal(await page.locator(".search-actions .button").isDisabled(), true, "nothing to run");
+
+    await cell(9, 9).click();
+    await waitForMoves(1);
+    await page.getByText("Evaluated", { exact: true }).waitFor();
+    assert.equal(searches.at(-1), 0, "the network's turn asks for an evaluation only");
+    await page.getByRole("button", { name: "Let network choose" }).click();
+    await page.waitForFunction(() => document.querySelectorAll(".board-cell .stone").length === 2);
+    assert.deepEqual(replies.map((reply) => reply.instant), [true]);
+    assert.equal(await page.locator('[role="alert"]').count(), 0);
   });
 
   test(`${engine.name()}: demo coordinates align with cells at desktop and narrow sizes`, async (t) => {

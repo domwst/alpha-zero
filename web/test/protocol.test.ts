@@ -37,6 +37,16 @@ test('an unvisited root has zero displayed move probability', () => {
   assert.deepEqual([...probabilities.values()], [0, 0]);
 });
 
+test('instant replies weight the raw priors the same way', () => {
+  const favored = { row: 0, column: 0, prior: 0.6, visits: 0, mean_value: null };
+  const other = { row: 0, column: 1, prior: 0.2, visits: 0, mean_value: null };
+  const probabilities = temperatureProbabilities([favored, other], 0.5, 'prior');
+
+  assert.ok(Math.abs((probabilities.get(cellKey(favored)) ?? 0) - 9 / 10) < 1e-12);
+  assert.ok(Math.abs((probabilities.get(cellKey(other)) ?? 0) - 1 / 10) < 1e-12);
+  assert.equal(temperatureProbabilities([favored, other], 0, 'prior').get(cellKey(favored)), 1);
+});
+
 test('restore command keeps move order and strips derived stone colors', () => {
   const command = restoreGameCommand({
     type: 'position',

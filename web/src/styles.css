@@ -1146,6 +1146,12 @@ h2 {
   background: var(--ds-color-accent-soft);
 }
 
+.metric-switch input:disabled + label {
+  color: var(--ds-color-text-muted);
+  cursor: not-allowed;
+  opacity: var(--ds-opacity-disabled);
+}
+
 .metric-switch input:focus-visible + label {
   outline: var(--ds-focus-width) solid var(--ds-focus-color);
   outline-offset: var(--ds-focus-offset);
@@ -1719,6 +1725,10 @@ tbody tr:hover {
 
 .evolution-heading {
   align-items: flex-start;
+}
+
+.evolution-idle {
+  padding: var(--ds-space-3) var(--ds-panel-padding) var(--ds-panel-padding);
 }
 
 .live-label {

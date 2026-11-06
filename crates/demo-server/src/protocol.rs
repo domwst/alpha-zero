@@ -42,6 +42,9 @@ pub enum ClientMessage {
     ChooseNetworkMove {
         position_id: u64,
         temperature: f32,
+        /// Sample the network's raw policy instead of the search's visits.
+        #[serde(default)]
+        instant: bool,
     },
 }
 
@@ -158,6 +161,26 @@ mod tests {
                 moves: vec![Cell { row: 9, column: 9 }, Cell { row: 9, column: 10 },],
             }
         );
+
+        for (json, instant) in [
+            (
+                r#"{"type":"choose_network_move","position_id":7,"temperature":0.5}"#,
+                false,
+            ),
+            (
+                r#"{"type":"choose_network_move","position_id":7,"temperature":0.5,"instant":true}"#,
+                true,
+            ),
+        ] {
+            assert_eq!(
+                serde_json::from_str::<ClientMessage>(json).unwrap(),
+                ClientMessage::ChooseNetworkMove {
+                    position_id: 7,
+                    temperature: 0.5,
+                    instant,
+                }
+            );
+        }
 
         let message = ServerMessage::SearchStatus {
             position_id: 7,

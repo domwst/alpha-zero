@@ -23,6 +23,8 @@ interface BoardProps {
   overlay: Overlay;
   showPolicy: boolean;
   temperature: number;
+  /** What move probabilities are tempered from: search visits, or priors for instant replies. */
+  probabilityBasis?: 'visits' | 'prior';
   /** Emphasized cell (chart link, pinned inspection); visual focus with no move semantics. */
   focus?: Cell | null;
   /** Reports inspection-focus changes: tap pin on read-only boards, long-press, Escape. */
@@ -79,6 +81,7 @@ export function Board({
   overlay,
   showPolicy,
   temperature,
+  probabilityBasis = 'visits',
   focus = null,
   onFocusCell,
   canPlay = false,
@@ -108,6 +111,7 @@ export function Board({
   const moveProbabilities = temperatureProbabilities(
     snapshot?.moves ?? [],
     temperature,
+    probabilityBasis,
   );
 
   useEffect(

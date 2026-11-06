@@ -91,6 +91,13 @@ The first two limits are operator-controlled through `--max-search-simulations` 
 `--max-sessions`. A position's budget counts new simulations; visits inherited by subtree reuse are
 reported separately as carried work.
 
+A budget of 0 is instant play. `start_search` with `"simulations": 0` asks only for the
+position's network evaluation (one forward pass, no simulation), reported as a complete snapshot
+with priors and no visits, and `choose_network_move` with `"instant": true` samples the raw priors
+at the requested temperature instead of search visits. The browser then ranks candidates by prior,
+derives move probabilities from priors, disables the Visits metric, and replaces the search chart
+with a short note. Older clients never send either, so the protocol version is unchanged.
+
 ## Cancellation model
 
 The session actor owns its tree for the full connection. While a search chunk is awaiting network

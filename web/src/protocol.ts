@@ -28,7 +28,7 @@ export type ClientMessage =
   | { type: 'start_search'; position_id: number; simulations: number }
   | { type: 'stop_search'; position_id: number }
   | { type: 'play'; position_id: number; row: number; column: number }
-  | { type: 'choose_network_move'; position_id: number; temperature: number };
+  | { type: 'choose_network_move'; position_id: number; temperature: number; instant?: boolean };
 
 export interface HelloMessage {
   type: 'hello';
@@ -134,20 +134,24 @@ export function visitFraction(move: MoveStats, snapshot: SearchSnapshotMessage):
   return snapshot.total_visits > 0 ? move.visits / snapshot.total_visits : 0;
 }
 
-/** Mirrors alz::engine::apply_temperature, including its last-wins tie break. */
+/**
+ * Mirrors alz::engine::apply_temperature, including its last-wins tie break.
+ * The server samples search visits, or the raw priors for an instant reply.
+ */
 export function temperatureProbabilities(
   moves: MoveStats[],
   temperature: number,
+  basis: 'visits' | 'prior' = 'visits',
 ): Map<string, number> {
   const result = new Map<string, number>();
   if (moves.length === 0) return result;
 
   let maxIndex = 0;
   for (let index = 1; index < moves.length; index += 1) {
-    if ((moves[index]?.visits ?? 0) >= (moves[maxIndex]?.visits ?? 0)) maxIndex = index;
+    if ((moves[index]?.[basis] ?? 0) >= (moves[maxIndex]?.[basis] ?? 0)) maxIndex = index;
   }
-  const maxVisits = moves[maxIndex]?.visits ?? 0;
-  if (maxVisits === 0) {
+  const maxWeight = moves[maxIndex]?.[basis] ?? 0;
+  if (maxWeight === 0) {
     for (const move of moves) result.set(cellKey(move), 0);
     return result;
   }
@@ -157,7 +161,7 @@ export function temperatureProbabilities(
   }
 
   const weights = moves.map((move) =>
-    move.visits === 0 ? 0 : Math.exp(Math.log(move.visits / maxVisits) / temperature),
+    move[basis] === 0 ? 0 : Math.exp(Math.log(move[basis] / maxWeight) / temperature),
   );
   const sum = weights.reduce((total, weight) => total + weight, 0);
   moves.forEach((move, index) => result.set(cellKey(move), (weights[index] ?? 0) / sum));

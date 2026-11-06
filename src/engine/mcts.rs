@@ -492,6 +492,21 @@ where
         Ok(())
     }
 
+    /// Evaluates the root with the network unless a search already did, so
+    /// its priors and value are available without spending a simulation.
+    pub async fn expand_root(&mut self) -> Result<()> {
+        if self.root.node_state.get().is_none() {
+            let mut evaluator = self.evaluator.activity();
+            let state = Self::create_node_state(&mut evaluator, &self.root_game_state).await?;
+            self.stats.expanded::<TGame>(0, state.children.len());
+            self.root
+                .node_state
+                .set(state)
+                .unwrap_or_else(|_| Self::on_set_failure());
+        }
+        Ok(())
+    }
+
     pub fn get_policy(&self) -> Vec<f32> {
         self.root.node_state.get().unwrap().get_policy()
     }

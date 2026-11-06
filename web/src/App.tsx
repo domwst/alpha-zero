@@ -21,6 +21,7 @@ import {
   type Cell,
   type ErrorMessage,
   type HelloMessage,
+  type MoveStats,
   type PositionMessage,
   type SearchSnapshotMessage,
   type SearchStatusMessage,
@@ -107,6 +108,11 @@ function storedOverlay(): Overlay {
   }
 }
 
+/** Most-visited first; priors break ties, and rank everything in instant play. */
+function byStrength(left: MoveStats, right: MoveStats): number {
+  return right.visits - left.visits || right.prior - left.prior;
+}
+
 function websocketUrl(): string {
   const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   return `${scheme}//${window.location.host}/api/ws`;
@@ -169,6 +175,9 @@ export function App(): JSX.Element {
   const temperature = useSignal(0.5);
   const budget = useSignal(2_000);
   const requestedBudget = useSignal(0);
+  // Position whose search or evaluation has been requested; an instant reply
+  // must not overtake that request, or the server would reject it as stale.
+  const searchRequested = useSignal<number | null>(null);
   const newHumanColor = useSignal<StoneColor>('black');
   const autoReply = useSignal(storedAutoReply());
   // Position for which an automatic reply has been requested; the board stays
@@ -186,6 +195,15 @@ export function App(): JSX.Element {
   const reconnectAttempt = useSignal(0);
   const connectedOnce = useSignal(false);
   const retryTimer = useRef<number | null>(null);
+
+  // A search reply needs a positive target that was reached: the snapshot that
+  // arrives with a new position is complete too, but holds only carried visits.
+  // An instant reply needs only the evaluation, once this position asked for it.
+  const replyReady = (snapshot: SearchSnapshotMessage, instant: boolean) =>
+    snapshot.complete
+    && (instant
+      ? searchRequested.value === snapshot.position_id
+      : snapshot.target_simulations > snapshot.carried_visits);
 
   const tryReconnectNow = () => {
     if (retryTimer.current != null) {
@@ -290,6 +308,7 @@ export function App(): JSX.Element {
             if (position.value?.position_id !== message.position_id) return;
             const target = budget.value;
             requestedBudget.value = target;
+            searchRequested.value = message.position_id;
             sendOnThisSocket({
               type: 'start_search',
               position_id: message.position_id,
@@ -326,13 +345,9 @@ export function App(): JSX.Element {
         snapshots.value = downsampleSnapshots(next, inspectedSimulations.value);
 
         const current = position.value;
-        // The server also marks the instant snapshot of a freshly reached
-        // position as complete when only carried visits exist and no target
-        // has been set yet; a reply needs a positive target that was reached.
-        const targetReached =
-          message.complete && message.target_simulations > message.carried_visits;
+        const instantReply = budget.value === 0;
         if (
-          targetReached
+          replyReady(message, instantReply)
           && autoReply.value
           && current
           && current.position_id === message.position_id
@@ -348,6 +363,7 @@ export function App(): JSX.Element {
             type: 'choose_network_move',
             position_id: current.position_id,
             temperature: temperature.value,
+            instant: instantReply,
           });
         }
 
@@ -417,6 +433,7 @@ export function App(): JSX.Element {
       // A move already sent leaves this position; retargeting it would be stale.
       if (playInFlight.value === pos.position_id || autoReplied.value === pos.position_id) return;
       requestedBudget.value = simulations;
+      searchRequested.value = pos.position_id;
       send({ type: 'start_search', position_id: pos.position_id, simulations });
     }, RETARGET_DELAY_MS);
     return () => window.clearTimeout(timer);
@@ -454,8 +471,8 @@ export function App(): JSX.Element {
       && current
       && current.outcome === null
       && current.to_move !== current.human_color
-      && live?.complete
-      && live.target_simulations > live.carried_visits
+      && live
+      && replyReady(live, budget.value === 0)
       && !(status.value?.running ?? false)
     ) letNetworkChoose();
   };
@@ -519,9 +536,15 @@ export function App(): JSX.Element {
     peek.value = { positionId: currentPosition.position_id, topics: [...peekedTopics, topic] };
   };
   const running = currentStatus?.running ?? false;
+  // A budget of zero is instant play: the network replies from its raw policy.
+  const instant = budget.value === 0;
+  const probabilityBasis = instant ? 'prior' : 'visits';
+  const boardOverlay: Overlay = instant && overlay.value === 'visits' ? 'move' : overlay.value;
+  const instantReady = instant && Boolean(liveSnapshot?.complete);
   const moveProbabilities = temperatureProbabilities(
     displaySnapshot?.moves ?? [],
     temperature.value,
+    probabilityBasis,
   );
   const evaluation = displaySnapshot?.search_value ?? displaySnapshot?.network_value ?? null;
   const moverShare = evaluation === null ? null : (evaluation + 1) / 2;
@@ -531,9 +554,7 @@ export function App(): JSX.Element {
       : currentPosition.to_move === 'black'
         ? moverShare
         : 1 - moverShare;
-  const topMoves = [...(displaySnapshot?.moves ?? [])]
-    .sort((left, right) => right.visits - left.visits)
-    .slice(0, 5);
+  const topMoves = [...(displaySnapshot?.moves ?? [])].sort(byStrength).slice(0, 5);
   const topVisitShare = topMoves[0] && displaySnapshot ? visitFraction(topMoves[0], displaySnapshot) : 0;
   const carriedVisits =
     currentStatus?.carried_visits ?? liveSnapshot?.carried_visits ?? 0;
@@ -556,9 +577,11 @@ export function App(): JSX.Element {
     ? 'Waiting for the server — search unlocks once a position arrives.'
     : currentPosition.outcome !== null
       ? 'The game is over. Start a new game to keep exploring.'
-      : !running && progress >= budget.value
-        ? 'The search budget is exhausted — increase it to resume the search from the current tree.'
-        : null;
+      : instant
+        ? 'Instant mode: the network replies from its policy without searching. Raise the budget above 0 to search.'
+        : !running && progress >= budget.value
+          ? 'The search budget is exhausted — increase it to resume the search from the current tree.'
+          : null;
   const maximumBudget = hello.value?.max_search_simulations ?? 10_000;
   const budgetStep = maximumBudget < 100 ? 1 : 100;
   const turnColor = titleCase(currentPosition?.to_move ?? 'black');
@@ -603,7 +626,10 @@ export function App(): JSX.Element {
         position_id: currentPosition.position_id,
         simulations: targetBudget,
       })
-    ) requestedBudget.value = targetBudget;
+    ) {
+      requestedBudget.value = targetBudget;
+      searchRequested.value = currentPosition.position_id;
+    }
   };
 
   const playCell = (cell: Cell) => {
@@ -613,9 +639,7 @@ export function App(): JSX.Element {
     const latestMove = liveSnapshot?.moves.find(
       (move) => cellKey(move) === cellKey(cell),
     );
-    const ranked = [...(liveSnapshot?.moves ?? [])].sort(
-      (left, right) => right.visits - left.visits,
-    );
+    const ranked = [...(liveSnapshot?.moves ?? [])].sort(byStrength);
     const rank = latestMove
       ? ranked.findIndex((move) => cellKey(move) === cellKey(latestMove)) + 1
       : null;
@@ -657,6 +681,7 @@ export function App(): JSX.Element {
         type: 'choose_network_move',
         position_id: currentPosition.position_id,
         temperature: temperature.value,
+        instant,
       })
     ) autoReplied.value = currentPosition.position_id;
   };
@@ -837,21 +862,30 @@ export function App(): JSX.Element {
                   : ""}
               </p>
             </div>
-            <div className="search-readout">
-              <span className={running ? 'pulse-dot' : 'status-dot'} aria-hidden="true" />
-              <strong>{progress.toLocaleString()}</strong>
-              <span>/ {target.toLocaleString()} simulations</span>
-              <small>{liveSnapshot ? `${Math.round(liveSnapshot.simulations_per_second).toLocaleString()} sims/s` : "\u00a0"}</small>
-              <small>
-                {etaSeconds !== null
-                  ? `~${formatEta(etaSeconds)} left`
-                  : target > 0 && progress >= target
-                    ? "Complete"
-                    : target > 0
-                      ? "Paused"
-                      : "\u00a0"}
-              </small>
-            </div>
+            {instant ? (
+              <div className="search-readout">
+                <span className={running ? 'pulse-dot' : 'status-dot'} aria-hidden="true" />
+                <strong>Instant</strong>
+                <span>raw network policy, no search</span>
+                <small>{instantReady ? 'Evaluated' : running ? 'Evaluating…' : '\u00a0'}</small>
+              </div>
+            ) : (
+              <div className="search-readout">
+                <span className={running ? 'pulse-dot' : 'status-dot'} aria-hidden="true" />
+                <strong>{progress.toLocaleString()}</strong>
+                <span>/ {target.toLocaleString()} simulations</span>
+                <small>{liveSnapshot ? `${Math.round(liveSnapshot.simulations_per_second).toLocaleString()} sims/s` : "\u00a0"}</small>
+                <small>
+                  {etaSeconds !== null
+                    ? `~${formatEta(etaSeconds)} left`
+                    : target > 0 && progress >= target
+                      ? "Complete"
+                      : target > 0
+                        ? "Paused"
+                        : "\u00a0"}
+                </small>
+              </div>
+            )}
           </div>
           {currentPosition && currentPosition.outcome === null && (
             <div
@@ -859,10 +893,10 @@ export function App(): JSX.Element {
               aria-valuemax={Math.max(target, 1)}
               aria-valuemin={0}
               aria-valuenow={Math.min(progress, Math.max(target, 1))}
-              className={`search-progress${!running && target > 0 && progress >= target ? ' is-complete' : ''}`}
+              className={`search-progress${instantReady || (!running && target > 0 && progress >= target) ? ' is-complete' : ''}`}
               role="progressbar"
             >
-              <span style={{ inlineSize: `${target > 0 ? Math.min(100, (progress / target) * 100) : 0}%` }} />
+              <span style={{ inlineSize: `${instantReady ? 100 : target > 0 ? Math.min(100, (progress / target) * 100) : 0}%` }} />
             </div>
           )}
           {currentPosition && currentPosition.outcome === null && (showEvaluation ? (
@@ -903,7 +937,7 @@ export function App(): JSX.Element {
                           currentPosition.outcome !== null
                           || Boolean(isHumanTurn)
                           || !liveSnapshot
-                          || liveSnapshot.target_simulations === 0
+                          || (!instant && liveSnapshot.target_simulations === 0)
                           || autoReplied.value === currentPosition.position_id
                         }
                         onClick={letNetworkChoose}
@@ -933,8 +967,9 @@ export function App(): JSX.Element {
                   ) : null
                 }
                 onPlay={playCell}
-                overlay={overlay.value}
+                overlay={boardOverlay}
                 position={currentPosition}
+                probabilityBasis={probabilityBasis}
                 showPolicy={showMoveGuidance}
                 snapshot={displaySnapshot}
                 temperature={temperature.value}
@@ -956,7 +991,8 @@ export function App(): JSX.Element {
                       <span className="has-tip" key={option.value}>
                         <input
                           aria-describedby={`metric-tip-${option.value}`}
-                          checked={overlay.value === option.value}
+                          checked={boardOverlay === option.value}
+                          disabled={instant && option.value === 'visits'}
                           id={`metric-${option.value}`}
                           name="board-overlay"
                           onChange={() => setOverlay(option.value)}
@@ -968,6 +1004,7 @@ export function App(): JSX.Element {
                           <strong>{option.title}</strong>
                           {option.description}
                           {option.value === 'move' && `, T=${temperature.value.toFixed(2)}.`}
+                          {instant && option.value === 'visits' && ' Unavailable in instant mode: nothing is searched.'}
                         </span>
                       </span>
                     ))}
@@ -988,82 +1025,89 @@ export function App(): JSX.Element {
                 <p>Root visit fraction as simulations accumulate. Hover for exact values; click to pin a snapshot.</p>
               </div>
             </div>
-            <div className={`concealable${showMoveGuidance ? '' : ' is-concealed'}`}>
-              <SearchChart
-                concealed={!showMoveGuidance}
-                onSelectIndex={(index) => {
-                  inspectedSimulations.value =
-                    index === null ? null : (allSnapshots[index]?.searched_simulations ?? null);
-                }}
-                onFocusMove={(cell) => {
-                  focus.value =
-                    focus.value && cellKey(focus.value) === cellKey(cell) ? null : cell;
-                }}
-                selectedIndex={inspectedIndex}
-                focusCell={focus.value}
-                snapshots={showMoveGuidance ? allSnapshots : []}
-              />
-              {allSnapshots.length > 0 && (
-                <div className="inspect-bar" role="group" aria-label="Search snapshot inspection">
-                  <span className="live-label">
-                    <i aria-hidden="true" className="status-dot" />
-                    {inspectedSimulations.value === null ? 'Live' : 'Inspecting history'}
-                  </span>
-                  <button
-                    aria-label="Previous snapshot"
-                    className="step-button"
-                    disabled={(inspectedIndex ?? allSnapshots.length - 1) <= 0}
-                    onClick={() => stepInspection(-1)}
-                    type="button"
-                  >
-                    ‹
-                  </button>
-                  <input
-                    aria-label="Snapshot position in search history"
-                    max={allSnapshots.length - 1}
-                    min={0}
-                    onInput={(event) => {
-                      const index = Number(event.currentTarget.value);
-                      inspectedSimulations.value =
-                        index === allSnapshots.length - 1
-                          ? null
-                          : (allSnapshots[index]?.searched_simulations ?? null);
-                    }}
-                    step={1}
-                    type="range"
-                    value={inspectedIndex ?? allSnapshots.length - 1}
-                  />
-                  <button
-                    aria-label="Next snapshot"
-                    className="step-button"
-                    disabled={inspectedIndex === null}
-                    onClick={() => stepInspection(1)}
-                    type="button"
-                  >
-                    ›
-                  </button>
-                  <output>
-                    {Math.max(
-                      0,
-                      (displaySnapshot?.searched_simulations ?? 0) -
-                        (displaySnapshot?.carried_visits ?? 0),
-                    ).toLocaleString()}{' '}
-                    sims
-                  </output>
-                  <button
-                    className="text-button"
-                    disabled={inspectedIndex === null}
-                    onClick={() => { inspectedSimulations.value = null; }}
-                    type="button"
-                  >
-                    Live
-                  </button>
-                </div>
-              )}
-              {!showMoveGuidance && (
-                <ConcealedVeil message={hiddenMessage('moves')} onPeek={peekAt('moves')} />
-              )}
-            </div>
+            {instant ? (
+              <p className="empty-copy evolution-idle">
+                No search in instant mode: the network replies from its policy alone. Raise the
+                search budget above 0 to see how the search changes its mind.
+              </p>
+            ) : (
+              <div className={`concealable${showMoveGuidance ? '' : ' is-concealed'}`}>
+                <SearchChart
+                  concealed={!showMoveGuidance}
+                  onSelectIndex={(index) => {
+                    inspectedSimulations.value =
+                      index === null ? null : (allSnapshots[index]?.searched_simulations ?? null);
+                  }}
+                  onFocusMove={(cell) => {
+                    focus.value =
+                      focus.value && cellKey(focus.value) === cellKey(cell) ? null : cell;
+                  }}
+                  selectedIndex={inspectedIndex}
+                  focusCell={focus.value}
+                  snapshots={showMoveGuidance ? allSnapshots : []}
+                />
+                {allSnapshots.length > 0 && (
+                  <div className="inspect-bar" role="group" aria-label="Search snapshot inspection">
+                    <span className="live-label">
+                      <i aria-hidden="true" className="status-dot" />
+                      {inspectedSimulations.value === null ? 'Live' : 'Inspecting history'}
+                    </span>
+                    <button
+                      aria-label="Previous snapshot"
+                      className="step-button"
+                      disabled={(inspectedIndex ?? allSnapshots.length - 1) <= 0}
+                      onClick={() => stepInspection(-1)}
+                      type="button"
+                    >
+                      ‹
+                    </button>
+                    <input
+                      aria-label="Snapshot position in search history"
+                      max={allSnapshots.length - 1}
+                      min={0}
+                      onInput={(event) => {
+                        const index = Number(event.currentTarget.value);
+                        inspectedSimulations.value =
+                          index === allSnapshots.length - 1
+                            ? null
+                            : (allSnapshots[index]?.searched_simulations ?? null);
+                      }}
+                      step={1}
+                      type="range"
+                      value={inspectedIndex ?? allSnapshots.length - 1}
+                    />
+                    <button
+                      aria-label="Next snapshot"
+                      className="step-button"
+                      disabled={inspectedIndex === null}
+                      onClick={() => stepInspection(1)}
+                      type="button"
+                    >
+                      ›
+                    </button>
+                    <output>
+                      {Math.max(
+                        0,
+                        (displaySnapshot?.searched_simulations ?? 0) -
+                          (displaySnapshot?.carried_visits ?? 0),
+                      ).toLocaleString()}{' '}
+                      sims
+                    </output>
+                    <button
+                      className="text-button"
+                      disabled={inspectedIndex === null}
+                      onClick={() => { inspectedSimulations.value = null; }}
+                      type="button"
+                    >
+                      Live
+                    </button>
+                  </div>
+                )}
+                {!showMoveGuidance && (
+                  <ConcealedVeil message={hiddenMessage('moves')} onPeek={peekAt('moves')} />
+                )}
+              </div>
+            )}
           </section>
         </div>
 
@@ -1073,16 +1117,17 @@ export function App(): JSX.Element {
               <h2>Search controls</h2>
               <div className="search-actions">
                 <button
-                  className={`button${running ? '' : ' button-primary'}`}
+                  className={`button${running && !instant ? '' : ' button-primary'}`}
                   disabled={
                     !currentPosition
                     || currentPosition.outcome !== null
+                    || instant
                     || (!running && progress >= budget.value)
                   }
                   onClick={startOrStopSearch}
                   type="button"
                 >
-                  {running ? 'Stop search' : progress > 0 ? 'Continue search' : 'Run search'}
+                  {instant ? 'Run search' : running ? 'Stop search' : progress > 0 ? 'Continue search' : 'Run search'}
                 </button>
                 {searchUnavailableReason && (
                   <InfoTip
@@ -1098,16 +1143,21 @@ export function App(): JSX.Element {
             </div>
             <div className="control-grid">
               <label className="range-control">
-                <span><b>Search budget</b><output>{budget.value.toLocaleString()}</output></span>
+                <span><b>Search budget</b><output>{instant ? 'Instant' : budget.value.toLocaleString()}</output></span>
                 <input
+                  aria-valuetext={instant ? 'Instant: no search' : `${budget.value.toLocaleString()} simulations`}
                   max={maximumBudget}
-                  min={Math.min(budgetStep, maximumBudget)}
+                  min={0}
                   onInput={(event) => { budget.value = Number(event.currentTarget.value); }}
                   step={budgetStep}
                   type="range"
                   value={budget.value}
                 />
-                <small>Live while a search runs · hard limit {maximumBudget.toLocaleString()}</small>
+                <small>
+                  {instant
+                    ? 'At 0 the network replies from its policy, without search'
+                    : `Live while a search runs · 0 = instant · limit ${maximumBudget.toLocaleString()}`}
+                </small>
               </label>
               <label className="range-control">
                 <span><b>Temperature</b><output>{temperature.value.toFixed(2)}</output></span>
@@ -1192,9 +1242,11 @@ export function App(): JSX.Element {
               </div>
             </div>
             <p className="visits-note">
-              {displaySnapshot
-                ? `${displaySnapshot.total_visits.toLocaleString()} tree visits`
-                : 'No search yet'}
+              {!displaySnapshot
+                ? 'No search yet'
+                : displaySnapshot.total_visits === 0 && instant
+                  ? 'Network evaluation only, no search'
+                  : `${displaySnapshot.total_visits.toLocaleString()} tree visits`}
               {displaySnapshot && displaySnapshot.carried_visits > 0 && (
                 ` · ${displaySnapshot.carried_visits.toLocaleString()} carried from previous search`
               )}
