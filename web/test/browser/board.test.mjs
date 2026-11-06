@@ -5,17 +5,25 @@ import { engines, fixture } from "./helpers.mjs";
 async function demo(t, engine, options = {}) {
   const { page, origin } = await fixture(t, engine, { service: false, ...options });
   const played = [];
-  let stones = [], positionId = 1;
+  const newGames = [];
+  let stones = [], positionId = 1, humanColor = "black";
   await page.routeWebSocket("**/api/ws", (socket) => {
     const send = (message) => socket.send(JSON.stringify(message));
     const position = () => send({
       type: "position", position_id: positionId, ply: stones.length,
-      human_color: "black", to_move: stones.length % 2 ? "white" : "black",
+      human_color: humanColor, to_move: stones.length % 2 ? "white" : "black",
       stones, last_move: stones.at(-1) ?? null, outcome: null, carried_visits: 0,
     });
     socket.onMessage((raw) => {
       const message = JSON.parse(raw);
       if (message.type === "restore_game") position();
+      if (message.type === "new_game") {
+        newGames.push(message.human_color);
+        humanColor = message.human_color;
+        stones = [];
+        positionId++;
+        position();
+      }
       if (message.type === "play") {
         played.push({ row: message.row, column: message.column });
         stones = [...stones, {
@@ -58,7 +66,7 @@ async function demo(t, engine, options = {}) {
     await page.waitForFunction((n) => document.querySelectorAll(".board-cell .stone").length === n, count);
     assert.equal(played.length, count);
   };
-  return { page, played, cell, waitForMoves };
+  return { page, played, newGames, cell, waitForMoves };
 }
 
 for (const engine of engines) {
@@ -82,7 +90,7 @@ for (const engine of engines) {
 
   test(`${engine.name()}: touch inspection and cancelled gestures do not play`, async (t) => {
     const { page, played, cell, waitForMoves } = await demo(t, engine, { hasTouch: true });
-    await page.getByText("Always", { exact: true }).click();
+    await page.getByRole("button", { name: "Where to move" }).click();
     const target = cell(0, 0);
     await target.scrollIntoViewIfNeeded();
     const bounds = await target.boundingBox();
@@ -120,6 +128,71 @@ for (const engine of engines) {
     await waitForMoves(1);
     await cell(0, 1).tap();
     await waitForMoves(2);
+  });
+
+  test(`${engine.name()}: new game starts with the colour picked from its popover`, async (t) => {
+    const { page, newGames } = await demo(t, engine);
+    const popover = page.locator("#new-game-options");
+    await page.getByRole("button", { name: "Choose your colour for the next game" }).click();
+    // The radios are visually hidden, so a real press lands on the label text.
+    await popover.getByText("White", { exact: true }).click();
+    assert.equal(await popover.isVisible(), true, "picking a colour keeps the popover open");
+    assert.equal(await popover.getByRole("radio", { name: /White/ }).isChecked(), true);
+    await page.getByRole("button", { name: "New game", exact: true }).click();
+    await page.getByText("Network turn", { exact: true }).waitFor();
+    assert.deepEqual(newGames, ["white"]);
+  });
+
+  test(`${engine.name()}: hidden analysis keeps its place and peeks for one move`, async (t) => {
+    const { page, cell, waitForMoves } = await demo(t, engine);
+    const switchFor = (name) => page.getByRole("button", { name, exact: true });
+    const candidates = page.locator(".inspector .concealable");
+    const peek = candidates.getByRole("button", { name: "Peek this move" });
+    const rows = page.locator(".candidate-table .table-move-button");
+    const height = () => candidates.evaluate((el) => el.getBoundingClientRect().height);
+
+    // By default your turn shows who is ahead but not where to move.
+    assert.equal(await switchFor("Who's ahead").getAttribute("aria-pressed"), "true");
+    assert.equal(await switchFor("Where to move").getAttribute("aria-pressed"), "false");
+    await page.locator('.win-bar[role="img"]').waitFor();
+    await peek.waitFor();
+    assert.equal(await rows.count(), 0, "no candidate figures are rendered while hidden");
+    const hiddenHeight = await height();
+
+    await peek.click();
+    await rows.first().waitFor();
+    assert.equal(await height(), hiddenHeight, "revealing keeps the table's height");
+    assert.equal(await switchFor("Where to move").getAttribute("aria-pressed"), "false", "a peek leaves the setting alone");
+
+    // The network's turn shows everything; the next own turn hides the hints again.
+    await cell(0, 0).click();
+    await waitForMoves(1);
+    await rows.first().waitFor();
+    await cell(0, 1).click();
+    await waitForMoves(2);
+    await peek.waitFor();
+
+    await switchFor("Where to move").click();
+    await rows.first().waitFor();
+    await page.reload();
+    await rows.first().waitFor();
+    assert.equal(await switchFor("Where to move").getAttribute("aria-pressed"), "true", "the switch is remembered");
+  });
+
+  test(`${engine.name()}: square-size metric switches in place and is remembered`, async (t) => {
+    const { page } = await demo(t, engine);
+    await page.getByRole("button", { name: "Where to move", exact: true }).click();
+    const metric = (name) => page.getByRole("radio", { name, exact: true });
+    const positions = () =>
+      page.locator(".board-legend > *").evaluateAll((items) => items.map((item) => item.getBoundingClientRect().left));
+    assert.equal(await metric("Visits").isChecked(), true, "visit fraction is the default");
+    const before = await positions();
+    await page.locator(".metric-switch").getByText("Probability", { exact: true }).click();
+    assert.equal(await metric("Probability").isChecked(), true);
+    assert.deepEqual(await positions(), before, "switching the metric moves nothing in the legend");
+    await page.reload();
+    await page.locator(".metric-switch").waitFor();
+    assert.equal(await metric("Probability").isChecked(), true, "the metric is remembered");
   });
 
   test(`${engine.name()}: demo coordinates align with cells at desktop and narrow sizes`, async (t) => {

@@ -9,9 +9,14 @@ import { InfoTip } from './InfoTip';
 import { SearchChart } from './SearchChart';
 import { ThemePicker } from './ThemePicker';
 import {
-  type PolicyVisibility,
-  revealsMoveGuidance,
-} from './policyVisibility';
+  type Disclosure,
+  type DisclosureTopic,
+  DISCLOSURE_TOPICS,
+  parseDisclosure,
+  reveals,
+} from './disclosure';
+import { ConcealedNote, ConcealedVeil, DisclosureSwitches, EyeIcon } from './DisclosureControls';
+import { usePopover } from './usePopover';
 import {
   type Cell,
   type ErrorMessage,
@@ -51,6 +56,56 @@ interface MoveJudgment {
 
 const MAX_SNAPSHOTS = 240;
 const RETARGET_DELAY_MS = 250;
+const AUTO_REPLY_KEY = 'alz-playground-auto-reply';
+const DISCLOSURE_KEY = 'alz-playground-analysis';
+const OVERLAY_KEY = 'alz-playground-overlay';
+
+const OVERLAY_OPTIONS: readonly { value: Overlay; label: string; title: string; description: string }[] = [
+  {
+    value: 'prior',
+    label: 'Prior',
+    title: 'Network prior',
+    description: "The network's raw policy for each move, before any search.",
+  },
+  {
+    value: 'visits',
+    label: 'Visits',
+    title: 'Visit fraction',
+    description: 'Share of search visits each move received: where the search focused.',
+  },
+  {
+    value: 'move',
+    label: 'Probability',
+    title: 'Move probability',
+    description: 'Chance the network plays each move when sampling at the current temperature',
+  },
+];
+
+/** Off unless the player turned it on, so each search can be inspected first. */
+function storedAutoReply(): boolean {
+  try {
+    return localStorage.getItem(AUTO_REPLY_KEY) === 'on';
+  } catch {
+    return false;
+  }
+}
+
+function storedDisclosure(): Disclosure {
+  try {
+    return parseDisclosure(localStorage.getItem(DISCLOSURE_KEY));
+  } catch {
+    return parseDisclosure(null);
+  }
+}
+
+function storedOverlay(): Overlay {
+  try {
+    const stored = localStorage.getItem(OVERLAY_KEY);
+    return OVERLAY_OPTIONS.find(({ value }) => value === stored)?.value ?? 'visits';
+  } catch {
+    return 'visits';
+  }
+}
 
 function websocketUrl(): string {
   const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -107,12 +162,22 @@ export function App(): JSX.Element {
   const snapshots = useSignal<SearchSnapshotMessage[]>([]);
   const inspectedSimulations = useSignal<number | null>(null);
   const focus = useSignal<Cell | null>(null);
-  const overlay = useSignal<Overlay>('visits');
-  const policyVisibility = useSignal<PolicyVisibility>('network_turn');
+  const overlay = useSignal(storedOverlay());
+  const disclosure = useSignal(storedDisclosure());
+  // Groups revealed for one position only; a new position hides them again.
+  const peek = useSignal<{ positionId: number; topics: DisclosureTopic[] } | null>(null);
   const temperature = useSignal(0.5);
   const budget = useSignal(2_000);
   const requestedBudget = useSignal(0);
   const newHumanColor = useSignal<StoneColor>('black');
+  const autoReply = useSignal(storedAutoReply());
+  // Position for which an automatic reply has been requested; the board stays
+  // playable so a manual override is still possible while the server answers.
+  const autoReplied = useSignal<number | null>(null);
+  // Position whose search the user stopped by hand: the snapshot that follows
+  // a stop is also flagged complete, but it must not trigger a reply.
+  const autoReplyStopped = useSignal<number | null>(null);
+  const newGamePopover = usePopover();
   const playInFlight = useSignal<number | null>(null);
   const error = useSignal<ErrorMessage | null>(null);
   const lastJudgment = useSignal<MoveJudgment | null>(null);
@@ -215,6 +280,8 @@ export function App(): JSX.Element {
         inspectedSimulations.value = null;
         focus.value = null;
         playInFlight.value = null;
+        autoReplied.value = null;
+        autoReplyStopped.value = null;
         requestedBudget.value = 0;
         error.value = null;
 
@@ -258,6 +325,32 @@ export function App(): JSX.Element {
             : [...previous, message];
         snapshots.value = downsampleSnapshots(next, inspectedSimulations.value);
 
+        const current = position.value;
+        // The server also marks the instant snapshot of a freshly reached
+        // position as complete when only carried visits exist and no target
+        // has been set yet; a reply needs a positive target that was reached.
+        const targetReached =
+          message.complete && message.target_simulations > message.carried_visits;
+        if (
+          targetReached
+          && autoReply.value
+          && current
+          && current.position_id === message.position_id
+          && current.outcome === null
+          && current.to_move !== current.human_color
+          && playInFlight.value !== current.position_id
+          && autoReplied.value !== current.position_id
+          && autoReplyStopped.value !== current.position_id
+        ) {
+          // Auto-reply: the network answers as soon as its search finishes.
+          autoReplied.value = current.position_id;
+          sendOnThisSocket({
+            type: 'choose_network_move',
+            position_id: current.position_id,
+            temperature: temperature.value,
+          });
+        }
+
         const judgment = lastJudgment.value;
         if (
           judgment &&
@@ -273,8 +366,18 @@ export function App(): JSX.Element {
         return;
       }
 
-      error.value = message;
       playInFlight.value = null;
+      if (
+        message.code === 'invalid_command'
+        && autoReplied.value !== null
+        && autoReplied.value === position.value?.position_id
+      ) {
+        // An automatic reply raced a retargeted search; the next completed
+        // snapshot retries, so this is not worth a banner.
+        autoReplied.value = null;
+        return;
+      }
+      error.value = message;
       if (awaitingRestoredPosition) ws.close();
       if (!message.recoverable) requestedBudget.value = 0;
     });
@@ -311,11 +414,51 @@ export function App(): JSX.Element {
       if (!live.running || live.target_simulations - live.carried_visits === simulations) {
         return;
       }
+      // A move already sent leaves this position; retargeting it would be stale.
+      if (playInFlight.value === pos.position_id || autoReplied.value === pos.position_id) return;
       requestedBudget.value = simulations;
       send({ type: 'start_search', position_id: pos.position_id, simulations });
     }, RETARGET_DELAY_MS);
     return () => window.clearTimeout(timer);
   }, [budget.value]);
+
+  const setDisclosure = (next: Disclosure) => {
+    disclosure.value = next;
+    try {
+      localStorage.setItem(DISCLOSURE_KEY, JSON.stringify(next));
+    } catch {
+      // The setting still applies for this page.
+    }
+  };
+
+  const setOverlay = (next: Overlay) => {
+    overlay.value = next;
+    try {
+      localStorage.setItem(OVERLAY_KEY, next);
+    } catch {
+      // The choice still applies for this page.
+    }
+  };
+
+  const setAutoReply = (enabled: boolean) => {
+    autoReply.value = enabled;
+    try {
+      localStorage.setItem(AUTO_REPLY_KEY, enabled ? 'on' : 'off');
+    } catch {
+      // The preference still applies for this page.
+    }
+    const current = position.value;
+    const live = snapshots.value[snapshots.value.length - 1];
+    if (
+      enabled
+      && current
+      && current.outcome === null
+      && current.to_move !== current.human_color
+      && live?.complete
+      && live.target_simulations > live.carried_visits
+      && !(status.value?.running ?? false)
+    ) letNetworkChoose();
+  };
 
   const send = (message: object): boolean => {
     const ws = socket.value;
@@ -357,23 +500,41 @@ export function App(): JSX.Element {
   const isHumanTurn =
     currentPosition?.outcome === null &&
     currentPosition.to_move === currentPosition.human_color;
-  const isNetworkTurn = Boolean(
-    currentPosition
-    && currentPosition.outcome === null
-    && currentPosition.to_move !== currentPosition.human_color,
-  );
-  const showMoveGuidance = revealsMoveGuidance(
-    policyVisibility.value,
-    isNetworkTurn,
-  );
+  const peekedTopics =
+    currentPosition && peek.value?.positionId === currentPosition.position_id
+      ? peek.value.topics
+      : [];
+  const revealed = (topic: DisclosureTopic) =>
+    reveals(disclosure.value, topic, isHumanTurn) || peekedTopics.includes(topic);
+  const showEvaluation = revealed('evaluation');
+  const showReview = revealed('review');
+  const showMoveGuidance = revealed('moves');
+  const hiddenTurn = isHumanTurn ? 'on your turn' : "on the network's turn";
+  const hiddenMessage = (topic: DisclosureTopic) =>
+    `${DISCLOSURE_TOPICS.find(({ id }) => id === topic)?.hidden} ${hiddenTurn}`;
+  const judged = (text: string) =>
+    showReview ? text : <span aria-hidden="true" className="skeleton-line" />;
+  const peekAt = (topic: DisclosureTopic) => () => {
+    if (!currentPosition) return;
+    peek.value = { positionId: currentPosition.position_id, topics: [...peekedTopics, topic] };
+  };
   const running = currentStatus?.running ?? false;
   const moveProbabilities = temperatureProbabilities(
     displaySnapshot?.moves ?? [],
     temperature.value,
   );
+  const evaluation = displaySnapshot?.search_value ?? displaySnapshot?.network_value ?? null;
+  const moverShare = evaluation === null ? null : (evaluation + 1) / 2;
+  const blackShare =
+    moverShare === null || !currentPosition
+      ? null
+      : currentPosition.to_move === 'black'
+        ? moverShare
+        : 1 - moverShare;
   const topMoves = [...(displaySnapshot?.moves ?? [])]
     .sort((left, right) => right.visits - left.visits)
     .slice(0, 5);
+  const topVisitShare = topMoves[0] && displaySnapshot ? visitFraction(topMoves[0], displaySnapshot) : 0;
   const carriedVisits =
     currentStatus?.carried_visits ?? liveSnapshot?.carried_visits ?? 0;
   const progress = Math.max(
@@ -428,9 +589,13 @@ export function App(): JSX.Element {
           type: 'stop_search',
           position_id: currentPosition.position_id,
         })
-      ) requestedBudget.value = 0;
+      ) {
+        requestedBudget.value = 0;
+        autoReplyStopped.value = currentPosition.position_id;
+      }
       return;
     }
+    autoReplyStopped.value = null;
     const targetBudget = budget.value;
     if (
       send({
@@ -480,14 +645,20 @@ export function App(): JSX.Element {
 
   const letNetworkChoose = () => {
     if (!currentPosition || currentPosition.outcome !== null || isHumanTurn || !liveSnapshot) return;
+    // One reply per position: a manual request and the automatic one on
+    // search completion must not both be sent, or the second arrives after
+    // the game has moved on and is rejected as stale.
+    if (autoReplied.value === currentPosition.position_id) return;
     if (running) {
       send({ type: 'stop_search', position_id: currentPosition.position_id });
     }
-    send({
-      type: 'choose_network_move',
-      position_id: currentPosition.position_id,
-      temperature: temperature.value,
-    });
+    if (
+      send({
+        type: 'choose_network_move',
+        position_id: currentPosition.position_id,
+        temperature: temperature.value,
+      })
+    ) autoReplied.value = currentPosition.position_id;
   };
 
   const stepInspection = (delta: number) => {
@@ -542,52 +713,77 @@ export function App(): JSX.Element {
                   epoch {hello.value.checkpoint.epoch}
                 </span>
               </span>
-              <small>{hello.value.checkpoint.model_digest}</small>
             </span>
           )}
+          {hello.value?.dashboard_url && (
+            <a className="topbar-link" href={hello.value.dashboard_url}>
+              Research dashboard ↗
+            </a>
+          )}
           <ThemePicker />
-          <div className="player-picker">
-            <span aria-hidden="true" className="player-picker-caption">Next game</span>
-            <fieldset className="player-picker-group">
-              <legend className="visually-hidden">
-                Your color for the next game; Black moves first
-              </legend>
-              <label title="Play Black and move first">
-                <input
-                  checked={newHumanColor.value === 'black'}
-                  name="next-human-color"
-                  onChange={() => { newHumanColor.value = 'black'; }}
-                  type="radio"
-                  value="black"
-                />
-                <span>Black</span>
-                <small>First</small>
-              </label>
-              <label title="Play White and move second">
-                <input
-                  checked={newHumanColor.value === 'white'}
-                  name="next-human-color"
-                  onChange={() => { newHumanColor.value = 'white'; }}
-                  type="radio"
-                  value="white"
-                />
-                <span>White</span>
-                <small>Second</small>
-              </label>
-            </fieldset>
+          <div
+            className="new-game"
+            ref={newGamePopover.container}
+            onFocusOut={newGamePopover.onFocusOut}
+          >
             <button
-              className="button player-picker-action"
+              className="button button-primary"
               disabled={connection.value !== 'connected'}
               onClick={() => {
                 if (send({ type: 'new_game', human_color: newHumanColor.value })) {
                   focus.value = null;
                   lastJudgment.value = null;
+                  newGamePopover.setOpen(false);
                 }
               }}
               type="button"
             >
               New game
             </button>
+            <button
+              aria-controls="new-game-options"
+              aria-expanded={newGamePopover.open}
+              aria-label="Choose your colour for the next game"
+              className="button new-game-toggle"
+              ref={newGamePopover.toggle}
+              onClick={() => newGamePopover.setOpen((open) => !open)}
+              title="Your colour for the next game"
+              type="button"
+            >
+              <i aria-hidden="true" className={`legend-stone legend-${newHumanColor.value} new-game-stone`} />
+              <span aria-hidden="true">▾</span>
+            </button>
+            <div className="new-game-popover" hidden={!newGamePopover.open} id="new-game-options">
+              <span className="player-picker-caption">Your colour for the next game</span>
+              <fieldset className="player-picker player-picker-group">
+                <legend className="visually-hidden">
+                  Your color for the next game; Black moves first
+                </legend>
+                <label title="Play Black and move first">
+                  <input
+                    checked={newHumanColor.value === 'black'}
+                    name="next-human-color"
+                    onChange={() => { newHumanColor.value = 'black'; }}
+                    type="radio"
+                    value="black"
+                  />
+                  <span>Black</span>
+                  <small>moves first</small>
+                </label>
+                <label title="Play White and move second">
+                  <input
+                    checked={newHumanColor.value === 'white'}
+                    name="next-human-color"
+                    onChange={() => { newHumanColor.value = 'white'; }}
+                    type="radio"
+                    value="white"
+                  />
+                  <span>White</span>
+                  <small>moves second</small>
+                </label>
+              </fieldset>
+              <p className="muted">Applies when you start the next game; the current game is not affected.</p>
+            </div>
           </div>
         </div>
       </header>
@@ -669,6 +865,27 @@ export function App(): JSX.Element {
               <span style={{ inlineSize: `${target > 0 ? Math.min(100, (progress / target) * 100) : 0}%` }} />
             </div>
           )}
+          {currentPosition && currentPosition.outcome === null && (showEvaluation ? (
+            <div
+              aria-label={
+                blackShare === null
+                  ? 'No evaluation yet'
+                  : `Black ${Math.round(blackShare * 100)}%, White ${Math.round((1 - blackShare) * 100)}%`
+              }
+              className="win-bar reveal"
+              key="shown"
+              role="img"
+              title="Winning chances from the search value (network value before any search), from Black's side"
+            >
+              <span><i className="legend-stone legend-black" />Black {blackShare === null ? '—' : `${Math.round(blackShare * 100)}%`}</span>
+              <div className="win-bar-track"><span style={{ inlineSize: `${(blackShare ?? 0.5) * 100}%` }} /></div>
+              <span>White {blackShare === null ? '—' : `${Math.round((1 - blackShare) * 100)}%`}<i className="legend-stone legend-white" /></span>
+            </div>
+          ) : (
+            <div className="win-bar is-concealed" key="hidden">
+              <ConcealedNote message={hiddenMessage('evaluation')} onPeek={peekAt('evaluation')} />
+            </div>
+          ))}
           <div className="board-frame">
             {currentPosition ? (
               <Board
@@ -687,11 +904,14 @@ export function App(): JSX.Element {
                           || Boolean(isHumanTurn)
                           || !liveSnapshot
                           || liveSnapshot.target_simulations === 0
+                          || autoReplied.value === currentPosition.position_id
                         }
                         onClick={letNetworkChoose}
                         type="button"
                       >
-                        Let network choose
+                        {autoReplied.value === currentPosition.position_id
+                          ? 'Network is replying…'
+                          : 'Let network choose'}
                       </button>
                       <button
                         className="button"
@@ -701,6 +921,14 @@ export function App(): JSX.Element {
                       >
                         Undo move
                       </button>
+                      <label className="auto-reply" title="When on, the network plays its move as soon as its search finishes. Turn off to inspect the search before each reply.">
+                        <input
+                          checked={autoReply.value}
+                          onChange={(event) => setAutoReply(event.currentTarget.checked)}
+                          type="checkbox"
+                        />
+                        <span>Auto-reply</span>
+                      </label>
                     </div>
                   ) : null
                 }
@@ -721,31 +949,48 @@ export function App(): JSX.Element {
               <span><i className="legend-stone legend-white" />White</span>
               {showMoveGuidance ? (
                 <>
-                  <span><i className="legend-policy" />{
-                    overlay.value === 'prior'
-                      ? 'Network policy'
-                      : overlay.value === 'visits'
-                        ? 'Visit fraction'
-                        : `Move probability at T=${temperature.value.toFixed(2)}`
-                  }</span>
-                  <span className="legend-note">larger square = more likely · 1 = top move</span>
+                  <fieldset className="metric-switch reveal">
+                    <legend className="visually-hidden">Square size shows</legend>
+                    <i aria-hidden="true" className="legend-policy" />
+                    {OVERLAY_OPTIONS.map((option) => (
+                      <span className="has-tip" key={option.value}>
+                        <input
+                          aria-describedby={`metric-tip-${option.value}`}
+                          checked={overlay.value === option.value}
+                          id={`metric-${option.value}`}
+                          name="board-overlay"
+                          onChange={() => setOverlay(option.value)}
+                          type="radio"
+                          value={option.value}
+                        />
+                        <label htmlFor={`metric-${option.value}`}>{option.label}</label>
+                        <span className="hover-tip" id={`metric-tip-${option.value}`} role="tooltip">
+                          <strong>{option.title}</strong>
+                          {option.description}
+                          {option.value === 'move' && `, T=${temperature.value.toFixed(2)}.`}
+                        </span>
+                      </span>
+                    ))}
+                  </fieldset>
+                  <span className="legend-note reveal">larger square = more likely · 1 = top move</span>
                 </>
               ) : (
-                <span className="legend-note">Move guidance is hidden by your settings.</span>
+                <ConcealedNote message={hiddenMessage('moves')} onPeek={peekAt('moves')} />
               )}
             </div>
           )}
           </section>
 
-          {showMoveGuidance && (
-            <section className="panel evolution" aria-labelledby="evolution-title">
-              <div className="section-heading evolution-heading">
-                <div>
-                  <h2 id="evolution-title">How search changes its mind</h2>
-                  <p>Root visit fraction as simulations accumulate. Hover for exact values; click to pin a snapshot.</p>
-                </div>
+          <section className="panel evolution" aria-labelledby="evolution-title">
+            <div className="section-heading evolution-heading">
+              <div>
+                <h2 id="evolution-title">How search changes its mind</h2>
+                <p>Root visit fraction as simulations accumulate. Hover for exact values; click to pin a snapshot.</p>
               </div>
+            </div>
+            <div className={`concealable${showMoveGuidance ? '' : ' is-concealed'}`}>
               <SearchChart
+                concealed={!showMoveGuidance}
                 onSelectIndex={(index) => {
                   inspectedSimulations.value =
                     index === null ? null : (allSnapshots[index]?.searched_simulations ?? null);
@@ -756,10 +1001,70 @@ export function App(): JSX.Element {
                 }}
                 selectedIndex={inspectedIndex}
                 focusCell={focus.value}
-                snapshots={allSnapshots}
+                snapshots={showMoveGuidance ? allSnapshots : []}
               />
-            </section>
-          )}
+              {allSnapshots.length > 0 && (
+                <div className="inspect-bar" role="group" aria-label="Search snapshot inspection">
+                  <span className="live-label">
+                    <i aria-hidden="true" className="status-dot" />
+                    {inspectedSimulations.value === null ? 'Live' : 'Inspecting history'}
+                  </span>
+                  <button
+                    aria-label="Previous snapshot"
+                    className="step-button"
+                    disabled={(inspectedIndex ?? allSnapshots.length - 1) <= 0}
+                    onClick={() => stepInspection(-1)}
+                    type="button"
+                  >
+                    ‹
+                  </button>
+                  <input
+                    aria-label="Snapshot position in search history"
+                    max={allSnapshots.length - 1}
+                    min={0}
+                    onInput={(event) => {
+                      const index = Number(event.currentTarget.value);
+                      inspectedSimulations.value =
+                        index === allSnapshots.length - 1
+                          ? null
+                          : (allSnapshots[index]?.searched_simulations ?? null);
+                    }}
+                    step={1}
+                    type="range"
+                    value={inspectedIndex ?? allSnapshots.length - 1}
+                  />
+                  <button
+                    aria-label="Next snapshot"
+                    className="step-button"
+                    disabled={inspectedIndex === null}
+                    onClick={() => stepInspection(1)}
+                    type="button"
+                  >
+                    ›
+                  </button>
+                  <output>
+                    {Math.max(
+                      0,
+                      (displaySnapshot?.searched_simulations ?? 0) -
+                        (displaySnapshot?.carried_visits ?? 0),
+                    ).toLocaleString()}{' '}
+                    sims
+                  </output>
+                  <button
+                    className="text-button"
+                    disabled={inspectedIndex === null}
+                    onClick={() => { inspectedSimulations.value = null; }}
+                    type="button"
+                  >
+                    Live
+                  </button>
+                </div>
+              )}
+              {!showMoveGuidance && (
+                <ConcealedVeil message={hiddenMessage('moves')} onPeek={peekAt('moves')} />
+              )}
+            </div>
+          </section>
         </div>
 
         <aside className="panel inspector" aria-label="Position analysis">
@@ -818,56 +1123,7 @@ export function App(): JSX.Element {
               </label>
             </div>
             <div className="overlay-controls">
-              <div className="overlay-control-group">
-                <div className="control-copy">
-                  <b>Show probabilities and ranking</b>
-                  <small>Applies to board hints, candidate table, and search history</small>
-                </div>
-                <fieldset className="segmented">
-                  <legend className="visually-hidden">Show probabilities and ranking</legend>
-                  {([
-                    ['always', 'Always'],
-                    ['network_turn', 'Network turn only'],
-                    ['never', 'Never'],
-                  ] as const).map(([value, label]) => (
-                    <label key={value}>
-                      <input
-                        checked={policyVisibility.value === value}
-                        name="policy-visibility"
-                        onChange={() => { policyVisibility.value = value; }}
-                        type="radio"
-                        value={value}
-                      />
-                      <span>{label}</span>
-                    </label>
-                  ))}
-                </fieldset>
-              </div>
-              <div className="overlay-control-group">
-                <div className="control-copy">
-                  <b>Board overlay metric</b>
-                  <small>What the square size represents</small>
-                </div>
-                <fieldset className="segmented" disabled={!showMoveGuidance}>
-                  <legend className="visually-hidden">Board policy overlay</legend>
-                  {([
-                    ['prior', 'Network prior'],
-                    ['visits', 'Search visits'],
-                    ['move', 'Move probability'],
-                  ] as const).map(([value, label]) => (
-                    <label key={value}>
-                      <input
-                        checked={overlay.value === value}
-                        name="board-overlay"
-                        onChange={() => { overlay.value = value; }}
-                        type="radio"
-                        value={value}
-                      />
-                      <span>{label}</span>
-                    </label>
-                  ))}
-                </fieldset>
-              </div>
+              <DisclosureSwitches disclosure={disclosure.value} onChange={setDisclosure} />
             </div>
           </section>
 
@@ -888,12 +1144,22 @@ export function App(): JSX.Element {
                     It runs from −1 to +1 and is always measured from the perspective of the side
                     to move: positive favors the current player, negative favors the opponent —
                     so which color that is flips with every move.
-                    <span className="info-tip-live">
-                      {favorsText(displaySnapshot?.network_value ?? null, turnColor, opponentColor)}
-                    </span>
+                    {showEvaluation && (
+                      <span className="info-tip-live">
+                        {favorsText(displaySnapshot?.network_value ?? null, turnColor, opponentColor)}
+                      </span>
+                    )}
                   </InfoTip>
                 </span>
-                <strong>{signed(displaySnapshot?.network_value ?? null)}</strong>
+                {showEvaluation ? (
+                  <strong className="reveal" key="shown">{signed(displaySnapshot?.network_value ?? null)}</strong>
+                ) : (
+                  <strong className="value-concealed" key="hidden">
+                    <button className="text-button" onClick={peekAt('evaluation')} type="button">
+                      <EyeIcon off />Peek
+                    </button>
+                  </strong>
+                )}
               </div>
               <div>
                 <span>
@@ -907,12 +1173,22 @@ export function App(): JSX.Element {
                     the root moves explored so far, using the same convention as V — positive
                     favors the side to move. It sharpens toward the best line as visits
                     accumulate.
-                    <span className="info-tip-live">
-                      {favorsText(displaySnapshot?.search_value ?? null, turnColor, opponentColor)}
-                    </span>
+                    {showEvaluation && (
+                      <span className="info-tip-live">
+                        {favorsText(displaySnapshot?.search_value ?? null, turnColor, opponentColor)}
+                      </span>
+                    )}
                   </InfoTip>
                 </span>
-                <strong>{signed(displaySnapshot?.search_value ?? null)}</strong>
+                {showEvaluation ? (
+                  <strong className="reveal" key="shown">{signed(displaySnapshot?.search_value ?? null)}</strong>
+                ) : (
+                  <strong className="value-concealed" key="hidden">
+                    <button className="text-button" onClick={peekAt('evaluation')} type="button">
+                      <EyeIcon off />Peek
+                    </button>
+                  </strong>
+                )}
               </div>
             </div>
             <p className="visits-note">
@@ -923,67 +1199,83 @@ export function App(): JSX.Element {
                 ` · ${displaySnapshot.carried_visits.toLocaleString()} carried from previous search`
               )}
             </p>
-            {showMoveGuidance ? (
-              <>
-                <div className="table-wrap">
-                  <table aria-label="Top candidate moves">
-                    <thead><tr><th>Move</th><th>Prior</th><th>Visits</th><th>P(move)</th></tr></thead>
-                    <tbody>
-                      {topMoves.map((move) => {
-                        const key = cellKey(move);
-                        const color = dotColorFor(key);
-                        return (
-                          <tr key={key}>
-                            <td>
-                              <button
-                                className="table-move-button"
-                                onClick={() => playCell({ row: move.row, column: move.column })}
-                                title="Play this move"
-                                type="button"
-                              >
-                                <i
-                                  className="series-dot"
-                                  style={color ? { background: color } : undefined}
-                                />{moveName(move)}
-                              </button>
-                            </td>
-                            <td>{percent(move.prior)}</td>
-                            <td>{displaySnapshot ? percent(visitFraction(move, displaySnapshot)) : '—'}</td>
-                            <td>{percent(moveProbabilities.get(key) ?? null)}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </>
-            ) : (
-              <div className="move-guidance-hidden">
-                <b>Move guidance hidden</b>
+            <div className={`concealable${showMoveGuidance ? '' : ' is-concealed'}`}>
+              <div className="table-wrap">
+                <table aria-label="Top candidate moves" className="candidate-table">
+                  <thead><tr><th>Move</th><th>Prior</th><th>Visits</th><th>P(move)</th></tr></thead>
+                  <tbody>
+                    {!showMoveGuidance ? Array.from({ length: 5 }, (_, row) => (
+                      <tr aria-hidden="true" className="skeleton-row" key={row}>
+                        {[0, 1, 2, 3].map((column) => <td key={column}><span className="skeleton-line" /></td>)}
+                      </tr>
+                    )) : topMoves.map((move) => {
+                      const key = cellKey(move);
+                      const color = dotColorFor(key);
+                      const share = displaySnapshot ? visitFraction(move, displaySnapshot) : 0;
+                      return (
+                        <tr
+                          key={key}
+                          onMouseEnter={() => { focus.value = { row: move.row, column: move.column }; }}
+                          onMouseLeave={() => {
+                            if (focus.value && cellKey(focus.value) === key) focus.value = null;
+                          }}
+                        >
+                          <td>
+                            <button
+                              className="table-move-button"
+                              onClick={() => playCell({ row: move.row, column: move.column })}
+                              title="Play this move"
+                              type="button"
+                            >
+                              <i
+                                className="series-dot"
+                                style={color ? { background: color } : undefined}
+                              />{moveName(move)}
+                            </button>
+                          </td>
+                          <td>{percent(move.prior)}</td>
+                          <td className="visits-cell">
+                            <span className="visit-bar" aria-hidden="true" style={{ inlineSize: `${topVisitShare > 0 ? (share / topVisitShare) * 100 : 0}%` }} />
+                            {displaySnapshot ? percent(share) : '—'}
+                          </td>
+                          <td>{percent(moveProbabilities.get(key) ?? null)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
-            )}
+              {!showMoveGuidance && (
+                <ConcealedVeil message={hiddenMessage('moves')} onPeek={peekAt('moves')} />
+              )}
+            </div>
           </section>
 
           <section className="inspector-section judgment-section">
             <h2>How the network judged your last move</h2>
-            {!showMoveGuidance ? null : lastJudgment.value ? (
-              <div className="judgment-card">
-                <div>
-                  <strong>{lastJudgment.value.name}</strong>
-                  <span>
-                    {lastJudgment.value.rank === 1
-                      ? '— its first choice'
-                      : lastJudgment.value.rank !== null && lastJudgment.value.rank <= 5
-                        ? '— one of its leading choices'
-                        : '— outside its leading candidates'}
-                  </span>
+            {lastJudgment.value ? (
+              <div className={`concealable${showReview ? '' : ' is-concealed'}`}>
+                <div className="judgment-card">
+                  <div>
+                    <strong>{lastJudgment.value.name}</strong>
+                    <span>
+                      {judged(lastJudgment.value.rank === 1
+                        ? '— its first choice'
+                        : lastJudgment.value.rank !== null && lastJudgment.value.rank <= 5
+                          ? '— one of its leading choices'
+                          : '— outside its leading candidates')}
+                    </span>
+                  </div>
+                  <dl>
+                    <dt>Policy rank before move</dt><dd>{judged(lastJudgment.value.rank ? `${lastJudgment.value.rank} / ${lastJudgment.value.legalMoves}` : '—')}</dd>
+                    <dt>Raw network policy</dt><dd>{judged(percent(lastJudgment.value.prior))}</dd>
+                    <dt>Search visit fraction</dt><dd>{judged(percent(lastJudgment.value.visitShare))}</dd>
+                    <dt>Network value change</dt><dd>{judged(signed(lastJudgment.value.valueDelta))}</dd>
+                  </dl>
                 </div>
-                <dl>
-                  <dt>Policy rank before move</dt><dd>{lastJudgment.value.rank ? `${lastJudgment.value.rank} / ${lastJudgment.value.legalMoves}` : '—'}</dd>
-                  <dt>Raw network policy</dt><dd>{percent(lastJudgment.value.prior)}</dd>
-                  <dt>Search visit fraction</dt><dd>{percent(lastJudgment.value.visitShare)}</dd>
-                  <dt>Network value change</dt><dd>{signed(lastJudgment.value.valueDelta)}</dd>
-                </dl>
+                {!showReview && (
+                  <ConcealedVeil message={hiddenMessage('review')} onPeek={peekAt('review')} />
+                )}
               </div>
             ) : (
               <p className="empty-copy">Your move’s policy rank and value impact will appear here.</p>
@@ -992,63 +1284,6 @@ export function App(): JSX.Element {
         </aside>
       </main>
 
-      {showMoveGuidance && allSnapshots.length > 0 && (
-        <div className="inspect-bar" role="group" aria-label="Search snapshot inspection">
-          <span className="live-label">
-            <i aria-hidden="true" className="status-dot" />
-            {inspectedSimulations.value === null ? 'Live' : 'Inspecting history'}
-          </span>
-          <button
-            aria-label="Previous snapshot"
-            className="step-button"
-            disabled={(inspectedIndex ?? allSnapshots.length - 1) <= 0}
-            onClick={() => stepInspection(-1)}
-            type="button"
-          >
-            ‹
-          </button>
-          <input
-            aria-label="Snapshot position in search history"
-            max={allSnapshots.length - 1}
-            min={0}
-            onInput={(event) => {
-              const index = Number(event.currentTarget.value);
-              inspectedSimulations.value =
-                index === allSnapshots.length - 1
-                  ? null
-                  : (allSnapshots[index]?.searched_simulations ?? null);
-            }}
-            step={1}
-            type="range"
-            value={inspectedIndex ?? allSnapshots.length - 1}
-          />
-          <button
-            aria-label="Next snapshot"
-            className="step-button"
-            disabled={inspectedIndex === null}
-            onClick={() => stepInspection(1)}
-            type="button"
-          >
-            ›
-          </button>
-          <output>
-            {Math.max(
-              0,
-              (displaySnapshot?.searched_simulations ?? 0) -
-                (displaySnapshot?.carried_visits ?? 0),
-            ).toLocaleString()}{' '}
-            sims
-          </output>
-          <button
-            className="text-button"
-            disabled={inspectedIndex === null}
-            onClick={() => { inspectedSimulations.value = null; }}
-            type="button"
-          >
-            Live
-          </button>
-        </div>
-      )}
     </div>
   );
 }

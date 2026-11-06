@@ -40,6 +40,8 @@ export interface HelloMessage {
   default_search_simulations: number;
   c_puct: number;
   snapshot_interval_ms: number;
+  /** Public address of the research dashboard, when the operator configured one. */
+  dashboard_url?: string | null;
 }
 
 export interface PositionMessage {

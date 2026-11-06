@@ -13,8 +13,30 @@ temperature-adjusted move probability independently. Hovering or focusing a lega
 all three values, its visit count, and mean action value. Search snapshots are retained in the
 browser so the evolution chart and board can be scrubbed without stopping live search.
 
-Move guidance can be shown always, only on the network's turn, or never. The setting applies to board
-markers and tooltips, candidate ranking, search history, and last-move policy details. Select an empty
+By default the network waits for `Let network choose`, so its search can be
+inspected before each reply; turn on **Auto-reply** (under the board, remembered in
+the browser) to have it answer as soon as its search finishes. Either way one reply is
+requested per position: the button reads `Network is replying…` while the server
+answers, and the automatic reply waits for a snapshot whose positive target was
+reached, not the instant snapshot of carried visits that follows every move. While "who's
+ahead" is shown, a Black/White bar above the board shows winning chances derived from
+the search value (the network value before any search), always from Black's
+side so it does not flip with the side to move; raw V and Q stay in the Position
+panel. The search-history scrubber sits under the evolution chart it controls.
+`New game` starts immediately with the colour chosen in the adjacent popover
+(Black moves first); the candidate table shows visit shares as bars, and hovering
+a row highlights that move on the board. Pass `--dashboard-url https://…` to the
+server to show a "Research dashboard" link in the header.
+
+**Show on your turn** has one switch per group of analysis: who's ahead (win bar, V and Q), the
+rating of your last move, and where to move (board markers and tooltips, candidate ranking, search
+history); hovering a switch lists exactly what it reveals. By default only where to move is off.
+The network's turn shows everything unless "Hide on the network's turn too" is ticked, and a
+finished game counts as the network's turn. The setting is remembered in the browser. Hidden
+analysis keeps a same-size placeholder, so the page does not shift between turns, and `Peek`
+reveals it for the current position only. What the hint squares measure (network prior, visit
+fraction, or move probability at the current temperature) is switched in the legend under the
+board and remembered in the browser. Select an empty
 cell once to inspect it and activate the selected cell again to play it. No cell is selected initially,
 search never changes selection, and a submitted move keeps the selection as a pending marker until
 the resulting position arrives and replaces it with the played stone. Arrow keys move the selection

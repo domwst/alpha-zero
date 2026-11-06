@@ -533,17 +533,22 @@ h2 {
 }
 
 .button:disabled,
-.text-button:disabled,
-.segmented:disabled {
+.text-button:disabled {
   cursor: not-allowed;
   opacity: var(--ds-opacity-disabled);
 }
 
+/* Notices float over the page as toasts so they never push the board. */
 .notice {
+  position: fixed;
+  inset-block-start: calc(var(--ds-header-height) + var(--ds-space-3));
+  inset-inline: var(--ds-space-4);
+  z-index: var(--ds-z-toast);
   display: flex;
+  max-inline-size: 44rem;
   align-items: center;
   gap: var(--ds-space-4);
-  margin-block-start: var(--ds-space-4);
+  margin-inline: auto;
   padding: var(--ds-space-3) var(--ds-space-4);
   border-radius: var(--ds-radius);
   color: var(--ds-color-warning-text);
@@ -556,6 +561,10 @@ h2 {
   color: var(--ds-color-danger-text);
   background: var(--ds-color-danger-soft);
   box-shadow: 0 0 0 1px var(--ds-color-danger-text);
+}
+
+.notice + .notice {
+  inset-block-start: calc(var(--ds-header-height) + var(--ds-space-3) + 3.5rem);
 }
 
 .notice > span {
@@ -975,6 +984,7 @@ h2 {
 }
 
 .motion-on .policy-marker {
+  animation: reveal var(--ds-duration-fast) var(--ds-ease-standard);
   transition: inline-size var(--ds-duration-fast) var(--ds-ease-standard),
     block-size var(--ds-duration-fast) var(--ds-ease-standard),
     opacity var(--ds-duration-fast) var(--ds-ease-standard);
@@ -1062,6 +1072,7 @@ h2 {
 }
 
 .board-legend {
+  min-block-size: 26px;
   flex-wrap: wrap;
   justify-content: center;
   gap: var(--ds-space-5);
@@ -1087,6 +1098,69 @@ h2 {
 .legend-white { background: var(--ds-board-white-stone); box-shadow: 0 0 0 1px var(--ds-color-border-strong); }
 .legend-policy { background: var(--ds-board-policy); }
 .legend-note { color: var(--ds-color-text-subtle); }
+
+/* Square-size metric: a compact segmented control whose width never depends
+   on the selection, so the centred legend does not move when it changes. */
+.metric-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-inline-size: 0;
+  margin: 0;
+  padding: 2px;
+  border: 0;
+  border-radius: var(--ds-radius);
+  background: var(--ds-color-surface-subtle);
+}
+
+.metric-switch .legend-policy {
+  margin-inline: var(--ds-space-1);
+}
+
+.metric-switch label {
+  display: flex;
+  min-block-size: 22px;
+  align-items: center;
+  padding-inline: var(--ds-space-2);
+  border: 1px solid transparent;
+  border-radius: var(--ds-radius-sm);
+  color: var(--ds-color-text-muted);
+  cursor: pointer;
+  font-size: var(--ds-font-size-eyebrow);
+  font-weight: var(--ds-font-weight-semibold);
+}
+
+.motion-on .metric-switch label {
+  transition: background var(--ds-duration-fast) var(--ds-ease-standard),
+    color var(--ds-duration-fast) var(--ds-ease-standard),
+    border-color var(--ds-duration-fast) var(--ds-ease-standard);
+}
+
+.metric-switch label:hover {
+  color: var(--ds-color-text-primary);
+}
+
+.metric-switch input:checked + label {
+  border-color: var(--ds-color-accent);
+  color: var(--ds-color-text-primary);
+  background: var(--ds-color-accent-soft);
+}
+
+.metric-switch input:focus-visible + label {
+  outline: var(--ds-focus-width) solid var(--ds-focus-color);
+  outline-offset: var(--ds-focus-offset);
+}
+
+.metric-switch input {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  opacity: 0;
+}
+
+.metric-switch .hover-tip {
+  inset-block-end: calc(100% + var(--ds-space-2));
+}
 
 .inspector {
   min-inline-size: 0;
@@ -1156,70 +1230,244 @@ h2 {
   gap: var(--ds-space-2);
 }
 
-.control-copy b {
-  display: block;
+.control-title {
   color: var(--ds-color-text-primary);
   font-size: var(--ds-font-size-label);
   font-weight: var(--ds-font-weight-semibold);
 }
 
-.control-copy small {
-  display: block;
-  margin-block-start: var(--ds-space-1);
-  color: var(--ds-color-text-subtle);
-  font-size: var(--ds-font-size-eyebrow);
-  text-wrap: pretty;
+.eye-icon {
+  inline-size: 14px;
+  block-size: 14px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.4;
 }
 
-.segmented {
+.disclosure-switches {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, auto);
   gap: var(--ds-space-1);
-  min-inline-size: 0;
-  margin: 0;
   padding: var(--ds-space-1);
-  border: 0;
   border-radius: var(--ds-radius);
   background: var(--ds-color-surface-subtle);
 }
 
-.segmented label {
+.disclosure-switch {
   position: relative;
-  display: flex;
+  display: grid;
+}
+
+.disclosure-switch button {
+  display: inline-flex;
   min-block-size: calc(var(--ds-control-height) - var(--ds-space-2));
   align-items: center;
   justify-content: center;
+  gap: var(--ds-space-2);
   padding-inline: var(--ds-space-2);
   border: 1px solid transparent;
   border-radius: var(--ds-radius-sm);
   color: var(--ds-color-text-muted);
+  background: transparent;
   cursor: pointer;
   font-size: var(--ds-font-size-eyebrow);
   font-weight: var(--ds-font-weight-semibold);
-  text-align: center;
+  white-space: nowrap;
 }
 
-.segmented input {
-  position: absolute;
-  inline-size: 1px;
-  block-size: 1px;
-  opacity: 0;
+.motion-on .disclosure-switch button {
+  transition: background var(--ds-duration-fast) var(--ds-ease-standard),
+    color var(--ds-duration-fast) var(--ds-ease-standard),
+    border-color var(--ds-duration-fast) var(--ds-ease-standard);
 }
 
-.segmented label:has(input:checked) {
+.disclosure-switch button:hover {
+  color: var(--ds-color-text-primary);
+}
+
+.disclosure-switch button[aria-pressed="true"] {
   border-color: var(--ds-color-accent);
   color: var(--ds-color-text-primary);
   background: var(--ds-color-accent-soft);
   box-shadow: var(--ds-shadow-selected);
 }
 
-.segmented label:has(input:focus-visible) {
-  outline: var(--ds-focus-width) solid var(--ds-focus-color);
-  outline-offset: var(--ds-focus-offset);
+/* Explains a compact control; shown after a short hover so passing over a
+   row of controls does not flash it, and at once for keyboard focus. The
+   control sits directly before its tip so focus reaches it as a sibling. */
+.has-tip {
+  position: relative;
 }
 
-.segmented:disabled label {
+.hover-tip {
+  position: absolute;
+  inset-inline-start: 50%;
+  z-index: var(--ds-z-popover);
+  inline-size: 15rem;
+  padding: var(--ds-space-3);
+  border: 1px solid var(--ds-color-border);
+  border-radius: var(--ds-radius);
+  color: var(--ds-color-text-muted);
+  background: var(--ds-color-surface);
+  box-shadow: var(--ds-shadow-overlay);
+  font-size: var(--ds-font-size-eyebrow);
+  line-height: 1.45;
+  opacity: 0;
+  pointer-events: none;
+  translate: -50% 0;
+  visibility: hidden;
+  transition: visibility 0s, opacity 0s;
+}
+
+.motion-on .hover-tip {
+  transition: visibility var(--ds-duration-fast),
+    opacity var(--ds-duration-fast) var(--ds-ease-standard);
+}
+
+.has-tip:hover .hover-tip,
+.has-tip > :focus-visible ~ .hover-tip {
+  opacity: 1;
+  visibility: visible;
+}
+
+.has-tip:hover .hover-tip {
+  transition-delay: 350ms;
+}
+
+.hover-tip strong {
+  display: block;
+  margin-block-end: var(--ds-space-1);
+  color: var(--ds-color-text-primary);
+  font-size: var(--ds-font-size-label);
+}
+
+.disclosure-switch .hover-tip {
+  inset-block-start: calc(100% + var(--ds-space-2));
+}
+
+.disclosure-switch:first-child .hover-tip {
+  inset-inline-start: 0;
+  translate: none;
+}
+
+.disclosure-switch:last-child .hover-tip {
+  inset-inline: auto 0;
+  translate: none;
+}
+
+.hover-tip ul {
+  margin: 0 0 var(--ds-space-1);
+  padding-inline-start: var(--ds-space-4);
+}
+
+.disclosure-also {
+  display: inline-flex;
+  justify-self: start;
+  align-items: center;
+  gap: var(--ds-space-2);
+  color: var(--ds-color-text-muted);
+  cursor: pointer;
+  font-size: var(--ds-font-size-eyebrow);
+}
+
+.disclosure-also:has(input:disabled) {
   cursor: not-allowed;
+  opacity: var(--ds-opacity-disabled);
+}
+
+.disclosure-also input {
+  margin: 0;
+  accent-color: var(--ds-color-accent);
+}
+
+/* Hidden analysis keeps a same-size placeholder under a veil, so nothing
+   moves between turns; placeholders never carry the real figures. */
+.concealable {
+  position: relative;
+}
+
+.motion-on .concealable > :not(.concealed-veil) {
+  transition: opacity var(--ds-duration-fast) var(--ds-ease-standard);
+}
+
+.concealable.is-concealed > :not(.concealed-veil) {
+  opacity: 0.45;
+}
+
+.concealable.is-concealed .inspect-bar {
+  visibility: hidden;
+}
+
+.concealed-veil {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ds-space-1);
+  padding: var(--ds-space-3);
+  border: 1px dashed var(--ds-color-border-strong);
+  border-radius: var(--ds-radius);
+  color: var(--ds-color-text-muted);
+  background: color-mix(in srgb, var(--ds-color-surface) 70%, transparent);
+  font-size: var(--ds-font-size-label);
+  text-align: center;
+  text-wrap: balance;
+}
+
+.evolution .concealed-veil {
+  inset: 0 var(--ds-panel-padding) var(--ds-panel-padding);
+}
+
+.concealed-veil .eye-icon {
+  inline-size: 16px;
+  block-size: 16px;
+}
+
+.concealed-note {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  color: var(--ds-color-text-subtle);
+  font-size: var(--ds-font-size-label);
+}
+
+.concealed-note .text-button {
+  min-block-size: 0;
+  padding: 0;
+}
+
+.skeleton-line {
+  display: inline-block;
+  inline-size: 70%;
+  max-inline-size: 6rem;
+  block-size: 0.6em;
+  border-radius: var(--ds-radius-pill);
+  background: var(--ds-color-border);
+  vertical-align: middle;
+}
+
+/* Matches the 24px move button of a real candidate row. */
+.skeleton-row td {
+  line-height: 24px;
+}
+
+@keyframes reveal {
+  from { opacity: 0; }
+}
+
+.motion-on .reveal {
+  animation: reveal var(--ds-duration-fast) var(--ds-ease-standard);
+}
+
+@media (max-width: 420px) {
+  .disclosure-switch .eye-icon {
+    display: none;
+  }
 }
 
 .value-grid {
@@ -1248,6 +1496,22 @@ h2 {
   color: var(--ds-color-text-primary);
   font-size: var(--ds-font-size-control);
   font-variant-numeric: tabular-nums;
+}
+
+/* One line of the value's own size, so the tile keeps its height. */
+.value-grid strong.value-concealed {
+  display: flex;
+  block-size: 1lh;
+  align-items: center;
+}
+
+.value-grid strong.value-concealed .text-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+  min-block-size: 0;
+  padding: 0;
+  font-size: var(--ds-font-size-label);
 }
 
 .visits-note {
@@ -1396,24 +1660,6 @@ tbody tr:hover {
   margin-inline: var(--ds-space-1) var(--ds-space-2);
   border-radius: 2px;
   background: var(--ds-color-neutral);
-}
-
-.move-guidance-hidden {
-  display: grid;
-  gap: var(--ds-space-1);
-  margin-block-start: var(--ds-space-4);
-  padding: var(--ds-space-4);
-  border: 1px dashed var(--ds-color-border-strong);
-  border-radius: var(--ds-radius);
-  color: var(--ds-color-text-muted);
-  background: var(--ds-color-surface-subtle);
-  font-size: var(--ds-font-size-label);
-  text-wrap: pretty;
-}
-
-.move-guidance-hidden b {
-  color: var(--ds-color-text-primary);
-  font-weight: var(--ds-font-weight-semibold);
 }
 
 .action-row {
@@ -1700,35 +1946,16 @@ tbody tr:hover {
   text-align: end;
 }
 
-.chart-empty {
-  display: flex;
-  min-block-size: 11rem;
-  align-items: center;
-  justify-content: center;
-  margin: var(--ds-space-5) var(--ds-panel-padding) var(--ds-panel-padding);
-  padding: var(--ds-space-6);
-  border: 1px dashed var(--ds-color-border-strong);
-  border-radius: var(--ds-radius);
-  color: var(--ds-color-text-subtle);
-  font-size: var(--ds-font-size-control);
-  text-align: center;
-}
-
 .inspect-bar {
-  position: sticky;
-  inset-block-end: 0;
-  z-index: calc(var(--ds-z-header) - 1);
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--ds-space-3);
-  margin-block-start: var(--ds-space-5);
+  margin: var(--ds-space-3) var(--ds-panel-padding) 0;
   padding: var(--ds-space-2) var(--ds-space-4);
   border: 1px solid var(--ds-color-border);
-  border-block-end: 0;
-  border-radius: var(--ds-radius-lg) var(--ds-radius-lg) 0 0;
-  background: color-mix(in srgb, var(--ds-color-canvas) 94%, transparent);
-  backdrop-filter: blur(var(--ds-space-4));
+  border-radius: var(--ds-radius);
+  background: var(--ds-color-surface-subtle);
 }
 
 .inspect-bar input[type="range"] {
@@ -2008,10 +2235,6 @@ figcaption strong {
     display: none;
   }
 
-  .segmented {
-    grid-template-columns: 1fr;
-  }
-
   .cell-tooltip {
     min-inline-size: 11.5rem;
   }
@@ -2044,5 +2267,182 @@ figcaption strong {
   .chart-endpoint,
   .chart-hover-slice circle {
     forced-color-adjust: none;
+  }
+}
+
+/* --- Review 2026-10-12: header popover, win bar, auto-reply, candidate bars --- */
+.new-game {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.new-game .button-primary {
+  border-start-end-radius: 0;
+  border-end-end-radius: 0;
+}
+
+.button.new-game-toggle {
+  gap: var(--ds-space-1);
+  padding-inline: var(--ds-space-3);
+  border-start-start-radius: 0;
+  border-end-start-radius: 0;
+  margin-inline-start: -1px;
+}
+
+/* Board stone colours rather than ●/○ glyphs, which take the text colour
+   and so read inverted in the dark theme. */
+.new-game-stone {
+  inline-size: 0.75em;
+  block-size: 0.75em;
+  border-radius: 50%;
+}
+
+.new-game-popover {
+  position: absolute;
+  inset-block-start: calc(100% + var(--ds-space-2));
+  z-index: var(--ds-z-popover);
+  display: grid;
+  gap: var(--ds-space-3);
+  padding: var(--ds-space-4);
+  border: 1px solid var(--ds-color-border);
+  border-radius: var(--ds-radius);
+  background: var(--ds-color-surface);
+  box-shadow: var(--ds-shadow-overlay);
+}
+
+.new-game-popover {
+  inset-inline-end: 0;
+  inline-size: 15rem;
+}
+
+.new-game-popover[hidden] {
+  display: none;
+}
+
+.new-game-popover .player-picker-caption {
+  padding: 0;
+  letter-spacing: 0;
+  font-size: var(--ds-font-size-label);
+  color: var(--ds-color-text-primary);
+}
+
+.new-game-popover .player-picker {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.new-game-popover .player-picker label {
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--ds-space-1);
+  padding-block: var(--ds-space-2);
+}
+
+.new-game-popover .muted {
+  font-size: var(--ds-font-size-eyebrow);
+}
+
+.topbar-link {
+  color: var(--ds-color-accent);
+  font-size: var(--ds-font-size-label);
+  font-weight: var(--ds-font-weight-medium);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.topbar-link:hover {
+  text-decoration: underline;
+}
+
+.win-bar {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: var(--ds-space-4);
+  margin-block-start: var(--ds-space-4);
+  color: var(--ds-color-text);
+  font-size: var(--ds-font-size-label);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The hidden form keeps the row so the board never moves between turns. */
+.win-bar.is-concealed {
+  display: flex;
+  justify-content: center;
+}
+
+.win-bar > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  white-space: nowrap;
+}
+
+.win-bar-track {
+  block-size: 10px;
+  border-radius: var(--ds-radius-pill);
+  background: var(--ds-board-white-stone);
+  box-shadow: inset 0 0 0 1px var(--ds-color-border-strong);
+  overflow: hidden;
+}
+
+.win-bar-track > span {
+  display: block;
+  block-size: 100%;
+  background: var(--ds-board-black-stone);
+}
+
+.motion-on .win-bar-track > span {
+  transition: inline-size var(--ds-duration-slow) var(--ds-ease-standard);
+}
+
+.auto-reply {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  margin-inline-start: auto;
+  color: var(--ds-color-text);
+  font-size: var(--ds-font-size-label);
+  cursor: pointer;
+}
+
+.auto-reply input {
+  accent-color: var(--ds-color-accent);
+  inline-size: 16px;
+  block-size: 16px;
+  margin: 0;
+}
+
+.candidate-table tbody tr {
+  cursor: pointer;
+}
+
+.visits-cell {
+  position: relative;
+}
+
+.candidate-table .visit-bar {
+  position: absolute;
+  inset-inline-start: var(--ds-space-1);
+  inset-block: 35%;
+  max-inline-size: calc(100% - 3.6rem);
+  border-radius: 2px;
+  background: var(--ds-color-accent);
+  opacity: 0.25;
+  pointer-events: none;
+}
+
+@media (max-width: 760px) {
+  .new-game-popover {
+    inset-inline: 0 auto;
+  }
+
+  .notice {
+    inset-block-start: var(--ds-space-3);
+  }
+
+  .notice + .notice {
+    inset-block-start: calc(var(--ds-space-3) + 3.5rem);
   }
 }

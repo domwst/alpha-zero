@@ -86,6 +86,9 @@ pub enum ServerMessage {
         default_search_simulations: u32,
         c_puct: f32,
         snapshot_interval_ms: u64,
+        /// Public address of the research dashboard, when configured.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        dashboard_url: Option<String>,
     },
     Position {
         position_id: u64,
@@ -193,6 +196,7 @@ mod tests {
             default_search_simulations: 2_000,
             c_puct: 1.0,
             snapshot_interval_ms: 100,
+            dashboard_url: None,
         };
         let json = serde_json::to_value(message).unwrap();
 

@@ -2,6 +2,7 @@ import type { JSX } from "preact";
 import { useState } from "preact/hooks";
 
 import { seriesColor, seriesColorIndexes, trackedMoves } from "./chartSeries";
+import { usePlotWidth } from "./InteractiveChart";
 import { percent } from "./format";
 import {
   type Cell,
@@ -14,6 +15,8 @@ import {
 
 interface SearchChartProps {
   snapshots: SearchSnapshotMessage[];
+  /** Draws the empty frame without text, as a same-size placeholder. */
+  concealed?: boolean;
   selectedIndex: number | null;
   onSelectIndex: (index: number | null) => void;
   focusCell: Cell | null;
@@ -27,7 +30,6 @@ interface HoverSlice {
   placeBefore: boolean;
 }
 
-const WIDTH = 1000;
 const HEIGHT = 260;
 const MARGIN = { top: 18, right: 20, bottom: 48, left: 64 };
 
@@ -44,16 +46,32 @@ function elapsed(milliseconds: number): string {
 
 export function SearchChart({
   snapshots,
+  concealed = false,
   selectedIndex,
   onSelectIndex,
   focusCell,
   onFocusMove,
 }: SearchChartProps): JSX.Element {
   const [hoverSlice, setHoverSlice] = useState<HoverSlice | null>(null);
+  // The plot is drawn at the container's pixel width so tick labels keep
+  // their CSS size on narrow screens instead of scaling down with a fixed
+  // 1000-unit view box.
+  const { ref, width } = usePlotWidth();
+  const WIDTH = Math.max(320, width);
 
   if (snapshots.length === 0) {
+    const note = concealed
+      ? null
+      : {
+        label: 'Waiting for search snapshots…',
+        caption: 'Search snapshots will appear here as the network explores this position.',
+      };
     return (
-      <figure className="search-figure" aria-label="Search chart awaiting data">
+      <figure
+        className="search-figure"
+        aria-label={note ? note.label : 'Search chart hidden'}
+        ref={ref}
+      >
         <div
           className="chart-legend"
           aria-hidden="true"
@@ -72,22 +90,21 @@ export function SearchChart({
             className="chart"
             viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
             role="img"
-            aria-label="Waiting for search snapshots"
+            aria-label={note ? note.label : 'Search chart hidden'}
           >
-            <text
-              x={WIDTH / 2}
-              y={HEIGHT / 2}
-              text-anchor="middle"
-              className="chart-label"
-            >
-              Waiting for search snapshots…
-            </text>
+            {note && (
+              <text
+                x={WIDTH / 2}
+                y={HEIGHT / 2}
+                text-anchor="middle"
+                className="chart-label"
+              >
+                {note.label}
+              </text>
+            )}
           </svg>
         </div>
-        <figcaption>
-          Search snapshots will appear here as the network explores this
-          position.
-        </figcaption>
+        <figcaption>{note?.caption}</figcaption>
       </figure>
     );
   }
@@ -185,7 +202,7 @@ export function SearchChart({
   };
 
   return (
-    <figure className="search-figure">
+    <figure className="search-figure" ref={ref}>
       <div
         aria-label="Leading move series; activate an entry to follow that move on the board"
         className="chart-legend"

@@ -33,6 +33,8 @@ pub struct SessionConfig {
     pub c_puct: f32,
     pub search_chunk_size: u32,
     pub snapshot_interval: Duration,
+    /// Public address of the research dashboard, linked from the header.
+    pub dashboard_url: Option<String>,
 }
 
 impl SessionConfig {
@@ -92,6 +94,7 @@ where
             default_search_simulations: config.default_search_simulations,
             c_puct: config.c_puct,
             snapshot_interval_ms: config.snapshot_interval.as_millis() as u64,
+            dashboard_url: config.dashboard_url,
         },
     )
     .await?;
@@ -603,6 +606,7 @@ mod tests {
             c_puct: 1.0,
             search_chunk_size: 8,
             snapshot_interval: Duration::from_millis(100),
+            dashboard_url: None,
         }
     }
 
