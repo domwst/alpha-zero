@@ -38,6 +38,8 @@ services:
       - --port
       - "${DASHBOARD_LOCAL_PORT:-8765}"
       - --read-only
+      - --demo-url
+      - "${DASHBOARD_DEMO_URL:-https://gomoku.oleja.dev}"
     healthcheck:
       test: [CMD, python3, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:${DASHBOARD_LOCAL_PORT:-8765}/api/v1/session', timeout=5).read()"]
       interval: 30s

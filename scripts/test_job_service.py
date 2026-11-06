@@ -716,6 +716,108 @@ class HttpTests(unittest.TestCase):
         )
         self.assertEqual(result["events"], [])
 
+    def test_overview_resolves_comparison_checkpoints_and_run_epochs(self):
+        run = self.store.command("run", {"action": "create", "spec": SPEC, "title": "Run"})[
+            "job_id"
+        ]
+        baseline = self.store.command(
+            "baseline", {"action": "create", "spec": SPEC, "title": "Baseline"}
+        )["job_id"]
+        run_checkpoint = self.archive_checkpoint(run, 4)
+        base_checkpoint = self.archive_checkpoint(baseline, 1)
+        with self.store.transaction() as db:
+            for epoch in range(3):
+                self.store.event(
+                    db,
+                    run,
+                    None,
+                    "epoch_completed",
+                    {
+                        "epoch": epoch,
+                        "training": {"value_loss": 0.5 - epoch / 10, "policy_loss": 2.0},
+                        "self_play": {"games": 10, "first_player_win_rate": 0.6},
+                    },
+                )
+        comparison = self.store.command(
+            "match",
+            {
+                "action": "create",
+                "title": "Match",
+                "spec": SPEC
+                | {
+                    "kind": "comparison",
+                    "options": {"device": "cpu", "games": 2, "simulations": 4},
+                    "inputs": {"first": run_checkpoint, "second": base_checkpoint},
+                },
+            },
+        )["job_id"]
+        shas = {}
+        with self.store.transaction() as db:
+            for row in db.execute("SELECT id,sha256 FROM artifacts"):
+                shas[row["id"]] = row["sha256"]
+            self.store.event(
+                db,
+                comparison,
+                None,
+                "imported",
+                {
+                    "participants": {
+                        "first": {"label": "Run · epoch 5", "model_sha256": shas[run_checkpoint]},
+                        "second": {
+                            "label": "Baseline · epoch 2",
+                            "model_sha256": shas[base_checkpoint],
+                        },
+                    }
+                },
+            )
+            self.store.event(
+                db,
+                comparison,
+                None,
+                "comparison_completed",
+                {
+                    "game_statistics": {
+                        "games": 4,
+                        "seat_results": {
+                            "first_checkpoint": {
+                                "first": {"games": 2, "wins": 2, "draws": 0, "losses": 0},
+                                "second": {"games": 2, "wins": 1, "draws": 0, "losses": 1},
+                            },
+                            "second_checkpoint": {
+                                "first": {"games": 2, "wins": 1, "draws": 0, "losses": 1},
+                                "second": {"games": 2, "wins": 0, "draws": 0, "losses": 2},
+                            },
+                        },
+                        "outcomes": {"first_player_wins": 3, "second_player_wins": 1, "draws": 0},
+                        "lengths": {},
+                        "completion": None,
+                    }
+                },
+            )
+            db.execute("UPDATE jobs SET state='succeeded' WHERE id=?", (comparison,))
+        status, overview, _ = self.request("/api/v1/overview")
+        self.assertEqual(status, 200)
+        self.assertEqual(overview["jobs"], 3)
+        self.assertEqual(overview["by_kind"], {"self_play": 2, "comparison": 1})
+        self.assertEqual(len(overview["comparisons"]), 1)
+        match = overview["comparisons"][0]
+        self.assertEqual((match["wins"], match["draws"], match["losses"]), (3, 0, 1))
+        self.assertEqual(match["first"]["job_id"], run)
+        self.assertEqual(match["first"]["epoch"], 4)
+        self.assertEqual(match["first"]["job_title"], "Run")
+        self.assertEqual(match["second"]["job_id"], baseline)
+        self.assertEqual(match["second"]["label"], "Baseline · epoch 2")
+        self.assertEqual(match["settings"], {})
+        runs = {r["id"]: r for r in overview["runs"]}
+        self.assertEqual(
+            [e["value_loss"] for e in runs[run]["epochs"]], [0.5, 0.4, 0.3]
+        )
+        self.assertEqual(runs[run]["epochs"][0]["first_player_win_rate"], 0.6)
+        # The cache is keyed on the job table, so a new job refreshes it.
+        self.store.command("later", {"action": "create", "spec": SPEC, "title": "Later"})
+        _, refreshed, _ = self.request("/api/v1/overview")
+        self.assertEqual(refreshed["jobs"], 4)
+
     def test_games_sort_and_filter_within_one_epoch(self):
         job = self.store.command("sorted", {"action": "create", "spec": SPEC})["job_id"]
         directory = self.server.app.archive(job) / "00000000"
@@ -811,7 +913,8 @@ class HttpTests(unittest.TestCase):
 
     def archive_checkpoint(self, job, epoch):
         model = self.server.app.root / f"{job}-{epoch}.safetensors"
-        model.write_bytes(b"checkpoint")
+        # Distinct bytes per checkpoint so hashes identify one job and epoch.
+        model.write_bytes(f"checkpoint {job} {epoch}".encode())
         return self.store.artifact(job, None, "checkpoint", model, {"epoch": epoch})[
             "id"
         ]

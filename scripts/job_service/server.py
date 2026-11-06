@@ -34,6 +34,7 @@ class Application:
         scheduler=None,
         analysis=None,
         read_only=False,
+        demo_url=None,
     ):
         self.store, self.root, self.assets = (
             store,
@@ -44,7 +45,9 @@ class Application:
         self.game_index_cache = {}
         self.game_index_locks = {}
         self.game_index_guard = threading.Lock()
+        self.overview_cache = None
         self.read_only = read_only
+        self.demo_url = demo_url
         self.auth, self.origin, self.scheduler, self.analysis = (
             auth,
             origin.rstrip("/"),
@@ -213,6 +216,205 @@ class Application:
                 for p in paths[offset : offset + limit]
             ],
         }
+
+    RUN_KINDS = ("self_play", "replay_train", "reconstruction", "historical_training")
+
+    def overview(self):
+        """Cross-job aggregates for the landing page: headline counts, every
+        completed comparison with both checkpoints resolved to their source
+        job and epoch, and the per-epoch losses of each training run."""
+        with self.store.transaction(write=False) as db:
+            # Epoch events and published checkpoints change the overview
+            # without touching the job rows, so they are part of the key.
+            key = (
+                tuple(db.execute("SELECT COUNT(*), MAX(updated) FROM jobs").fetchone())
+                + tuple(db.execute("SELECT MAX(id) FROM events").fetchone())
+                + tuple(db.execute("SELECT COUNT(*) FROM artifacts").fetchone())
+            )
+            if self.overview_cache and self.overview_cache[0] == key:
+                return self.overview_cache[1]
+            jobs = [
+                dict(r)
+                for r in db.execute(
+                    "SELECT j.id,j.title,j.state,j.created,j.updated,j.spec,j.experiment_id,"
+                    "e.title AS experiment_title FROM jobs j LEFT JOIN experiments e "
+                    "ON e.id=j.experiment_id ORDER BY j.created DESC,j.id DESC"
+                )
+            ]
+            attempts = {}
+            for row in db.execute(
+                "SELECT job_id,number,state,started,ended,effective FROM attempts ORDER BY job_id,number"
+            ):
+                attempts.setdefault(row["job_id"], []).append(dict(row))
+            checkpoints = {}
+            artifacts = {}
+            for row in db.execute(
+                "SELECT id,job_id,sha256,metadata FROM artifacts WHERE kind='checkpoint'"
+            ):
+                epoch = json.loads(row["metadata"]).get("epoch")
+                checkpoints[row["sha256"]] = (row["job_id"], epoch)
+                artifacts[row["id"]] = (row["job_id"], epoch)
+        titles = {j["id"]: j["title"] for j in jobs}
+        by_kind, by_state = {}, {}
+        attempt_count = attempt_seconds = 0
+        last = 0.0
+        for job in jobs:
+            job["spec"] = json.loads(job["spec"])
+            by_kind[job["spec"]["kind"]] = by_kind.get(job["spec"]["kind"], 0) + 1
+            by_state[job["state"]] = by_state.get(job["state"], 0) + 1
+            last = max(last, job["updated"] or 0)
+            for attempt in attempts.get(job["id"], []):
+                attempt_count += 1
+                if attempt["started"] and attempt["ended"]:
+                    attempt_seconds += attempt["ended"] - attempt["started"]
+                    last = max(last, attempt["ended"])
+
+        def checkpoint_side(job, name, participants, resolved):
+            info = dict(participants.get(name) or {})
+            reference = resolved.get(name) or {}
+            sha = info.get("model_sha256") or reference.get("model_sha256")
+            # The comparison's own input reference names the producing job;
+            # the hash alone is ambiguous because continuations register
+            # copies of their source checkpoints under their own job.
+            owner = epoch = None
+            spec_input = job["spec"].get("inputs", {}).get(name)
+            if isinstance(spec_input, str) and spec_input in artifacts:
+                owner, epoch = artifacts[spec_input]
+            elif isinstance(spec_input, dict) and spec_input.get("job_id"):
+                owner = spec_input["job_id"]
+            if owner is None:
+                owner, epoch = checkpoints.get(sha, (None, None))
+            if type(reference.get("epoch")) is int:
+                epoch = reference["epoch"]
+            return {
+                "label": info.get("label"),
+                "model_sha256": sha,
+                "job_id": owner,
+                "job_title": titles.get(owner),
+                "epoch": epoch,
+            }
+
+        comparisons = []
+        for job in jobs:
+            if job["spec"]["kind"] != "comparison" or job["state"] not in (
+                "succeeded",
+                "archived",
+            ):
+                continue
+            summary = self.store.job_summary(job["id"])
+            comparison = summary.get("comparison")
+            if not comparison:
+                continue
+            latest = attempts.get(job["id"], [])
+            effective = json.loads(latest[-1]["effective"]) if latest else {}
+            participants = (
+                summary.get("participants") or effective.get("participants") or {}
+            )
+            resolved = effective.get("resolved_inputs") or {}
+            config = effective.get("resolved_config") or {}
+            seats = comparison["seat_results"]["first_checkpoint"]
+            comparisons.append(
+                {
+                    "id": job["id"],
+                    "title": job["title"],
+                    "created": job["created"],
+                    "state": job["state"],
+                    "games": comparison["games"],
+                    # Search settings that change playing strength; the UI
+                    # only pools or connects matches with equal settings.
+                    "settings": {
+                        key: config[key]
+                        for key in (
+                            "simulations",
+                            "temperature",
+                            "first_temperature",
+                            "second_temperature",
+                            "c_puct",
+                        )
+                        if config.get(key) is not None
+                    },
+                    "first": checkpoint_side(job, "first", participants, resolved),
+                    "second": checkpoint_side(job, "second", participants, resolved),
+                    **{
+                        k: seats["first"][k] + seats["second"][k]
+                        for k in ("wins", "draws", "losses")
+                    },
+                }
+            )
+
+        runs = []
+        recorded_games = 0
+        for job in jobs:
+            archive = self.root / "jobs" / job["id"] / "games" / "archive"
+            if archive.is_dir():
+                for directory in archive.glob("[0-9]*"):
+                    if directory.is_dir():
+                        recorded_games += len(replays.game_paths(directory))
+            if job["spec"]["kind"] not in self.RUN_KINDS:
+                continue
+            epochs = []
+            for event in self.store.epoch_summaries(job["id"]):
+                payload = event["payload"]
+                training = payload.get("training") or {}
+                self_play = payload.get("self_play") or {}
+                epochs.append(
+                    {
+                        "epoch": payload.get("epoch"),
+                        "value_loss": training.get("value_loss"),
+                        "policy_loss": training.get("policy_loss"),
+                        "first_player_win_rate": self_play.get("first_player_win_rate"),
+                        "games": self_play.get("games", payload.get("games")),
+                    }
+                )
+            source = None
+            reference = job["spec"].get("inputs", {}).get("checkpoint")
+            latest = attempts.get(job["id"], [])
+            resolved = (
+                json.loads(latest[-1]["effective"]).get("resolved_inputs", {})
+                if latest
+                else {}
+            )
+            if isinstance(reference, str) and reference in artifacts:
+                owner, epoch = artifacts[reference]
+                source = {"job_id": owner, "job_title": titles.get(owner), "epoch": epoch}
+            elif isinstance(reference, dict) and reference.get("job_id"):
+                owner = reference["job_id"]
+                checkpoint = resolved.get("checkpoint") or {}
+                source = {
+                    "job_id": owner,
+                    "job_title": titles.get(owner),
+                    "epoch": checkpoint.get("epoch")
+                    if type(checkpoint.get("epoch")) is int
+                    else None,
+                }
+            runs.append(
+                {
+                    "id": job["id"],
+                    "title": job["title"],
+                    "kind": job["spec"]["kind"],
+                    "state": job["state"],
+                    "created": job["created"],
+                    "experiment_id": job["experiment_id"],
+                    "experiment_title": job["experiment_title"],
+                    "source": source,
+                    "epochs": epochs,
+                }
+            )
+        result = {
+            "jobs": len(jobs),
+            "experiments": len({j["experiment_id"] for j in jobs}),
+            "by_kind": by_kind,
+            "by_state": by_state,
+            "attempts": attempt_count,
+            "attempt_seconds": attempt_seconds,
+            "first_activity": min((j["created"] for j in jobs), default=None),
+            "last_activity": last or None,
+            "recorded_games": recorded_games,
+            "comparisons": comparisons,
+            "runs": runs,
+        }
+        self.overview_cache = (key, result)
+        return result
 
     def has_games(self, job_id):
         cached = self.archive_availability.get(job_id)
@@ -533,6 +735,8 @@ class Handler(BaseHTTPRequestHandler):
                         **(session or {}),
                         "login_enabled": bool(self.app.auth.password_hash)
                         and not self.app.read_only,
+                        "read_only": self.app.read_only,
+                        "demo_url": self.app.demo_url,
                     },
                     headers={"Set-Cookie": self.session_cookie(self.token())}
                     if session
@@ -557,6 +761,8 @@ class Handler(BaseHTTPRequestHandler):
                         offset=max(0, int(query.get("offset", ["0"])[0])),
                     ),
                 )
+            elif url.path == "/api/v1/overview":
+                self.reply(200, self.app.overview())
             elif url.path.startswith("/api/v1/jobs/"):
                 jobs = self.app.jobs(job_id=url.path.rsplit("/", 1)[1])["jobs"]
                 self.reply(200, jobs[0]) if jobs else self.reply(
@@ -724,6 +930,10 @@ def main():
     parser.add_argument("--analysis-host-memory-mb", type=int, default=2048)
     parser.add_argument("--set-password", action="store_true")
     parser.add_argument(
+        "--demo-url",
+        help="Public address of the interactive demo, linked from the dashboard header",
+    )
+    parser.add_argument(
         "--read-only",
         action="store_true",
         help="Serve historical data without login, mutations, training, or analysis",
@@ -796,6 +1006,7 @@ def main():
         scheduler,
         analysis,
         read_only=args.read_only,
+        demo_url=args.demo_url,
     )
     server = ThreadingHTTPServer((args.listen, args.port), Handler)
     server.app = app

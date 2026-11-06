@@ -182,6 +182,10 @@ Kata network variants; the legacy ResNet reports that inspection is unsupported.
 
 ## Routes and API
 
+- `/`: overview of the archive or live service: headline counts, the playing
+  strength of every completed comparison plotted by checkpoint epoch against the
+  recurring baseline (95% Wilson intervals), training runs with their value-loss
+  curves, and the most recent comparisons.
 - `/experiments`: newest-first paginated queue, job attempts, timing, stage,
   progress, losses, self-play statistics, confidence intervals, game outcomes,
   resource observations, and event history. Logged-in controls schedule/pause/
@@ -190,6 +194,10 @@ Kata network variants; the legacy ResNet reports that inspection is unsupported.
   distributions, a move timeline with Black's winning chances from the recorded
   network values, autoplay, and links into branch exploration. Within one epoch
   the list can be filtered by outcome and sorted by length.
+- The header links to the interactive demo when the service is started with
+  `--demo-url https://…`; read-only archives show an archive banner and hide the
+  queue notice. The Analysis entry is hidden when no analysis checkpoint is
+  configured and nobody is logged in.
 - `/analyze` (`/play` redirects here): shared board exploration, search, manual alternative
   moves, undo, and activation/channel inspection. Position links include game
   identity and a game-defined state encoding.
@@ -199,9 +207,17 @@ owns state validation and semantics. The implemented view/adapter is Gomoku. Go
 will need its own rules, history/ko state, non-board actions and rendering adapter;
 it does not need changes to the job database or worker protocol.
 
-`GET /api/v1/games` accepts `winner=first|second|draw` and
+`GET /api/v1/overview` returns the cross-job aggregates used by the landing
+page (counts by kind and state, attempt time, recorded game count, completed
+comparisons with both checkpoints resolved to their source job and zero-based
+epoch through the comparison's own input reference, the search settings that
+affect strength (`simulations`, temperatures, `c_puct`) so the overview only
+connects or pools matches played under equal settings, and per-epoch losses for
+every training run); it is cached until the job table, the event log or the
+artifact catalog changes. `GET /api/v1/games` accepts `winner=first|second|draw` and
 `sort=newest|longest|shortest` when a single `epoch` is given; the per-epoch
 winner/length index is built on first use and cached until the directory changes.
+`GET /api/v1/session` reports `read_only` and the configured `demo_url`.
 
 Useful public endpoints are `GET /api/v1/jobs?offset=0&limit=25`,
 `jobs/<id>`, `events?job_id=<id>&after=<cursor>`, `artifacts`, `games`, `game`,

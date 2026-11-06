@@ -685,8 +685,15 @@ function GomokuExplorer({
                   {info?.available
                     ? `Checkpoint: ${info.checkpoint.split("/").slice(-2).join("/")}`
                     : info
-                      ? "No analysis checkpoint configured."
+                      ? "This site has no analysis checkpoint, so positions can be set up but not searched."
                       : "Analysis checkpoint could not be loaded."}
+                </p>
+              )}
+              {!infoPending && info && !info.available && session.demo_url && (
+                <p>
+                  <a className="service-button" href={session.demo_url}>
+                    Play against the network in the demo ↗
+                  </a>
                 </p>
               )}
               {session.authenticated && info?.available ? (
@@ -746,7 +753,7 @@ function GomokuExplorer({
                   </div>
                 </>
               ) : (
-                <p>Log in to run a search.</p>
+                info?.available && <p>Log in to run a search.</p>
               )}
               <div className="service-actions service-section-actions">
                 <button

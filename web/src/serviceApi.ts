@@ -2,6 +2,10 @@ export type Session = {
   authenticated: boolean;
   csrf?: string;
   login_enabled?: boolean;
+  /** Historical archive: no scheduler, no login, no mutations. */
+  read_only?: boolean;
+  /** Public address of the interactive demo, when the operator configured one. */
+  demo_url?: string | null;
 };
 export type Resources = {
   slots: number;
@@ -44,7 +48,10 @@ export type Job = {
   title: string;
   state: string;
   created: number;
+  updated?: number;
   reason: string | null;
+  experiment_id?: string;
+  experiment_title?: string | null;
   spec: Spec;
   attempts: Attempt[];
   dependencies: string[];
@@ -108,10 +115,32 @@ export async function api<T>(
   if (!response.ok) throw await responseError(response, "Request failed");
   return response.json();
 }
+/** Minute precision for lists and summaries: "20 Sep 2026, 07:51". */
 export const stamp = (time: number | null) =>
   time == null
     ? "—"
+    : new Date(time * 1000).toLocaleString(undefined, {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+      });
+/** Second precision for event logs and heartbeats. */
+export const preciseStamp = (time: number | null) =>
+  time == null
+    ? "—"
     : new Date(time * 1000).toLocaleString(undefined, { hourCycle: "h23" });
+/** Compact date without the time: "20 Sep 2026". */
+export const dateStamp = (time: number | null) =>
+  time == null
+    ? "—"
+    : new Date(time * 1000).toLocaleDateString(undefined, {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+      });
 export function duration(seconds: number) {
   if (seconds < 60) return `${Math.floor(seconds)}s`;
   if (seconds < 3600)
@@ -122,7 +151,7 @@ export function duration(seconds: number) {
 export const heartbeatStamp = (time: number, now = Date.now() / 1000) =>
   now - time < 600
     ? new Date(time * 1000).toLocaleTimeString(undefined, { hourCycle: "h23" })
-    : stamp(time);
+    : preciseStamp(time);
 
 export async function streamAnalysis<T>(
   body: unknown,
